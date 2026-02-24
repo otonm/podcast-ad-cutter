@@ -22,10 +22,11 @@ def setup_logging(level: str, log_file: str | None) -> None:
         datefmt="%H:%M:%S",
         handlers=handlers,
     )
-    litellm_logger = logging.getLogger("litellm")
-    litellm_logger.handlers.clear()  # remove litellm's own StreamHandler added at import
-    litellm_logger.setLevel(logging.WARNING)
-    litellm_logger.propagate = True  # already True, but explicit for clarity
+    for name in ("litellm", "LiteLLM"):
+        log = logging.getLogger(name)
+        log.handlers.clear()
+        log.setLevel(logging.WARNING)
+        log.propagate = True
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 

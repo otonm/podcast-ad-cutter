@@ -1,12 +1,10 @@
 import logging
 import re
-from pathlib import Path
 
 from config.config_loader import AppConfig
 from db.connection import get_db
-from db.repositories import AdSegmentRepository, EpisodeRepository, TranscriptRepository
+from db.repositories import AdSegmentRepository, EpisodeRepository
 from db.repositories.llm_call_repo import LLMCallRepository
-from models.episode import Episode
 from models.llm_call import CallType, LLMCall
 from pipeline.audio_editor import cut_ads
 from pipeline.downloader import download_episode
@@ -53,13 +51,42 @@ async def process_feed(
     clean_path = podcast_dir / f"{date_str} - {_safe_name(episode.title)}.{ext}"
     podcast_dir.mkdir(parents=True, exist_ok=True)
 
+    # Checkpoint 1 — final file already exists
+    if clean_path.exists():
+        logger.info("Clean file already exists, skipping: %s", clean_path.name)
+        return
+
     async with get_db(cfg.paths.database) as db:
         ep_repo = EpisodeRepository(db)
         await ep_repo.upsert(episode)
 
+        ad_repo = AdSegmentRepository(db)
+
+        # Checkpoint 2 — ad segments already detected, only need to cut
+        cached_segments = await ad_repo.get_by_episode(episode.guid)
+        if cached_segments:
+            logger.info(
+                "Ad segments cache hit for %s: %d segments",
+                episode.guid,
+                len(cached_segments),
+            )
+            audio_path = await download_episode(episode)
+            try:
+                if not dry_run:
+                    await cut_ads(audio_path, cached_segments, cfg, db, output_path=clean_path)
+                else:
+                    logger.info("Dry run: skipping audio cutting")
+            finally:
+                audio_path.unlink(missing_ok=True)
+            return
+
+        # Checkpoints 3 & 4: transcript and topic context have internal cache checks
         audio_path = await download_episode(episode)
         try:
             transcript = await transcribe_episode(episode, audio_path, cfg, db)
+            if transcript is None:
+                logger.error("Transcription returned None for %s, aborting", episode.guid)
+                return
 
             topic_context = await extract_topic(transcript, cfg, db)
 

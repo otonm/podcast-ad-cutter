@@ -15,12 +15,34 @@ Return only a JSON object — no markdown, no preamble.
 Schema: {"domain": str, "topic": str, "hosts": list[str], "notes": str}"""
 
 
+async def _get_topic_context(episode_guid: str, db) -> TopicContext | None:
+    """Return a cached TopicContext for this episode, or None if not yet extracted."""
+    cursor = await db.execute(
+        "SELECT domain, topic, hosts, notes FROM topic_contexts WHERE episode_guid = ?",
+        (episode_guid,),
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        return None
+    return TopicContext(
+        domain=row[0],
+        topic=row[1],
+        hosts=tuple(json.loads(row[2]) if row[2] else []),
+        notes=row[3] or "",
+    )
+
+
 async def extract_topic(
     transcript: Transcript,
     cfg: AppConfig,
     db,
 ) -> TopicContext | None:
     """Extract topic context from the transcript using LLM."""
+    cached = await _get_topic_context(transcript.episode_guid, db)
+    if cached:
+        logger.info("Topic context cache hit for %s", transcript.episode_guid)
+        return cached
+
     words = transcript.full_text.split()[: cfg.interpretation.topic_excerpt_words]
     excerpt = " ".join(words)
 
