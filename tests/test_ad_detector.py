@@ -7,7 +7,7 @@ import pytest
 from config.config_loader import AppConfig
 from models.ad_segment import TopicContext
 from models.transcript import Segment, Transcript
-from pipeline.ad_detector import _create_chunks, _detect_single
+from pipeline.ad_detector import _create_chunks, _detect_single, detect_ads
 from pipeline.llm_client import fits_in_context
 
 
@@ -151,6 +151,68 @@ async def test_detect_single_returns_empty_on_llm_failure(
     ):
         segments, cost = await _detect_single(transcript, topic_ctx, app_config)
 
+    assert segments == []
+    assert cost == pytest.approx(0.0)
+
+
+# ── detect_ads dispatch tests ──────────────────────────────────────────────────
+
+async def test_detect_ads_single_call_when_context_fits(
+    app_config: AppConfig, topic_ctx: TopicContext
+) -> None:
+    """When fits_in_context returns True, complete() is called exactly once."""
+    transcript = _make_transcript(200)
+    mock_json = (
+        '[{"start_sec": 60.0, "end_sec": 90.0, "confidence": 0.95, "reason": "ad", "sponsor": null}]'
+    )
+
+    with (
+        patch("pipeline.ad_detector.fits_in_context", return_value=True),
+        patch(
+            "pipeline.ad_detector.complete",
+            new_callable=AsyncMock,
+            return_value=(mock_json, 0.03),
+        ) as mock_complete,
+    ):
+        segments, cost = await detect_ads(topic_ctx, transcript, app_config)
+
+    mock_complete.assert_called_once()
+    assert len(segments) == 1
+    assert segments[0].start_ms == 60_000
+    assert cost == pytest.approx(0.03)
+
+
+async def test_detect_ads_falls_back_to_chunks_when_context_exceeded(
+    app_config: AppConfig, topic_ctx: TopicContext
+) -> None:
+    """When fits_in_context returns False, complete() is called once per chunk."""
+    # 600 1-sec segments with 300s chunks and 30s overlap → 3 chunks
+    # (0–300s, 270–570s, 540–600s)
+    transcript = _make_transcript(600)
+
+    with (
+        patch("pipeline.ad_detector.fits_in_context", return_value=False),
+        patch(
+            "pipeline.ad_detector.complete",
+            new_callable=AsyncMock,
+            return_value=("[]", 0.01),
+        ) as mock_complete,
+    ):
+        segments, cost = await detect_ads(topic_ctx, transcript, app_config)
+
+    # Three chunks → three calls
+    assert mock_complete.call_count == 3
+    assert segments == []
+
+
+async def test_detect_ads_empty_transcript_returns_early(
+    app_config: AppConfig, topic_ctx: TopicContext
+) -> None:
+    transcript = _make_transcript(0)
+    with patch("pipeline.ad_detector.fits_in_context") as mock_check:
+        segments, cost = await detect_ads(topic_ctx, transcript, app_config)
+
+    mock_check.assert_not_called()
     assert segments == []
     assert cost == pytest.approx(0.0)
 

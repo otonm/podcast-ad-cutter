@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from config.config_loader import AppConfig
 from models.ad_segment import AdSegment, TopicContext
 from models.transcript import Transcript
-from pipeline.llm_client import complete
+from pipeline.llm_client import complete, fits_in_context
 
 logger = logging.getLogger(__name__)
 
@@ -34,17 +34,32 @@ async def detect_ads(
     transcript: Transcript,
     cfg: AppConfig,
 ) -> tuple[list[AdSegment], float]:
-    """Detect ad segments in the transcript using LLM with chunking.
+    """Detect ad segments in the transcript using LLM.
 
+    Tries a single LLM call first. Falls back to chunking only when the
+    transcript token count exceeds the model's context window.
     Returns (segments, total_cost_usd).
     """
+    if not transcript.segments:
+        return [], 0.0
+
+    full_messages = _build_messages(topic_context, transcript.full_text)
+
+    if fits_in_context(
+        full_messages,
+        model=cfg.interpretation.provider_model,
+        max_output_tokens=cfg.interpretation.max_tokens,
+    ):
+        logger.info("Sending full transcript as single LLM call")
+        return await _detect_single(transcript, topic_context, cfg)
+
     chunks = _create_chunks(
         transcript, cfg.ad_detection.chunk_duration_sec, cfg.ad_detection.chunk_overlap_sec
     )
-    if not chunks:
-        return [], 0.0
-
-    logger.info("Detecting ads in %d chunks", len(chunks))
+    logger.warning(
+        "Transcript too large for single LLM call, falling back to %d chunks",
+        len(chunks),
+    )
 
     results: list[list[AdSegment]] = [[] for _ in chunks]
     costs: list[float] = [0.0] * len(chunks)
