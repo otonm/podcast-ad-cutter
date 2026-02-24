@@ -30,7 +30,6 @@ ad_detection:
   chunk_overlap_sec: 30
   min_confidence: 0.75
   merge_gap_sec: 5
-  max_tokens_per_chunk: 6000
 
 audio:
   output_format: "mp3"

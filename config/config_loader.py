@@ -79,7 +79,6 @@ class AdDetectionConfig(BaseModel, frozen=True):
     chunk_overlap_sec: int = 30
     min_confidence: float = 0.75
     merge_gap_sec: int = 5
-    max_tokens_per_chunk: int = 6000
 
 
 class AudioConfig(BaseModel, frozen=True):
