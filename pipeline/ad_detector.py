@@ -57,6 +57,26 @@ async def detect_ads(
     return all_segments, sum(costs)
 
 
+def _build_messages(topic_context: TopicContext, transcript_text: str) -> list[dict[str, str]]:
+    """Build the system + user message list for ad detection."""
+    context_str = (
+        f"Domain: {topic_context.domain}, "
+        f"Topic: {topic_context.topic}, "
+        f"Hosts: {', '.join(topic_context.hosts)}"
+    )
+    return [
+        {"role": "system", "content": AD_DETECTION_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f"Episode context: {context_str}\n\n"
+                f"Transcript (timestamps in seconds):\n"
+                f"<transcript>{transcript_text}</transcript>"
+            ),
+        },
+    ]
+
+
 async def _detect_chunk(
     chunk: TranscriptChunk,
     topic_context: TopicContext,
@@ -65,15 +85,7 @@ async def _detect_chunk(
     costs: list[float],
     index: int,
 ) -> None:
-    context_str = f"Domain: {topic_context.domain}, Topic: {topic_context.topic}, Hosts: {', '.join(topic_context.hosts)}"
-
-    messages = [
-        {"role": "system", "content": AD_DETECTION_PROMPT},
-        {
-            "role": "user",
-            "content": f"Episode context: {context_str}\n\nTranscript (timestamps in seconds):\n<transcript>{chunk.text}</transcript>",
-        },
-    ]
+    messages = _build_messages(topic_context, chunk.text)
 
     async with _LLM_SEMAPHORE:
         try:
