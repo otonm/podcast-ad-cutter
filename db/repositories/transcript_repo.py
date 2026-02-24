@@ -30,7 +30,7 @@ class TranscriptRepository:
                 (transcript_id, seg.start_ms, seg.end_ms, seg.text),
             )
         await self._conn.commit()
-        logger.debug("Saved transcript for episode_guid=%s", transcript.episode_guid)
+        logger.debug(f"Saved transcript for episode_guid={transcript.episode_guid}")
 
     async def get_by_episode_guid(self, episode_guid: str) -> Transcript | None:
         cursor = await self._conn.execute(
@@ -60,4 +60,4 @@ class TranscriptRepository:
     async def delete(self, episode_guid: str) -> None:
         await self._conn.execute("DELETE FROM transcripts WHERE episode_guid = ?", (episode_guid,))
         await self._conn.commit()
-        logger.debug("Deleted transcript for episode_guid=%s", episode_guid)
+        logger.debug(f"Deleted transcript for episode_guid={episode_guid}")

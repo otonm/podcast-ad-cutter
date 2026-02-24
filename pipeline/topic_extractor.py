@@ -10,6 +10,8 @@ from pipeline.llm_client import complete
 
 logger = logging.getLogger(__name__)
 
+_MAX_PARSE_RETRIES: int = 3
+
 TOPIC_EXTRACTION_PROMPT = """Analyze the opening of this podcast transcript.
 Return only a JSON object — no markdown, no preamble.
 Schema: {"domain": str, "topic": str, "hosts": list[str], "notes": str}"""
@@ -40,48 +42,73 @@ async def extract_topic(
     """Extract topic context from the transcript using LLM."""
     cached = await _get_topic_context(transcript.episode_guid, db)
     if cached:
-        logger.info("Topic context cache hit for %s", transcript.episode_guid)
+        logger.info(f"Topic context cache hit for {transcript.episode_guid}")
         return cached
 
     words = transcript.full_text.split()[: cfg.interpretation.topic_excerpt_words]
     excerpt = " ".join(words)
 
-    messages = [
+    messages: list[dict[str, str]] = [
         {"role": "system", "content": TOPIC_EXTRACTION_PROMPT},
         {"role": "user", "content": f"<transcript>{excerpt}</transcript>"},
     ]
 
-    try:
-        response, cost = await complete(messages, cfg.interpretation)
-    except Exception as exc:
-        logger.warning("Topic extraction failed: %s", exc)
-        return None
+    total_cost = 0.0
+    response = ""
+    for attempt in range(_MAX_PARSE_RETRIES):
+        try:
+            response, cost = await complete(messages, cfg.interpretation)
+            total_cost += cost
+        except Exception as exc:
+            logger.warning(f"Topic extraction LLM call failed: {exc}")
+            return None
 
-    llm_repo = LLMCallRepository(db)
-    await llm_repo.save(
-        LLMCall(
-            episode_guid=transcript.episode_guid,
-            call_type=CallType.TOPIC_EXTRACTION,
-            model=cfg.interpretation.provider_model,
-            cost_usd=cost,
+        try:
+            data = json.loads(response)
+            topic = TopicContext(
+                domain=data.get("domain", "unknown"),
+                topic=data.get("topic", "unknown"),
+                hosts=tuple(data.get("hosts", [])),
+                notes=data.get("notes", ""),
+            )
+        except (json.JSONDecodeError, KeyError, ValueError) as exc:
+            if attempt < _MAX_PARSE_RETRIES - 1:
+                logger.warning(
+                    f"Topic extraction invalid JSON"
+                    f" (attempt {attempt + 1}/{_MAX_PARSE_RETRIES}), retrying: {exc}"
+                )
+                messages = [
+                    *messages,
+                    {"role": "assistant", "content": response},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your response was not valid JSON. Please respond with only a valid"
+                            " JSON object, no markdown, no code blocks, no preamble."
+                        ),
+                    },
+                ]
+            else:
+                logger.warning(
+                    f"Topic extraction failed after {_MAX_PARSE_RETRIES} parse attempts: {exc}"
+                )
+                return None
+            continue
+
+        llm_repo = LLMCallRepository(db)
+        await llm_repo.save(
+            LLMCall(
+                episode_guid=transcript.episode_guid,
+                call_type=CallType.TOPIC_EXTRACTION,
+                model=cfg.interpretation.provider_model,
+                cost_usd=total_cost,
+            )
         )
-    )
+        await _save_topic_context(topic, transcript.episode_guid, db)
+        logger.info(f"Topic extracted: domain={topic.domain} topic={topic.topic}")
+        return topic
 
-    try:
-        data = json.loads(response)
-        topic = TopicContext(
-            domain=data.get("domain", "unknown"),
-            topic=data.get("topic", "unknown"),
-            hosts=tuple(data.get("hosts", [])),
-            notes=data.get("notes", ""),
-        )
-    except (json.JSONDecodeError, KeyError, ValueError) as exc:
-        logger.warning("Failed to parse topic context: %s", exc)
-        return None
-
-    await _save_topic_context(topic, transcript.episode_guid, db)
-    logger.info("Topic extracted: domain=%s topic=%s", topic.domain, topic.topic)
-    return topic
+    return None
 
 
 async def _save_topic_context(topic: TopicContext, episode_guid: str, db) -> None:

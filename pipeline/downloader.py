@@ -23,7 +23,7 @@ async def download_episode(
     os.close(fd)
     dest = Path(tmp)
 
-    logger.info("Downloading %s → %s", episode.audio_url, dest)
+    logger.info(f"Downloading {episode.audio_url} → {dest}")
     should_close = client is None
     if client is None:
         client = httpx.AsyncClient(follow_redirects=True)
@@ -36,12 +36,12 @@ async def download_episode(
                     f.write(chunk)
     except httpx.HTTPError as exc:
         dest.unlink(missing_ok=True)
-        logger.error("Download failed for %s: %s", episode.guid, exc)
+        logger.error(f"Download failed for {episode.guid}: {exc}")
         raise DownloadError(f"Download failed: {exc}") from exc
     finally:
         if should_close:
             await client.aclose()
 
     file_size = dest.stat().st_size
-    logger.info("Download complete: %s (%d bytes)", dest.name, file_size)
+    logger.info(f"Download complete: {dest.name} ({file_size} bytes)")
     return dest

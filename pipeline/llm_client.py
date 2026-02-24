@@ -37,7 +37,7 @@ async def complete(
     if response_format:
         kwargs["response_format"] = response_format
 
-    logger.debug("LLM request model=%s messages=%d", cfg.provider_model, len(messages))
+    logger.debug(f"LLM request model={cfg.provider_model} messages={len(messages)}")
     try:
         response = await litellm.acompletion(**kwargs)
     except litellm.APIError as exc:
@@ -46,18 +46,17 @@ async def complete(
     content: str = response.choices[0].message.content or ""
     cost: float = response._hidden_params.get("response_cost") or 0.0  # type: ignore[union-attr]
     logger.debug(
-        "LLM response model=%s prompt_tokens=%s completion_tokens=%s cost_usd=%s",
-        cfg.provider_model,
-        response.usage.prompt_tokens,
-        response.usage.completion_tokens,
-        cost,
+        f"LLM response model={cfg.provider_model}"
+        f" prompt_tokens={response.usage.prompt_tokens}"
+        f" completion_tokens={response.usage.completion_tokens}"
+        f" cost_usd={cost}"
     )
     return content, cost
 
 
 async def transcribe(audio_path: Path, cfg: TranscriptionConfig) -> tuple[dict[str, Any], float]:
     """Transcribe audio via litellm.atranscription. Returns (verbose JSON, cost_usd)."""
-    logger.info("Transcribing %s with model=%s", audio_path.name, cfg.provider_model)
+    logger.info(f"Transcribing {audio_path.name} with model={cfg.provider_model}")
     with audio_path.open("rb") as f:
         try:
             kwargs: dict[str, Any] = {
@@ -74,10 +73,8 @@ async def transcribe(audio_path: Path, cfg: TranscriptionConfig) -> tuple[dict[s
             raise TranscriptionError(f"Transcription failed: {exc}") from exc
 
     cost: float = result._hidden_params.get("response_cost") or 0.0  # type: ignore[union-attr]
-    logger.info(
-        "Transcription complete segments=%d",
-        len(result.get("words") or result.get("segments") or []),
-    )
+    n_segments = len(result.get("words") or result.get("segments") or [])
+    logger.info(f"Transcription complete segments={n_segments}")
     return result, cost  # type: ignore[return-value]
 
 
@@ -94,9 +91,13 @@ def fits_in_context(
     single-call path.
     """
     max_ctx: int | None = litellm.get_max_tokens(model)
+    logger.debug(f"LLM {model} context window size: {max_ctx}")
+
     if max_ctx is None:
-        logger.info("Context window unknown for %s, sending full transcript", model)
+        logger.info(f"Context window unknown for {model}, sending full transcript")
         return True
+
     safe_budget = int(max_ctx * 0.85)
     token_count: int = litellm.token_counter(model=model, messages=messages)
+    
     return token_count + max_output_tokens <= safe_budget

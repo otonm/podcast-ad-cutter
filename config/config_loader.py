@@ -138,7 +138,7 @@ def load_config(config_path: Path) -> AppConfig:
     except Exception as exc:
         raise ConfigError(f"Config validation failed: {exc}") from exc
 
-    logger.info("Config loaded from %s", config_path)
+    logger.info(f"Config loaded from {config_path}")
     return cfg
 
 

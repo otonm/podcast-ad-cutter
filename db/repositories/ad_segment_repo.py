@@ -28,11 +28,8 @@ class AdSegmentRepository:
                 ),
             )
         await self._conn.commit()
-        logger.debug(
-            "Saved %d ad segments for episode_guid=%s",
-            len(segments),
-            segments[0].episode_guid if segments else "?",
-        )
+        guid = segments[0].episode_guid if segments else "?"
+        logger.debug(f"Saved {len(segments)} ad segments for episode_guid={guid}")
 
     async def get_by_episode(self, episode_guid: str) -> list[AdSegment]:
         cursor = await self._conn.execute(
@@ -60,4 +57,4 @@ class AdSegmentRepository:
             (episode_guid,),
         )
         await self._conn.commit()
-        logger.debug("Marked ad segments as cut for episode_guid=%s", episode_guid)
+        logger.debug(f"Marked ad segments as cut for episode_guid={episode_guid}")

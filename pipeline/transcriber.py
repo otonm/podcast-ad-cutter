@@ -25,16 +25,16 @@ async def transcribe_episode(
 
     cached = await repo.get_by_episode_guid(episode.guid)
     if cached:
-        logger.info("Transcript cache hit for %s", episode.guid)
+        logger.info(f"Transcript cache hit for {episode.guid}")
         return cached
 
-    logger.info("Starting transcription for %s", episode.guid)
+    logger.info(f"Starting transcription for {episode.guid}")
 
     transcription_path = await audio_preprocessor.prepare_for_transcription(audio_path)
     try:
         result, cost = await llm_transcribe(transcription_path, cfg.transcription)
     except Exception as exc:
-        logger.error("Transcription failed for %s: %s", episode.guid, exc)
+        logger.error(f"Transcription failed for {episode.guid}: {exc}")
         raise TranscriptionError(f"Transcription failed: {exc}") from exc
     finally:
         transcription_path.unlink(missing_ok=True)
@@ -68,6 +68,6 @@ async def transcribe_episode(
         )
     )
     duration_ms = segments[-1].end_ms if segments else 0
-    logger.info("Transcription saved: %d segments, %.1fs", len(segments), duration_ms / 1000)
+    logger.info(f"Transcription saved: {len(segments)} segments, {duration_ms / 1000:.1f}s")
 
     return transcript

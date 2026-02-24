@@ -40,7 +40,7 @@ async def _apply_migrations(conn: aiosqlite.Connection) -> None:
 
     for sql_file in sorted(migrations_dir.glob("*.sql")):
         if sql_file.name not in applied:
-            logger.info("Applying migration: %s", sql_file.name)
+            logger.info(f"Applying migration: {sql_file.name}")
             sql = sql_file.read_text()
             await conn.executescript(sql)
             await conn.execute("INSERT INTO _migrations (filename) VALUES (?)", (sql_file.name,))

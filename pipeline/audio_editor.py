@@ -74,10 +74,7 @@ def _cut_ads_sync(
     pct = (removed_ms / original_duration_ms) * 100 if original_duration_ms > 0 else 0
 
     logger.info(
-        "Export complete: %s — removed %.1fs (%.0f%% of episode)",
-        output_path.name,
-        removed_sec,
-        pct,
+        f"Export complete: {output_path.name} — removed {removed_sec:.1f}s ({pct:.0f}% of episode)"
     )
 
     return output_path

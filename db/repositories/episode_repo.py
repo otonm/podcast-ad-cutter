@@ -30,7 +30,7 @@ class EpisodeRepository:
             ),
         )
         await self._conn.commit()
-        logger.debug("Upserted episode guid=%s", episode.guid)
+        logger.debug(f"Upserted episode guid={episode.guid}")
 
     async def get_by_guid(self, guid: str) -> Episode | None:
         cursor = await self._conn.execute(

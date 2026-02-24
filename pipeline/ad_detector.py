@@ -6,14 +6,16 @@ from dataclasses import dataclass
 from config.config_loader import AppConfig
 from models.ad_segment import AdSegment, TopicContext
 from models.transcript import Transcript
+from pipeline.exceptions import AdDetectionError, LLMError
 from pipeline.llm_client import complete, fits_in_context
 
 logger = logging.getLogger(__name__)
 
 _LLM_SEMAPHORE = asyncio.Semaphore(3)
+_MAX_PARSE_RETRIES: int = 3
 
 AD_DETECTION_PROMPT = """Identify advertisements in this podcast transcript segment.
-An ad is any span where the host promotes a product, service, or sponsor.
+An ad is any span where the host or another person or persons promote a product, service, or sponsor.
 Exclude brand mentions that are naturally part of the episode content.
 Return only a JSON array — no markdown, no preamble.
 Schema: [{"start_sec": float, "end_sec": float, "confidence": float,
@@ -57,8 +59,7 @@ async def detect_ads(
         transcript, cfg.ad_detection.chunk_duration_sec, cfg.ad_detection.chunk_overlap_sec
     )
     logger.warning(
-        "Transcript too large for single LLM call, falling back to %d chunks",
-        len(chunks),
+        f"Transcript too large for single LLM call, falling back to {len(chunks)} chunks"
     )
 
     results: list[list[AdSegment]] = [[] for _ in chunks]
@@ -104,7 +105,7 @@ async def _detect_single(
         segments = _parse_ad_segments(response, transcript.episode_guid)
         return segments, cost
     except Exception as exc:
-        logger.warning("Single-call ad detection failed: %s", exc)
+        logger.warning(f"Single-call ad detection failed: {exc}")
         return [], 0.0
 
 
@@ -119,23 +120,47 @@ async def _detect_chunk(
     messages = _build_messages(topic_context, chunk.text)
 
     async with _LLM_SEMAPHORE:
-        try:
-            response, cost = await complete(messages, cfg.interpretation)
-            costs[index] = cost
-            segments = _parse_ad_segments(response, chunk.episode_guid)
-            results[index] = segments
-        except Exception as exc:
-            logger.warning("Chunk %d failed: %s", index, exc)
-            results[index] = []
+        response = ""
+        for attempt in range(_MAX_PARSE_RETRIES):
+            try:
+                response, cost = await complete(messages, cfg.interpretation)
+                costs[index] = cost
+                results[index] = _parse_ad_segments(response, chunk.episode_guid)
+                return
+            except LLMError as exc:
+                logger.warning(f"Chunk {index} LLM call failed: {exc}")
+                return  # API error — don't retry (tenacity already did)
+            except AdDetectionError:
+                if attempt < _MAX_PARSE_RETRIES - 1:
+                    logger.warning(
+                        f"Chunk {index} invalid JSON (attempt {attempt + 1}/{_MAX_PARSE_RETRIES}),"
+                        " retrying with feedback"
+                    )
+                    messages = [
+                        *messages,
+                        {"role": "assistant", "content": response},
+                        {
+                            "role": "user",
+                            "content": (
+                                "Your response was not valid JSON. Please respond with only a valid"
+                                " JSON array, no markdown, no code blocks, no preamble."
+                            ),
+                        },
+                    ]
+                else:
+                    logger.warning(
+                        f"Chunk {index} failed after {_MAX_PARSE_RETRIES} parse attempts,"
+                        " returning empty"
+                    )
+        results[index] = []
 
 
 def _parse_ad_segments(response: str, episode_guid: str) -> list[AdSegment]:
-    """Parse LLM response into AdSegment list."""
+    """Parse LLM response into AdSegment list. Raises AdDetectionError on invalid JSON."""
     try:
         data = json.loads(response)
-    except json.JSONDecodeError:
-        logger.warning("Invalid JSON response: %s", response[:200])
-        return []
+    except json.JSONDecodeError as exc:
+        raise AdDetectionError(f"Invalid JSON response: {response[:200]}") from exc
 
     segments = []
     for item in data:
@@ -151,7 +176,7 @@ def _parse_ad_segments(response: str, episode_guid: str) -> list[AdSegment]:
                 )
             )
         except (KeyError, ValueError) as exc:
-            logger.warning("Failed to parse ad segment: %s", exc)
+            logger.warning(f"Failed to parse ad segment: {exc}")
             continue
 
     return segments

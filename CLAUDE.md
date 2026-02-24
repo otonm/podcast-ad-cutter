@@ -707,14 +707,14 @@ def setup_logging(level: str, log_file: str | None) -> None:
 | `WARNING` | Recoverable issues that affect output quality: LLM returns malformed JSON (chunk skipped), ad segment below confidence threshold (not cut), URL redirect followed, RSS namespace fallback used |
 | `ERROR` | Always log immediately before raising a custom exception so the traceback has context |
 
-### Pass values as arguments — never f-strings
+### Use f-strings in log messages
+
+Use f-strings in all log messages. They are more readable and Python's logging level check (`if logger.isEnabledFor(...)`) is only relevant for expensive-to-construct arguments; for typical string values the difference is negligible.
 
 ```python
-logger.info("Detected %d ad segments, cutting %d", total, above_threshold)  # correct
-logger.info(f"Detected {total} ad segments, cutting {above_threshold}")      # wrong
+logger.info(f"Detected {total} ad segments, cutting {above_threshold}")  # correct
+logger.info("Detected %d ad segments, cutting %d", total, above_threshold)  # wrong
 ```
-
-The `%`-style arguments are only formatted when the log record is actually emitted. f-strings are always evaluated.
 
 ---
 

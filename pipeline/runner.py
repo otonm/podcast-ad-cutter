@@ -30,7 +30,7 @@ async def run_pipeline(cfg: AppConfig, *, dry_run: bool = False) -> None:
         return
 
     for feed_cfg in feeds:
-        logger.info("Processing feed: %s", feed_cfg.name)
+        logger.info(f"Processing feed: {feed_cfg.name}")
         await process_feed(feed_cfg, cfg, dry_run=dry_run)
 
 
@@ -46,7 +46,7 @@ async def process_feed(
         return
 
     for episode in episodes:
-        logger.info("Processing episode: %s", episode.title)
+        logger.info(f"Processing episode: {episode.title}")
         await _process_episode(episode, cfg, dry_run=dry_run)
 
 
@@ -65,7 +65,7 @@ async def _process_episode(
 
     # Checkpoint 1 — final file already exists
     if clean_path.exists():
-        logger.info("Clean file already exists, skipping: %s", clean_path.name)
+        logger.info(f"Clean file already exists, skipping: {clean_path.name}")
         return
 
     async with get_db(cfg.paths.database) as db:
@@ -77,11 +77,11 @@ async def _process_episode(
         # Checkpoint 2 — ad segments already detected, only need to cut
         cached_segments = await ad_repo.get_by_episode(episode.guid)
         if cached_segments:
-            logger.info(
-                "Ad segments cache hit for %s: %d segments",
-                episode.guid,
-                len(cached_segments),
+            logger.debug(
+                f"Ad segments cache hit for {episode.guid}: {len(cached_segments)} segments"
             )
+            logger.debug(f"Segments: {cached_segments}")
+            
             audio_path = await download_episode(episode)
             try:
                 if not dry_run:
@@ -97,7 +97,7 @@ async def _process_episode(
         try:
             transcript = await transcribe_episode(episode, audio_path, cfg, db)
             if transcript is None:
-                logger.error("Transcription returned None for %s, aborting", episode.guid)
+                logger.error(f"Transcription returned None for {episode.guid}, aborting")
                 return
 
             topic_context = await extract_topic(transcript, cfg, db)

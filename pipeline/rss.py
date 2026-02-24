@@ -19,7 +19,7 @@ def parse_feed(xml: str, *, feed_name: str) -> list[Episode]:
     for entry in feed.entries:
         audio_url = _extract_audio_url(entry)
         if audio_url is None:
-            logger.debug("Skipping entry %s — no audio URL", entry.get("id", "unknown"))
+            logger.debug(f"Skipping entry {entry.get('id', 'unknown')} — no audio URL")
             continue
 
         guid = entry.get("id") or entry.get("guid", "")
@@ -37,7 +37,7 @@ def parse_feed(xml: str, *, feed_name: str) -> list[Episode]:
         )
 
     episodes.sort(key=lambda e: e.published, reverse=True)
-    logger.info("Parsed %d episodes from feed '%s'", len(episodes), feed_name)
+    logger.info(f"Parsed {len(episodes)} episodes from feed '{feed_name}'")
     return episodes
 
 
@@ -75,7 +75,7 @@ async def fetch_episodes(
     client: httpx.AsyncClient | None = None,
 ) -> list[Episode]:
     """Fetch the RSS feed and return the N most recent episodes (newest first)."""
-    logger.info("Fetching feed: %s", feed_cfg.name)
+    logger.info(f"Fetching feed: {feed_cfg.name}")
     should_close = client is None
     if client is None:
         client = httpx.AsyncClient(follow_redirects=True)
@@ -91,21 +91,16 @@ async def fetch_episodes(
 
     episodes = parse_feed(response.text, feed_name=feed_cfg.name)
     if not episodes:
-        logger.warning("No episodes found in feed '%s'", feed_cfg.name)
+        logger.warning(f"No episodes found in feed '{feed_cfg.name}'")
         return []
 
     if len(episodes) < episodes_to_keep:
         logger.warning(
-            "Feed '%s' has only %d episode(s), fewer than the requested %d",
-            feed_cfg.name,
-            len(episodes),
-            episodes_to_keep,
+            f"Feed '{feed_cfg.name}' has only {len(episodes)} episode(s),"
+            f" fewer than the requested {episodes_to_keep}"
         )
     result = episodes[:episodes_to_keep]
     logger.info(
-        "Found %d episodes in '%s' (processing up to %d)",
-        len(episodes),
-        feed_cfg.name,
-        episodes_to_keep,
+        f"Found {len(episodes)} episodes in '{feed_cfg.name}' (processing up to {episodes_to_keep})"
     )
     return result
