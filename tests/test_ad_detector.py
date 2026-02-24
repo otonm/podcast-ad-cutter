@@ -1,9 +1,12 @@
 """Tests for pipeline/ad_detector.py — focusing on _create_chunks()."""
 
+from unittest.mock import patch
+
 import pytest
 
 from models.transcript import Segment, Transcript
 from pipeline.ad_detector import _create_chunks
+from pipeline.llm_client import fits_in_context
 
 
 def _make_transcript(n_segments: int, seg_duration_ms: int = 1000) -> Transcript:
@@ -76,4 +79,31 @@ def test_create_chunks_progress_always_advances() -> None:
     assert starts == sorted(starts)
     assert len(set(starts)) == len(starts), "Duplicate chunk start times — progress stalled"
 
+
+# ── fits_in_context tests ──────────────────────────────────────────────────────
+
+def test_fits_in_context_unknown_model_returns_true() -> None:
+    """When get_max_tokens returns None, assume transcript fits — no chunking."""
+    messages = [{"role": "user", "content": "hello"}]
+    with patch("litellm.get_max_tokens", return_value=None):
+        assert fits_in_context(messages, model="ollama/custom", max_output_tokens=512) is True
+
+
+def test_fits_in_context_returns_true_when_prompt_fits() -> None:
+    messages = [{"role": "user", "content": "hello"}]
+    with (
+        patch("litellm.get_max_tokens", return_value=200_000),
+        patch("litellm.token_counter", return_value=5_000),
+    ):
+        assert fits_in_context(messages, model="openai/gpt-4o", max_output_tokens=2048) is True
+
+
+def test_fits_in_context_returns_false_when_prompt_exceeds_budget() -> None:
+    """token_count=3500 > 4000 * 0.85 = 3400 → does not fit."""
+    messages = [{"role": "user", "content": "hello"}]
+    with (
+        patch("litellm.get_max_tokens", return_value=4_000),
+        patch("litellm.token_counter", return_value=3_500),
+    ):
+        assert fits_in_context(messages, model="ollama/llama2", max_output_tokens=512) is False
 

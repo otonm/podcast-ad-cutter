@@ -79,3 +79,24 @@ async def transcribe(audio_path: Path, cfg: TranscriptionConfig) -> tuple[dict[s
         len(result.get("words") or result.get("segments") or []),
     )
     return result, cost  # type: ignore[return-value]
+
+
+def fits_in_context(
+    messages: list[dict[str, str]],
+    *,
+    model: str,
+    max_output_tokens: int,
+) -> bool:
+    """Return True if messages fit within 85% of the model's context window.
+
+    Returns True when the context window is unknown (e.g. local or custom
+    models not in litellm's registry), so those models always use the
+    single-call path.
+    """
+    max_ctx: int | None = litellm.get_max_tokens(model)
+    if max_ctx is None:
+        logger.info("Context window unknown for %s, sending full transcript", model)
+        return True
+    safe_budget = int(max_ctx * 0.85)
+    token_count: int = litellm.token_counter(model=model, messages=messages)
+    return token_count + max_output_tokens <= safe_budget
