@@ -1,0 +1,43 @@
+feeds:
+  - name: "The Daily"
+    url: "https://feeds.simplecast.com/Sl5CSM3S"
+    enabled: true
+
+paths:
+  output_dir: "./output"
+  database: "./data/podcasts.db"
+
+transcription:
+  provider: "groq"
+  model: "whisper-large-v3"
+  language: "en"
+  # Optional override for OpenAI-compatible endpoints (e.g., local proxy).
+  api_base: null
+
+interpretation:
+  provider: "groq"
+  model: "openai/gpt-oss-20b"
+  # Optional override for OpenAI-compatible endpoints.
+  api_base: null
+  temperature: 0
+  max_tokens: 2048
+  topic_excerpt_words: 2000
+
+ad_detection:
+  chunk_duration_sec: 300
+  chunk_overlap_sec: 30
+  min_confidence: 0.75
+  merge_gap_sec: 5
+  max_tokens_per_chunk: 6000
+
+audio:
+  output_format: "mp3"
+  cbr_bitrate: "192k"
+
+logging:
+  level: "INFO"
+  log_file: null
+
+retry:
+  max_attempts: 3
+  backoff_factor: 2

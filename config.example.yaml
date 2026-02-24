@@ -1,0 +1,45 @@
+feeds:
+  - name: "My Favorite Podcast"
+    url: "https://feeds.example.com/podcast.rss"
+    enabled: true
+
+paths:
+  output_dir: "./output"
+  database: "./data/podcasts.db"
+
+transcription:
+  # Supported providers: groq, openai, openrouter
+  provider: "openai"
+  model: "whisper-1"
+  language: "en"
+  # Optional override for OpenAI-compatible endpoints (e.g., local proxy).
+  api_base: null
+
+interpretation:
+  # Supported providers: groq, openai, openrouter
+  provider: "openai"
+  model: "gpt-4o"
+  # Optional override for OpenAI-compatible endpoints.
+  api_base: null
+  temperature: 0
+  max_tokens: 2048
+  topic_excerpt_words: 2000
+
+ad_detection:
+  chunk_duration_sec: 300
+  chunk_overlap_sec: 30
+  min_confidence: 0.75
+  merge_gap_sec: 5
+  max_tokens_per_chunk: 6000
+
+audio:
+  output_format: "mp3"
+  cbr_bitrate: "192k"
+
+logging:
+  level: "INFO"
+  log_file: null
+
+retry:
+  max_attempts: 3
+  backoff_factor: 2

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">
+<channel>
+  <title>Test Podcast</title>
+  <item>
+    <title>Episode 42: The Answer</title>
+    <guid>ep-042</guid>
+    <pubDate>Wed, 01 Jan 2025 00:00:00 GMT</pubDate>
+    <enclosure url="https://example.com/ep42.mp3" length="50000000" type="audio/mpeg"/>
+  </item>
+  <item>
+    <title>Episode 41: Media Content</title>
+    <guid>ep-041</guid>
+    <pubDate>Tue, 31 Dec 2024 00:00:00 GMT</pubDate>
+    <media:content url="https://example.com/ep41.mp3" type="audio/mpeg"/>
+  </item>
+  <item>
+    <title>Episode 40: No Audio</title>
+    <guid>ep-040</guid>
+    <pubDate>Mon, 30 Dec 2024 00:00:00 GMT</pubDate>
+  </item>
+</channel>
+</rss>

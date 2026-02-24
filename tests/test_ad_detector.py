@@ -1,0 +1,79 @@
+"""Tests for pipeline/ad_detector.py — focusing on _create_chunks()."""
+
+import pytest
+
+from models.transcript import Segment, Transcript
+from pipeline.ad_detector import _create_chunks
+
+
+def _make_transcript(n_segments: int, seg_duration_ms: int = 1000) -> Transcript:
+    """Build a Transcript with n_segments, each lasting seg_duration_ms."""
+    segments = tuple(
+        Segment(
+            start_ms=i * seg_duration_ms,
+            end_ms=(i + 1) * seg_duration_ms,
+            text=f"word{i}",
+        )
+        for i in range(n_segments)
+    )
+    return Transcript(
+        episode_guid="test-guid",
+        segments=segments,
+        full_text=" ".join(f"word{i}" for i in range(n_segments)),
+        language="en",
+        provider_model="test/model",
+    )
+
+
+def test_create_chunks_empty_transcript() -> None:
+    transcript = _make_transcript(0)
+    assert _create_chunks(transcript, chunk_duration_sec=300, overlap_sec=30) == []
+
+
+def test_create_chunks_no_overlap_single_chunk() -> None:
+    """200 1-second segments, 300-second chunk, no overlap → one chunk."""
+    transcript = _make_transcript(200)
+    chunks = _create_chunks(transcript, chunk_duration_sec=300, overlap_sec=0)
+    assert len(chunks) == 1
+    assert chunks[0].start_sec == 0.0
+    assert chunks[0].end_sec == pytest.approx(200.0, abs=1.0)
+
+
+def test_create_chunks_terminates_with_overlap() -> None:
+    """Regression: 200 1-sec segments with overlap_sec=30 must not loop forever.
+
+    Before the fix, _create_chunks() with a short transcript (200 segments)
+    and overlap_sec=30 (→ subtract 300 indices) caused current_pos to reset
+    to 0 each iteration, looping forever.
+    """
+    transcript = _make_transcript(200)
+    # Should return quickly (one chunk), not hang.
+    chunks = _create_chunks(transcript, chunk_duration_sec=300, overlap_sec=30)
+    assert len(chunks) == 1
+
+
+def test_create_chunks_multi_chunk_with_overlap() -> None:
+    """600 1-sec segments, 300-sec chunks, 30-sec overlap → chunks cover full range."""
+    transcript = _make_transcript(600)
+    chunks = _create_chunks(transcript, chunk_duration_sec=300, overlap_sec=30)
+    # First chunk starts at 0, last chunk covers the end.
+    assert chunks[0].start_sec == pytest.approx(0.0)
+    assert chunks[-1].end_sec == pytest.approx(600.0, abs=2.0)
+    # There must be more than one chunk.
+    assert len(chunks) >= 2
+    # Each chunk other than the first should start before the previous one ended
+    # (overlap), but not as far back as the chunk start.
+    for i in range(1, len(chunks)):
+        assert chunks[i].start_sec < chunks[i - 1].end_sec  # overlap present
+
+
+def test_create_chunks_progress_always_advances() -> None:
+    """current_pos must strictly increase each iteration — no infinite loop possible."""
+    transcript = _make_transcript(50, seg_duration_ms=500)  # 25 seconds total
+    chunks = _create_chunks(transcript, chunk_duration_sec=10, overlap_sec=3)
+    # Verify start times are strictly increasing (progress guaranteed).
+    starts = [c.start_sec for c in chunks]
+    assert starts == sorted(starts)
+    assert len(set(starts)) == len(starts), "Duplicate chunk start times — progress stalled"
+
+
