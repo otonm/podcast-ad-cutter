@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import feedparser
 import httpx
 
-from config_loader import FeedConfig
+from config.config_loader import FeedConfig
 from models.episode import Episode
 from pipeline.exceptions import FeedFetchError
 

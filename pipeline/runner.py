@@ -1,7 +1,8 @@
 import logging
+import re
 from pathlib import Path
 
-from config_loader import AppConfig
+from config.config_loader import AppConfig
 from db.connection import get_db
 from db.repositories import AdSegmentRepository, EpisodeRepository, TranscriptRepository
 from db.repositories.llm_call_repo import LLMCallRepository
@@ -14,6 +15,13 @@ from pipeline.topic_extractor import extract_topic
 from pipeline.transcriber import transcribe_episode
 
 logger = logging.getLogger(__name__)
+
+_INVALID_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def _safe_name(text: str) -> str:
+    """Strip filesystem-invalid chars; truncate to 120 chars."""
+    return _INVALID_CHARS.sub("", text).strip()[:120]
 
 
 async def run_pipeline(cfg: AppConfig, *, dry_run: bool = False) -> None:
@@ -39,22 +47,30 @@ async def process_feed(
     if episode is None:
         return
 
+    podcast_dir = cfg.paths.output_dir / _safe_name(episode.feed_title)
+    date_str = episode.published.strftime("%d.%m.%Y")
+    ext = cfg.audio.output_format.value
+    clean_path = podcast_dir / f"{date_str} - {_safe_name(episode.title)}.{ext}"
+    podcast_dir.mkdir(parents=True, exist_ok=True)
+
     async with get_db(cfg.paths.database) as db:
         ep_repo = EpisodeRepository(db)
         await ep_repo.upsert(episode)
 
-        audio_path = await download_episode(episode, output_dir=cfg.paths.output_dir)
+        audio_path = await download_episode(episode)
+        try:
+            transcript = await transcribe_episode(episode, audio_path, cfg, db)
 
-        transcript = await transcribe_episode(episode, audio_path, cfg, db)
+            topic_context = await extract_topic(transcript, cfg, db)
 
-        topic_context = await extract_topic(transcript, cfg, db)
+            ad_segments = await detect_ads(topic_context, transcript, cfg, db)
 
-        ad_segments = await detect_ads(topic_context, transcript, cfg, db)
-
-        if not dry_run and ad_segments:
-            await cut_ads(audio_path, ad_segments, cfg, db)
-        elif dry_run:
-            logger.info("Dry run: skipping audio cutting")
+            if not dry_run and ad_segments:
+                await cut_ads(audio_path, ad_segments, cfg, db, output_path=clean_path)
+            elif dry_run:
+                logger.info("Dry run: skipping audio cutting")
+        finally:
+            audio_path.unlink(missing_ok=True)
 
 
 async def detect_ads(topic_context, transcript, cfg, db):

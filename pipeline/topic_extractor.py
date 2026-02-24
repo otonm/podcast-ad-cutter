@@ -1,7 +1,7 @@
 import json
 import logging
 
-from config_loader import AppConfig
+from config.config_loader import AppConfig
 from db.repositories.llm_call_repo import LLMCallRepository
 from models.ad_segment import TopicContext
 from models.llm_call import CallType, LLMCall

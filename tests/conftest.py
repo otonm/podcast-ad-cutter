@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from config_loader import AppConfig, load_config
+from config.config_loader import AppConfig, load_config
 
 
 @pytest.fixture

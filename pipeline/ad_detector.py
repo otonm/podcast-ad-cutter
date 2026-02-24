@@ -3,7 +3,7 @@ import json
 import logging
 from dataclasses import dataclass
 
-from config_loader import AppConfig
+from config.config_loader import AppConfig
 from models.ad_segment import AdSegment, TopicContext
 from models.transcript import Transcript
 from pipeline.llm_client import complete

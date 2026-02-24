@@ -5,7 +5,7 @@ from models.episode import Episode
 
 
 @respx.mock
-async def test_download_episode(tmp_path):
+async def test_download_episode():
     from pipeline.downloader import download_episode
 
     ep = Episode(
@@ -19,15 +19,18 @@ async def test_download_episode(tmp_path):
     respx.get("https://example.com/ep1.mp3").respond(200, content=audio_bytes)
 
     async with httpx.AsyncClient() as client:
-        path = await download_episode(ep, output_dir=tmp_path, client=client)
+        path = await download_episode(ep, client=client)
 
-    assert path.exists()
-    assert path.stat().st_size == len(audio_bytes)
-    assert path.suffix == ".mp3"
+    try:
+        assert path.exists()
+        assert path.stat().st_size == len(audio_bytes)
+        assert path.suffix == ".mp3"
+    finally:
+        path.unlink(missing_ok=True)
 
 
 @respx.mock
-async def test_download_follows_redirect(tmp_path):
+async def test_download_follows_redirect():
     from pipeline.downloader import download_episode
 
     ep = Episode(
@@ -44,7 +47,11 @@ async def test_download_follows_redirect(tmp_path):
     respx.get("https://cdn.example.com/ep2.mp3").respond(200, content=audio_bytes)
 
     async with httpx.AsyncClient(follow_redirects=True) as client:
-        path = await download_episode(ep, output_dir=tmp_path, client=client)
+        path = await download_episode(ep, client=client)
 
-    assert path.exists()
-    assert path.stat().st_size == len(audio_bytes)
+    try:
+        assert path.exists()
+        assert path.stat().st_size == len(audio_bytes)
+        assert path.suffix == ".mp3"
+    finally:
+        path.unlink(missing_ok=True)

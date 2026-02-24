@@ -8,7 +8,7 @@ from pathlib import Path
 # pydub uses invalid escape sequences in regex strings (a pydub bug); suppress the noise
 warnings.filterwarnings("ignore", category=SyntaxWarning, module="pydub")
 
-from config_loader import load_config
+from config.config_loader import load_config
 from pipeline.runner import run_pipeline
 
 
@@ -22,7 +22,10 @@ def setup_logging(level: str, log_file: str | None) -> None:
         datefmt="%H:%M:%S",
         handlers=handlers,
     )
-    logging.getLogger("litellm").setLevel(logging.WARNING)
+    litellm_logger = logging.getLogger("litellm")
+    litellm_logger.handlers.clear()  # remove litellm's own StreamHandler added at import
+    litellm_logger.setLevel(logging.WARNING)
+    litellm_logger.propagate = True  # already True, but explicit for clarity
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 

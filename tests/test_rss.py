@@ -44,7 +44,7 @@ async def test_fetch_latest_episode():
     import httpx
     import respx
 
-    from config_loader import FeedConfig
+    from config.config_loader import FeedConfig
     from pipeline.rss import fetch_latest_episode
 
     xml = Path("tests/fixtures/sample_feed.xml").read_text()

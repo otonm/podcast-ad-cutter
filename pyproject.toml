@@ -19,11 +19,8 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["models*", "pipeline*", "db*"]
+include = ["config*", "models*", "pipeline*", "db*"]
 exclude = ["tests*", "output*", "data*"]
-
-[tool.setuptools]
-py-modules = ["config_loader"]
 
 [dependency-groups]
 dev = [

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from config_loader import InterpretationConfig, TranscriptionConfig
+from config.config_loader import InterpretationConfig, TranscriptionConfig
 
 
 @pytest.fixture

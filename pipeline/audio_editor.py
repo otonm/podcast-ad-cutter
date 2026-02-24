@@ -2,7 +2,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from config_loader import AppConfig
+from config.config_loader import AppConfig
 from db.repositories import AdSegmentRepository
 from models.ad_segment import AdSegment
 from pydub import AudioSegment
@@ -16,9 +16,11 @@ async def cut_ads(
     ad_segments: list[AdSegment],
     cfg: AppConfig,
     db,
+    *,
+    output_path: Path,
 ) -> Path:
     """Cut ad segments from audio and export clean file."""
-    return await asyncio.to_thread(_cut_ads_sync, audio_path, ad_segments, cfg, db)
+    return await asyncio.to_thread(_cut_ads_sync, audio_path, ad_segments, cfg, db, output_path)
 
 
 def _cut_ads_sync(
@@ -26,6 +28,7 @@ def _cut_ads_sync(
     ad_segments: list[AdSegment],
     cfg: AppConfig,
     db,
+    output_path: Path,
 ) -> Path:
     """Synchronous audio cutting function (runs in thread)."""
     try:
@@ -55,8 +58,6 @@ def _cut_ads_sync(
         clean_audio = sum(keep_segments[1:], keep_segments[0])
     except Exception as exc:
         raise AudioEditError(f"Failed to concatenate audio: {exc}") from exc
-
-    output_path = audio_path.parent / f"clean{audio_path.suffix}"
 
     try:
         clean_audio.export(

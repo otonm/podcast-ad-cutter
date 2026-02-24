@@ -4,7 +4,7 @@ import pytest
 
 
 def test_load_valid_config():
-    from config_loader import load_config
+    from config.config_loader import load_config
 
     cfg = load_config(Path("tests/fixtures/test_config.yaml"))
     assert cfg.interpretation.provider == "openai"
@@ -17,7 +17,7 @@ def test_load_valid_config():
 
 
 def test_config_paths_are_path_objects():
-    from config_loader import load_config
+    from config.config_loader import load_config
 
     cfg = load_config(Path("tests/fixtures/test_config.yaml"))
     assert isinstance(cfg.paths.output_dir, Path)
@@ -25,7 +25,7 @@ def test_config_paths_are_path_objects():
 
 
 def test_missing_config_raises():
-    from config_loader import load_config
+    from config.config_loader import load_config
     from pipeline.exceptions import ConfigError
 
     with pytest.raises(ConfigError):
@@ -33,7 +33,7 @@ def test_missing_config_raises():
 
 
 def test_invalid_config_raises(tmp_path):
-    from config_loader import load_config
+    from config.config_loader import load_config
     from pipeline.exceptions import ConfigError
 
     bad = tmp_path / "bad.yaml"

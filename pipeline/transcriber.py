@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 
-from config_loader import AppConfig
+from config.config_loader import AppConfig
 from db.repositories import TranscriptRepository
 from db.repositories.llm_call_repo import LLMCallRepository
 from models.episode import Episode
