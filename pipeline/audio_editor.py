@@ -20,14 +20,15 @@ async def cut_ads(
     output_path: Path,
 ) -> Path:
     """Cut ad segments from audio and export clean file."""
-    return await asyncio.to_thread(_cut_ads_sync, audio_path, ad_segments, cfg, db, output_path)
+    result = await asyncio.to_thread(_cut_ads_sync, audio_path, ad_segments, cfg, output_path)
+    await _mark_segments_cut(ad_segments, db)
+    return result
 
 
 def _cut_ads_sync(
     audio_path: Path,
     ad_segments: list[AdSegment],
     cfg: AppConfig,
-    db,
     output_path: Path,
 ) -> Path:
     """Synchronous audio cutting function (runs in thread)."""
@@ -78,8 +79,6 @@ def _cut_ads_sync(
         removed_sec,
         pct,
     )
-
-    asyncio.create_task(_mark_segments_cut(ad_segments_sorted, db))
 
     return output_path
 

@@ -8,7 +8,7 @@ from db.repositories.llm_call_repo import LLMCallRepository
 from models.llm_call import CallType, LLMCall
 from pipeline.audio_editor import cut_ads
 from pipeline.downloader import download_episode
-from pipeline.rss import fetch_latest_episode
+from pipeline.rss import fetch_episodes
 from pipeline.topic_extractor import extract_topic
 from pipeline.transcriber import transcribe_episode
 
@@ -40,11 +40,23 @@ async def process_feed(
     *,
     dry_run: bool = False,
 ) -> None:
-    """Process a single feed: fetch episode, download, transcribe, detect ads, cut."""
-    episode = await fetch_latest_episode(feed_cfg)
-    if episode is None:
+    """Process a single feed: fetch episodes, process each one not already present."""
+    episodes = await fetch_episodes(feed_cfg, episodes_to_keep=cfg.episodes_to_keep)
+    if not episodes:
         return
 
+    for episode in episodes:
+        logger.info("Processing episode: %s", episode.title)
+        await _process_episode(episode, cfg, dry_run=dry_run)
+
+
+async def _process_episode(
+    episode,
+    cfg: AppConfig,
+    *,
+    dry_run: bool = False,
+) -> None:
+    """Download, transcribe, detect ads, and cut a single episode."""
     podcast_dir = cfg.paths.output_dir / _safe_name(episode.feed_title)
     date_str = episode.published.strftime("%d.%m.%Y")
     ext = cfg.audio.output_format.value

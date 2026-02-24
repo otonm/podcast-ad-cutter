@@ -40,12 +40,12 @@ def test_parse_feed_returns_sorted_by_date():
     assert episodes[0].guid == "ep-042"  # newest first
 
 
-async def test_fetch_latest_episode():
+async def test_fetch_episodes():
     import httpx
     import respx
 
     from config.config_loader import FeedConfig
-    from pipeline.rss import fetch_latest_episode
+    from pipeline.rss import fetch_episodes
 
     xml = Path("tests/fixtures/sample_feed.xml").read_text()
     feed_cfg = FeedConfig(name="Test Podcast", url="https://feeds.example.com/test.rss")
@@ -53,6 +53,6 @@ async def test_fetch_latest_episode():
     with respx.mock:
         respx.get("https://feeds.example.com/test.rss").respond(200, text=xml)
         async with httpx.AsyncClient() as client:
-            ep = await fetch_latest_episode(feed_cfg, client=client)
-    assert ep is not None
-    assert ep.guid == "ep-042"
+            episodes = await fetch_episodes(feed_cfg, client=client)
+    assert len(episodes) > 0
+    assert episodes[0].guid == "ep-042"

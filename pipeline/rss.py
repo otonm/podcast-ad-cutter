@@ -68,12 +68,13 @@ def _parse_date(entry: feedparser.FeedParserDict) -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
-async def fetch_latest_episode(
+async def fetch_episodes(
     feed_cfg: FeedConfig,
     *,
+    episodes_to_keep: int = 5,
     client: httpx.AsyncClient | None = None,
-) -> Episode | None:
-    """Fetch the RSS feed and return the most recent episode."""
+) -> list[Episode]:
+    """Fetch the RSS feed and return the N most recent episodes (newest first)."""
     logger.info("Fetching feed: %s", feed_cfg.name)
     should_close = client is None
     if client is None:
@@ -91,7 +92,20 @@ async def fetch_latest_episode(
     episodes = parse_feed(response.text, feed_name=feed_cfg.name)
     if not episodes:
         logger.warning("No episodes found in feed '%s'", feed_cfg.name)
-        return None
+        return []
 
-    logger.info("Latest episode: %s", episodes[0].title)
-    return episodes[0]
+    if len(episodes) < episodes_to_keep:
+        logger.warning(
+            "Feed '%s' has only %d episode(s), fewer than the requested %d",
+            feed_cfg.name,
+            len(episodes),
+            episodes_to_keep,
+        )
+    result = episodes[:episodes_to_keep]
+    logger.info(
+        "Found %d episodes in '%s' (processing up to %d)",
+        len(episodes),
+        feed_cfg.name,
+        episodes_to_keep,
+    )
+    return result

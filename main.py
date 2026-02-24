@@ -28,6 +28,8 @@ def setup_logging(level: str, log_file: str | None) -> None:
         log.setLevel(logging.WARNING)
         log.propagate = True
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    # pydub.converter intentionally left unsuppressed — it logs the full
+    # ffmpeg command at DEBUG level (useful with -v / --verbose)
 
 
 def parse_args() -> argparse.Namespace:

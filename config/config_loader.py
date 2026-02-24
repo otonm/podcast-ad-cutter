@@ -114,6 +114,7 @@ class AppConfig(BaseModel, frozen=True):
     audio: AudioConfig
     logging: LoggingConfig
     retry: RetryConfig
+    episodes_to_keep: int = 5
 
 
 def load_config(config_path: Path) -> AppConfig:
