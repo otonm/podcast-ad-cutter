@@ -105,6 +105,20 @@ def test_ad_segment_confidence_negative():
         )
 
 
+def test_ad_segment_end_before_start_raises():
+    from models.ad_segment import AdSegment
+
+    with pytest.raises(ValidationError):
+        AdSegment(episode_guid="g", start_ms=1000, end_ms=500, confidence=0.9, reason="ad")
+
+
+def test_ad_segment_equal_timestamps_raises():
+    from models.ad_segment import AdSegment
+
+    with pytest.raises(ValidationError):
+        AdSegment(episode_guid="g", start_ms=1000, end_ms=1000, confidence=0.9, reason="ad")
+
+
 def test_topic_context_creation():
     from models.ad_segment import TopicContext
 

@@ -3,6 +3,8 @@ import json
 import logging
 from dataclasses import dataclass
 
+from pydantic import ValidationError
+
 from config.config_loader import AppConfig
 from models.ad_segment import AdSegment, TopicContext
 from models.transcript import Transcript
@@ -13,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 _LLM_SEMAPHORE = asyncio.Semaphore(3)
 _MAX_PARSE_RETRIES: int = 3
+_MIN_AD_DURATION_MS: int = 10_000  # ads shorter than 10s are not real ads
 
 AD_DETECTION_PROMPT = """Identify advertisements in this podcast transcript segment.
 An ad is any span where the host or another person or persons promote a product, service, or sponsor.
@@ -100,13 +103,38 @@ async def _detect_single(
 ) -> tuple[list[AdSegment], float]:
     """Send the full transcript to the LLM in a single call."""
     messages = _build_messages(topic_context, transcript.full_text)
-    try:
-        response, cost = await complete(messages, cfg.interpretation)
-        segments = _parse_ad_segments(response, transcript.episode_guid)
-        return segments, cost
-    except Exception as exc:
-        logger.warning(f"Single-call ad detection failed: {exc}")
-        return [], 0.0
+    response = ""
+    for attempt in range(_MAX_PARSE_RETRIES):
+        try:
+            response, cost = await complete(messages, cfg.interpretation)
+            segments = _parse_ad_segments(response, transcript.episode_guid)
+            return segments, cost
+        except LLMError as exc:
+            logger.warning(f"Single-call ad detection LLM error: {exc}")
+            return [], 0.0
+        except AdDetectionError:
+            if attempt < _MAX_PARSE_RETRIES - 1:
+                logger.warning(
+                    f"Single-call invalid JSON (attempt {attempt + 1}/{_MAX_PARSE_RETRIES}),"
+                    " retrying with feedback"
+                )
+                messages = [
+                    *messages,
+                    {"role": "assistant", "content": response},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your response was not valid JSON. Please respond with only a valid"
+                            " JSON array, no markdown, no code blocks, no preamble."
+                        ),
+                    },
+                ]
+            else:
+                logger.warning(
+                    f"Single-call failed after {_MAX_PARSE_RETRIES} parse attempts,"
+                    " returning empty"
+                )
+    return [], 0.0
 
 
 async def _detect_chunk(
@@ -165,20 +193,26 @@ def _parse_ad_segments(response: str, episode_guid: str) -> list[AdSegment]:
     segments = []
     for item in data:
         try:
-            segments.append(
-                AdSegment(
-                    episode_guid=episode_guid,
-                    start_ms=int(item.get("start_sec", 0) * 1000),
-                    end_ms=int(item.get("end_sec", 0) * 1000),
-                    confidence=float(item.get("confidence", 0)),
-                    reason=item.get("reason", ""),
-                    sponsor_name=item.get("sponsor"),
-                )
+            seg = AdSegment(
+                episode_guid=episode_guid,
+                start_ms=int(item.get("start_sec", 0) * 1000),
+                end_ms=int(item.get("end_sec", 0) * 1000),
+                confidence=float(item.get("confidence", 0)),
+                reason=item.get("reason", ""),
+                sponsor_name=item.get("sponsor"),
             )
-        except (KeyError, ValueError) as exc:
+        except (KeyError, ValueError, ValidationError) as exc:
             logger.warning(f"Failed to parse ad segment: {exc}")
             continue
 
+        if seg.end_ms - seg.start_ms < _MIN_AD_DURATION_MS:
+            logger.debug(
+                f"Skipping segment {seg.start_ms}–{seg.end_ms}ms:"
+                f" duration {seg.end_ms - seg.start_ms}ms < {_MIN_AD_DURATION_MS}ms minimum"
+            )
+            continue
+
+        segments.append(seg)
     return segments
 
 

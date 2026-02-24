@@ -8,6 +8,7 @@ from config.config_loader import AppConfig
 from models.ad_segment import TopicContext
 from models.transcript import Segment, Transcript
 from pipeline.ad_detector import _create_chunks, _detect_single, detect_ads
+from pipeline.exceptions import LLMError
 from pipeline.llm_client import fits_in_context
 
 
@@ -147,7 +148,7 @@ async def test_detect_single_returns_empty_on_llm_failure(
     with patch(
         "pipeline.ad_detector.complete",
         new_callable=AsyncMock,
-        side_effect=Exception("LLM error"),
+        side_effect=LLMError("LLM error"),
     ):
         segments, cost = await _detect_single(transcript, topic_ctx, app_config)
 

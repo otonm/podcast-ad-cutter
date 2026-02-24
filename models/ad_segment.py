@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class TopicContext(BaseModel, frozen=True):
@@ -16,3 +16,9 @@ class AdSegment(BaseModel, frozen=True):
     reason: str
     sponsor_name: str | None = None
     was_cut: bool = False
+
+    @model_validator(mode="after")
+    def end_after_start(self) -> "AdSegment":
+        if self.end_ms <= self.start_ms:
+            raise ValueError(f"end_ms {self.end_ms} must be > start_ms {self.start_ms}")
+        return self
