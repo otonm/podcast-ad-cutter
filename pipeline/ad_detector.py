@@ -77,6 +77,22 @@ def _build_messages(topic_context: TopicContext, transcript_text: str) -> list[d
     ]
 
 
+async def _detect_single(
+    transcript: Transcript,
+    topic_context: TopicContext,
+    cfg: AppConfig,
+) -> tuple[list[AdSegment], float]:
+    """Send the full transcript to the LLM in a single call."""
+    messages = _build_messages(topic_context, transcript.full_text)
+    try:
+        response, cost = await complete(messages, cfg.interpretation)
+        segments = _parse_ad_segments(response, transcript.episode_guid)
+        return segments, cost
+    except Exception as exc:
+        logger.warning("Single-call ad detection failed: %s", exc)
+        return [], 0.0
+
+
 async def _detect_chunk(
     chunk: TranscriptChunk,
     topic_context: TopicContext,

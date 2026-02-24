@@ -1,11 +1,13 @@
 """Tests for pipeline/ad_detector.py — focusing on _create_chunks()."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from config.config_loader import AppConfig
+from models.ad_segment import TopicContext
 from models.transcript import Segment, Transcript
-from pipeline.ad_detector import _create_chunks
+from pipeline.ad_detector import _create_chunks, _detect_single
 from pipeline.llm_client import fits_in_context
 
 
@@ -106,4 +108,49 @@ def test_fits_in_context_returns_false_when_prompt_exceeds_budget() -> None:
         patch("litellm.token_counter", return_value=3_500),
     ):
         assert fits_in_context(messages, model="ollama/llama2", max_output_tokens=512) is False
+
+
+# ── _detect_single tests ───────────────────────────────────────────────────────
+
+@pytest.fixture
+def topic_ctx() -> TopicContext:
+    return TopicContext(domain="tech", topic="rust programming", hosts=("Alice",), notes="")
+
+
+async def test_detect_single_parses_llm_response(
+    app_config: AppConfig, topic_ctx: TopicContext
+) -> None:
+    transcript = _make_transcript(10)
+    mock_json = (
+        '[{"start_sec": 10.0, "end_sec": 30.0, "confidence": 0.9, '
+        '"reason": "promo code", "sponsor": "ACME"}]'
+    )
+    with patch(
+        "pipeline.ad_detector.complete",
+        new_callable=AsyncMock,
+        return_value=(mock_json, 0.05),
+    ):
+        segments, cost = await _detect_single(transcript, topic_ctx, app_config)
+
+    assert len(segments) == 1
+    assert segments[0].start_ms == 10_000
+    assert segments[0].end_ms == 30_000
+    assert segments[0].confidence == pytest.approx(0.9)
+    assert segments[0].sponsor_name == "ACME"
+    assert cost == pytest.approx(0.05)
+
+
+async def test_detect_single_returns_empty_on_llm_failure(
+    app_config: AppConfig, topic_ctx: TopicContext
+) -> None:
+    transcript = _make_transcript(10)
+    with patch(
+        "pipeline.ad_detector.complete",
+        new_callable=AsyncMock,
+        side_effect=Exception("LLM error"),
+    ):
+        segments, cost = await _detect_single(transcript, topic_ctx, app_config)
+
+    assert segments == []
+    assert cost == pytest.approx(0.0)
 
