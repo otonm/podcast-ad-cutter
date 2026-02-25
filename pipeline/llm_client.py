@@ -1,16 +1,23 @@
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
 import litellm
 from tenacity import before_sleep_log, retry, stop_after_attempt, wait_exponential
 
-from config.config_loader import InterpretationConfig, TranscriptionConfig
+from config.config_loader import AppConfig, InterpretationConfig, TranscriptionConfig
 from pipeline.exceptions import LLMError, TranscriptionError
 
 logger = logging.getLogger(__name__)
 litellm.suppress_debug_info = True
 litellm.drop_params = True  # drop unsupported params (e.g. timestamp_granularities on Groq)
+
+_PROVIDER_ENV_VAR: dict[str, str] = {
+    "groq": "GROQ_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+}
 
 
 @retry(
@@ -115,3 +122,31 @@ def fits_in_context(
     safe_budget = int(max_ctx * 0.85)
     token_count: int = litellm.token_counter(model=model, messages=messages)
     return token_count + max_output_tokens <= safe_budget
+
+
+def validate_api_keys(cfg: AppConfig) -> None:
+    """Probe each configured provider's API key. Raises ConfigError on missing or invalid keys.
+
+    Deduplicates by provider — a provider used for both transcription and interpretation
+    is probed only once.
+    """
+    from pipeline.exceptions import ConfigError
+
+    seen: set[str] = set()
+    for sub_cfg in (cfg.transcription, cfg.interpretation):
+        if sub_cfg.provider in seen:
+            continue
+        seen.add(sub_cfg.provider)
+
+        env_var = _PROVIDER_ENV_VAR.get(sub_cfg.provider, f"{sub_cfg.provider.upper()}_API_KEY")
+        key = os.environ.get(env_var, "")
+        if not key:
+            raise ConfigError(
+                f"Missing {env_var} environment variable (required for {sub_cfg.provider_model})"
+            )
+        if not litellm.check_valid_key(model=sub_cfg.provider_model, api_key=key):
+            raise ConfigError(
+                f"Invalid API key for {sub_cfg.provider_model} (check {env_var})"
+            )
+
+    logger.info("API key validation passed")

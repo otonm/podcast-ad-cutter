@@ -5,31 +5,34 @@ import sys
 import warnings
 from pathlib import Path
 
+from config.config_loader import load_config
+from pipeline.llm_client import validate_api_keys
+from pipeline.runner import run_pipeline
+
 # pydub uses invalid escape sequences in regex strings (a pydub bug); suppress the noise
 warnings.filterwarnings("ignore", category=SyntaxWarning, module="pydub")
-
-from config.config_loader import load_config
-from pipeline.runner import run_pipeline
 
 
 def setup_logging(level: str, log_file: str | None) -> None:
     handlers: list[logging.Handler] = [logging.StreamHandler()]
     if log_file:
         handlers.append(logging.FileHandler(Path(log_file)))
+
     logging.basicConfig(
         level=level.upper(),
         format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
         datefmt="%H:%M:%S",
         handlers=handlers,
     )
-    for name in ("litellm", "LiteLLM"):
-        log = logging.getLogger(name)
-        log.handlers.clear()
-        log.setLevel(logging.WARNING)
-        log.propagate = True
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    # pydub.converter intentionally left unsuppressed — it logs the full
-    # ffmpeg command at DEBUG level (useful with -v / --verbose)
+
+    litellm_logger = logging.getLogger("LiteLLM")
+    
+    if level == "INFO":
+        # Suppress httpx request and litellm logging at INFO level 
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        litellm_logger.setLevel(logging.WARNING)
+    
+    litellm_logger.propagate = True
 
 
 def parse_args() -> argparse.Namespace:
@@ -87,6 +90,12 @@ async def main() -> None:
 
     log_level = "DEBUG" if args.verbose else cfg.logging.level
     setup_logging(log_level, cfg.logging.log_file)
+
+    try:
+        validate_api_keys(cfg)
+    except Exception as exc:
+        logging.error(f"API key validation failed: {exc}")
+        sys.exit(1)
 
     if args.feed:
         cfg.feeds = [f for f in cfg.feeds if f.name == args.feed]
