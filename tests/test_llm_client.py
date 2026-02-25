@@ -72,3 +72,30 @@ async def test_transcribe_returns_dict(transcription_config, tmp_path):
         result, cost = await transcribe(audio_file, transcription_config)
     assert result is mock_result
     assert cost == 0.002
+
+
+async def test_transcribe_fallback_cost_from_model_cost(tmp_path):
+    from pipeline.llm_client import transcribe
+
+    audio_file = tmp_path / "test.mp3"
+    audio_file.write_bytes(b"fake audio data")
+
+    mock_result = MagicMock()
+    mock_result.get = lambda key, default=None: {
+        "words": [{"word": "hello", "start": 0.0, "end": 0.5}],
+        "duration": 120.0,
+    }.get(key, default)
+    mock_result._hidden_params = {"response_cost": None}
+
+    config = TranscriptionConfig(provider="groq", model="whisper-large-v3", language="en")
+    expected_cost = 120.0 * 3.083e-05
+
+    with patch("pipeline.llm_client.litellm") as mock_litellm:
+        mock_litellm.atranscription = AsyncMock(return_value=mock_result)
+        mock_litellm.APIError = Exception
+        mock_litellm.model_cost = {
+            "groq/whisper-large-v3": {"input_cost_per_second": 3.083e-05}
+        }
+        _, cost = await transcribe(audio_file, config)
+
+    assert cost == pytest.approx(expected_cost)

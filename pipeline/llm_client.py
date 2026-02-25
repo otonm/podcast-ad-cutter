@@ -26,18 +26,21 @@ async def complete(
     response_format: dict[str, str] | None = None,
 ) -> tuple[str, float]:
     """Return (content, cost_usd) of the first completion choice."""
+
     kwargs: dict[str, Any] = {
         "model": cfg.provider_model,
         "messages": messages,
         "temperature": cfg.temperature,
         "max_tokens": cfg.max_tokens,
     }
+
     if cfg.api_base:
         kwargs["api_base"] = cfg.api_base
     if response_format:
         kwargs["response_format"] = response_format
 
     logger.debug(f"LLM request model={cfg.provider_model} messages={len(messages)}")
+
     try:
         response = await litellm.acompletion(**kwargs)
     except litellm.APIError as exc:
@@ -51,12 +54,15 @@ async def complete(
         f" completion_tokens={response.usage.completion_tokens}"
         f" cost_usd={cost}"
     )
+
     return content, cost
 
 
 async def transcribe(audio_path: Path, cfg: TranscriptionConfig) -> tuple[dict[str, Any], float]:
     """Transcribe audio via litellm.atranscription. Returns (verbose JSON, cost_usd)."""
+
     logger.info(f"Transcribing {audio_path.name} with model={cfg.provider_model}")
+
     with audio_path.open("rb") as f:
         try:
             kwargs: dict[str, Any] = {
@@ -68,13 +74,20 @@ async def transcribe(audio_path: Path, cfg: TranscriptionConfig) -> tuple[dict[s
             }
             if cfg.api_base:
                 kwargs["api_base"] = cfg.api_base
+            logger.debug(f"kwargs: {kwargs}")
             result = await litellm.atranscription(**kwargs)
         except litellm.APIError as exc:
             raise TranscriptionError(f"Transcription failed: {exc}") from exc
 
     cost: float = result._hidden_params.get("response_cost") or 0.0  # type: ignore[union-attr]
+    if not cost:
+        duration: float = result.get("duration", 0.0)
+        model_info: dict[str, object] = litellm.model_cost.get(cfg.provider_model, {})
+        rate: float = float(model_info.get("input_cost_per_second", 0.0))
+        cost = duration * rate
     n_segments = len(result.get("words") or result.get("segments") or [])
     logger.info(f"Transcription complete segments={n_segments}")
+
     return result, cost  # type: ignore[return-value]
 
 
