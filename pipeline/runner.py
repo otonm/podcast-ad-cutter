@@ -122,6 +122,13 @@ async def detect_ads(topic_context, transcript, cfg, db):
 
     segments, total_cost = await detect_ads_impl(topic_context, transcript, cfg)
     merged = merge_segments(segments, cfg.ad_detection.merge_gap_sec)
+    above_threshold = [s for s in merged if s.confidence >= cfg.ad_detection.min_confidence]
+    total_ms = sum(s.end_ms - s.start_ms for s in above_threshold)
+    logger.info(
+        f"Ad detection complete: {len(merged)} segment(s) found, "
+        f"{len(above_threshold)} above threshold "
+        f"({total_ms / 1000:.1f}s to cut)"
+    )
     await ad_repo.save_all(merged)
     await llm_repo.save(
         LLMCall(
