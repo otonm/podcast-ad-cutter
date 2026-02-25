@@ -3,7 +3,7 @@ feeds:
     url: "https://feeds.simplecast.com/Sl5CSM3S"
     enabled: true
 
-episodes_to_keep: 1
+episodes_to_keep: 5
 
 paths:
   output_dir: "./output"
@@ -36,7 +36,7 @@ audio:
   cbr_bitrate: "192k"
 
 logging:
-  level: "DEBUG"
+  level: "INFO"
   log_file: null
 
 retry:

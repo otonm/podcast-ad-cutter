@@ -54,6 +54,7 @@ def test_prompts_defaults_are_non_empty_strings():
 
 def test_prompts_can_be_overridden(tmp_path):
     import shutil
+
     from config.config_loader import load_config
 
     dst = tmp_path / "config.yaml"

@@ -10,13 +10,16 @@ from pipeline.exceptions import ConfigError
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_AD_DETECTION_PROMPT: str = """Identify advertisements in this podcast transcript segment.
-An ad is any span where the host or another person or persons promote a product, service, or sponsor.
-Exclude brand mentions that are naturally part of the episode content.
-Return only a JSON array — no markdown, no preamble.
-Schema: [{"start_sec": float, "end_sec": float, "confidence": float,
-          "reason": str, "sponsor": str | null}]
-Return [] if no ads are found."""
+_DEFAULT_AD_DETECTION_PROMPT: str = (
+    "Identify advertisements in this podcast transcript segment.\n"
+    "An ad is any span where the host or another person or persons"
+    " promote a product, service, or sponsor.\n"
+    "Exclude brand mentions that are naturally part of the episode content.\n"
+    "Return only a JSON array — no markdown, no preamble.\n"
+    'Schema: [{"start_sec": float, "end_sec": float, "confidence": float,\n'
+    '          "reason": str, "sponsor": str | null}]\n'
+    "Return [] if no ads are found."
+)
 
 _DEFAULT_TOPIC_EXTRACTION_PROMPT: str = """Analyze the opening of this podcast transcript.
 Return only a JSON object — no markdown, no preamble.
