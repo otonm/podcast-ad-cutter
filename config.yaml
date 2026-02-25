@@ -3,7 +3,7 @@ feeds:
     url: "https://feeds.simplecast.com/Sl5CSM3S"
     enabled: true
 
-episodes_to_keep: 5
+episodes_to_keep: 1
 
 paths:
   output_dir: "./output"
@@ -36,9 +36,27 @@ audio:
   cbr_bitrate: "192k"
 
 logging:
-  level: "INFO"
+  level: "DEBUG"
   log_file: null
 
 retry:
   max_attempts: 3
   backoff_factor: 2
+
+# prompts:
+#   # Override the LLM system prompt for ad detection.
+#   # Uncomment and edit to customise. Default shown below.
+#   ad_detection: |
+#     Identify advertisements in this podcast transcript segment.
+#     An ad is any span where the host or another person or persons promote a product, service, or sponsor.
+#     Exclude brand mentions that are naturally part of the episode content.
+#     Return only a JSON array — no markdown, no preamble.
+#     Schema: [{"start_sec": float, "end_sec": float, "confidence": float,
+#               "reason": str, "sponsor": str | null}]
+#     Return [] if no ads are found.
+#
+#   # Override the LLM system prompt for topic extraction.
+#   topic_extraction: |
+#     Analyze the opening of this podcast transcript.
+#     Return only a JSON object — no markdown, no preamble.
+#     Schema: {"domain": str, "topic": str, "hosts": list[str], "notes": str}

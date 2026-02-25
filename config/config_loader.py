@@ -10,6 +10,18 @@ from pipeline.exceptions import ConfigError
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_AD_DETECTION_PROMPT: str = """Identify advertisements in this podcast transcript segment.
+An ad is any span where the host or another person or persons promote a product, service, or sponsor.
+Exclude brand mentions that are naturally part of the episode content.
+Return only a JSON array — no markdown, no preamble.
+Schema: [{"start_sec": float, "end_sec": float, "confidence": float,
+          "reason": str, "sponsor": str | null}]
+Return [] if no ads are found."""
+
+_DEFAULT_TOPIC_EXTRACTION_PROMPT: str = """Analyze the opening of this podcast transcript.
+Return only a JSON object — no markdown, no preamble.
+Schema: {"domain": str, "topic": str, "hosts": list[str], "notes": str}"""
+
 
 class AudioFormat(StrEnum):
     MP3 = "mp3"
@@ -104,6 +116,11 @@ class RetryConfig(BaseModel, frozen=True):
     backoff_factor: int = 2
 
 
+class PromptsConfig(BaseModel, frozen=True):
+    ad_detection: str = _DEFAULT_AD_DETECTION_PROMPT
+    topic_extraction: str = _DEFAULT_TOPIC_EXTRACTION_PROMPT
+
+
 class AppConfig(BaseModel, frozen=True):
     feeds: list[FeedConfig]
     paths: PathsConfig
@@ -114,6 +131,7 @@ class AppConfig(BaseModel, frozen=True):
     logging: LoggingConfig
     retry: RetryConfig
     episodes_to_keep: int = 5
+    prompts: PromptsConfig = PromptsConfig()
 
 
 def load_config(config_path: Path) -> AppConfig:

@@ -12,10 +12,6 @@ logger = logging.getLogger(__name__)
 
 _MAX_PARSE_RETRIES: int = 3
 
-TOPIC_EXTRACTION_PROMPT = """Analyze the opening of this podcast transcript.
-Return only a JSON object — no markdown, no preamble.
-Schema: {"domain": str, "topic": str, "hosts": list[str], "notes": str}"""
-
 
 async def _get_topic_context(episode_guid: str, db) -> TopicContext | None:
     """Return a cached TopicContext for this episode, or None if not yet extracted."""
@@ -49,7 +45,7 @@ async def extract_topic(
     excerpt = " ".join(words)
 
     messages: list[dict[str, str]] = [
-        {"role": "system", "content": TOPIC_EXTRACTION_PROMPT},
+        {"role": "system", "content": cfg.prompts.topic_extraction},
         {"role": "user", "content": f"<transcript>{excerpt}</transcript>"},
     ]
 

@@ -40,3 +40,30 @@ def test_invalid_config_raises(tmp_path):
     bad.write_text("feeds: not_a_list\n")
     with pytest.raises((ConfigError, Exception)):
         load_config(bad)
+
+
+def test_prompts_defaults_are_non_empty_strings():
+    from config.config_loader import load_config
+
+    cfg = load_config(Path("tests/fixtures/test_config.yaml"))
+    assert isinstance(cfg.prompts.ad_detection, str)
+    assert len(cfg.prompts.ad_detection) > 10
+    assert isinstance(cfg.prompts.topic_extraction, str)
+    assert len(cfg.prompts.topic_extraction) > 10
+
+
+def test_prompts_can_be_overridden(tmp_path):
+    import shutil
+    from config.config_loader import load_config
+
+    dst = tmp_path / "config.yaml"
+    shutil.copy(Path("tests/fixtures/test_config.yaml"), dst)
+    with dst.open("a") as f:
+        f.write(
+            "\nprompts:\n"
+            "  ad_detection: 'Custom ad prompt'\n"
+            "  topic_extraction: 'Custom topic prompt'\n"
+        )
+    cfg = load_config(dst)
+    assert cfg.prompts.ad_detection == "Custom ad prompt"
+    assert cfg.prompts.topic_extraction == "Custom topic prompt"

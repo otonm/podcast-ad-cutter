@@ -17,14 +17,6 @@ _LLM_SEMAPHORE = asyncio.Semaphore(3)
 _MAX_PARSE_RETRIES: int = 3
 _MIN_AD_DURATION_MS: int = 10_000  # ads shorter than 10s are not real ads
 
-AD_DETECTION_PROMPT = """Identify advertisements in this podcast transcript segment.
-An ad is any span where the host or another person or persons promote a product, service, or sponsor.
-Exclude brand mentions that are naturally part of the episode content.
-Return only a JSON array — no markdown, no preamble.
-Schema: [{"start_sec": float, "end_sec": float, "confidence": float,
-          "reason": str, "sponsor": str | null}]
-Return [] if no ads are found."""
-
 
 @dataclass
 class TranscriptChunk:
@@ -48,7 +40,9 @@ async def detect_ads(
     if not transcript.segments:
         return [], 0.0
 
-    full_messages = _build_messages(topic_context, transcript.full_text)
+    full_messages = _build_messages(
+        topic_context, transcript.full_text, system_prompt=cfg.prompts.ad_detection
+    )
 
     if fits_in_context(
         full_messages,
@@ -76,7 +70,12 @@ async def detect_ads(
     return all_segments, sum(costs)
 
 
-def _build_messages(topic_context: TopicContext, transcript_text: str) -> list[dict[str, str]]:
+def _build_messages(
+    topic_context: TopicContext,
+    transcript_text: str,
+    *,
+    system_prompt: str,
+) -> list[dict[str, str]]:
     """Build the system + user message list for ad detection."""
     context_str = (
         f"Domain: {topic_context.domain}, "
@@ -84,7 +83,7 @@ def _build_messages(topic_context: TopicContext, transcript_text: str) -> list[d
         f"Hosts: {', '.join(topic_context.hosts)}"
     )
     return [
-        {"role": "system", "content": AD_DETECTION_PROMPT},
+        {"role": "system", "content": system_prompt},
         {
             "role": "user",
             "content": (
@@ -102,7 +101,9 @@ async def _detect_single(
     cfg: AppConfig,
 ) -> tuple[list[AdSegment], float]:
     """Send the full transcript to the LLM in a single call."""
-    messages = _build_messages(topic_context, transcript.full_text)
+    messages = _build_messages(
+        topic_context, transcript.full_text, system_prompt=cfg.prompts.ad_detection
+    )
     response = ""
     for attempt in range(_MAX_PARSE_RETRIES):
         try:
@@ -145,7 +146,7 @@ async def _detect_chunk(
     costs: list[float],
     index: int,
 ) -> None:
-    messages = _build_messages(topic_context, chunk.text)
+    messages = _build_messages(topic_context, chunk.text, system_prompt=cfg.prompts.ad_detection)
 
     async with _LLM_SEMAPHORE:
         response = ""
