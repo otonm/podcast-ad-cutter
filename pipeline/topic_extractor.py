@@ -1,6 +1,8 @@
 import json
 import logging
 
+import aiosqlite
+
 from config.config_loader import AppConfig
 from db.repositories.llm_call_repo import LLMCallRepository
 from models.ad_segment import TopicContext
@@ -13,7 +15,7 @@ logger = logging.getLogger(__name__)
 _MAX_PARSE_RETRIES: int = 3
 
 
-async def _get_topic_context(episode_guid: str, db) -> TopicContext | None:
+async def _get_topic_context(episode_guid: str, db: aiosqlite.Connection) -> TopicContext | None:
     """Return a cached TopicContext for this episode, or None if not yet extracted."""
     cursor = await db.execute(
         "SELECT domain, topic, hosts, notes FROM topic_contexts WHERE episode_guid = ?",
@@ -33,7 +35,7 @@ async def _get_topic_context(episode_guid: str, db) -> TopicContext | None:
 async def extract_topic(
     transcript: Transcript,
     cfg: AppConfig,
-    db,
+    db: aiosqlite.Connection,
 ) -> TopicContext | None:
     """Extract topic context from the transcript using LLM."""
     cached = await _get_topic_context(transcript.episode_guid, db)
@@ -107,10 +109,10 @@ async def extract_topic(
     return None
 
 
-async def _save_topic_context(topic: TopicContext, episode_guid: str, db) -> None:
+async def _save_topic_context(
+    topic: TopicContext, episode_guid: str, db: aiosqlite.Connection
+) -> None:
     """Persist topic context to database."""
-    import aiosqlite
-
     await db.execute(
         "INSERT OR REPLACE INTO topic_contexts (episode_guid, domain, topic, hosts, notes)"
         " VALUES (?, ?, ?, ?, ?)",
