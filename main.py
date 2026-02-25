@@ -6,6 +6,7 @@ import warnings
 from pathlib import Path
 
 from config.config_loader import load_config
+from pipeline.exceptions import ConfigError
 from pipeline.llm_client import validate_api_keys
 from pipeline.runner import run_pipeline
 
@@ -93,7 +94,7 @@ async def main() -> None:
 
     try:
         validate_api_keys(cfg)
-    except Exception as exc:
+    except ConfigError as exc:
         logging.error(f"API key validation failed: {exc}")
         sys.exit(1)
 

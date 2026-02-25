@@ -7,13 +7,14 @@ import litellm
 from tenacity import before_sleep_log, retry, stop_after_attempt, wait_exponential
 
 from config.config_loader import AppConfig, InterpretationConfig, TranscriptionConfig
-from pipeline.exceptions import LLMError, TranscriptionError
+from pipeline.exceptions import ConfigError, LLMError, TranscriptionError
 
 logger = logging.getLogger(__name__)
 litellm.suppress_debug_info = True
 litellm.drop_params = True  # drop unsupported params (e.g. timestamp_granularities on Groq)
 
 _PROVIDER_ENV_VAR: dict[str, str] = {
+    "anthropic": "ANTHROPIC_API_KEY",
     "groq": "GROQ_API_KEY",
     "openai": "OPENAI_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
@@ -130,8 +131,6 @@ def validate_api_keys(cfg: AppConfig) -> None:
     Deduplicates by provider — a provider used for both transcription and interpretation
     is probed only once.
     """
-    from pipeline.exceptions import ConfigError
-
     seen: set[str] = set()
     for sub_cfg in (cfg.transcription, cfg.interpretation):
         if sub_cfg.provider in seen:

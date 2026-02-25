@@ -102,6 +102,7 @@ async def test_transcribe_fallback_cost_from_model_cost(tmp_path):
 
 def test_validate_api_keys_raises_when_env_var_missing(monkeypatch):
     from pathlib import Path
+
     from config.config_loader import load_config
     from pipeline.exceptions import ConfigError
     from pipeline.llm_client import validate_api_keys
@@ -116,6 +117,7 @@ def test_validate_api_keys_raises_when_env_var_missing(monkeypatch):
 def test_validate_api_keys_raises_when_key_invalid(monkeypatch):
     from pathlib import Path
     from unittest.mock import patch
+
     from config.config_loader import load_config
     from pipeline.exceptions import ConfigError
     from pipeline.llm_client import validate_api_keys
@@ -123,14 +125,17 @@ def test_validate_api_keys_raises_when_key_invalid(monkeypatch):
     cfg = load_config(Path("tests/fixtures/test_config.yaml"))
     monkeypatch.setenv("OPENAI_API_KEY", "bad-key")
 
-    with patch("pipeline.llm_client.litellm.check_valid_key", return_value=False):
-        with pytest.raises(ConfigError, match="Invalid API key"):
-            validate_api_keys(cfg)
+    with (
+        patch("pipeline.llm_client.litellm.check_valid_key", return_value=False),
+        pytest.raises(ConfigError, match="Invalid API key"),
+    ):
+        validate_api_keys(cfg)
 
 
 def test_validate_api_keys_passes_with_valid_key(monkeypatch):
     from pathlib import Path
     from unittest.mock import patch
+
     from config.config_loader import load_config
     from pipeline.llm_client import validate_api_keys
 
@@ -145,6 +150,7 @@ def test_validate_api_keys_deduplicates_providers(monkeypatch):
     """When transcription and interpretation use the same provider, only one probe fires."""
     from pathlib import Path
     from unittest.mock import patch
+
     from config.config_loader import load_config
     from pipeline.llm_client import validate_api_keys
 
