@@ -43,7 +43,7 @@ async def complete(
 
     try:
         response = await litellm.acompletion(**kwargs)
-    except litellm.APIError as exc:
+    except litellm.APIError as exc:  # type: ignore[attr-defined]  # litellm stubs omit APIError
         raise LLMError(f"LLM call failed: {exc}") from exc
 
     content: str = response.choices[0].message.content or ""
@@ -78,7 +78,7 @@ async def transcribe(audio_path: Path, cfg: TranscriptionConfig) -> tuple[dict[s
                 f"Transcription request model={cfg.provider_model} language={cfg.language}"
             )
             result = await litellm.atranscription(**kwargs)
-        except litellm.APIError as exc:
+        except litellm.APIError as exc:  # type: ignore[attr-defined]  # litellm stubs omit APIError
             raise TranscriptionError(f"Transcription failed: {exc}") from exc
 
     cost: float = result._hidden_params.get("response_cost") or 0.0
@@ -114,5 +114,4 @@ def fits_in_context(
 
     safe_budget = int(max_ctx * 0.85)
     token_count: int = litellm.token_counter(model=model, messages=messages)
-    
     return token_count + max_output_tokens <= safe_budget
