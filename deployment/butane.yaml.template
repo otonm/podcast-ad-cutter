@@ -1,0 +1,90 @@
+variant: fcos
+version: 1.5.0
+
+# ── User setup ────────────────────────────────────────────────────────────────
+passwd:
+  users:
+    - name: core
+      ssh_authorized_keys:
+        - ${SSH_PUBLIC_KEY}
+
+# ── Files written on first boot ───────────────────────────────────────────────
+storage:
+  directories:
+    - path: /etc/podcast-ad-cutter
+      mode: 0755
+    - path: /var/lib/podcast-ad-cutter
+      mode: 0755
+
+  files:
+    # Operator's feed/model config — mounted read-only into the container
+    - path: /etc/podcast-ad-cutter/config.yaml
+      mode: 0644
+      contents:
+        local: config.yaml    # copied from project root by generate.sh
+
+    # Plaintext secrets — mode 0600, destroyed by first-boot.sh after use
+    - path: /etc/podcast-ad-cutter/secrets.env
+      mode: 0600
+      contents:
+        inline: |
+          GITHUB_USERNAME=${GITHUB_USERNAME}
+          GHCR_TOKEN=${GHCR_TOKEN}
+          ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+          OPENAI_API_KEY=${OPENAI_API_KEY}
+          GROQ_API_KEY=${GROQ_API_KEY}
+          OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+          GEMINI_API_KEY=${GEMINI_API_KEY}
+          AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+          AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+          AWS_REGION_NAME=${AWS_REGION_NAME}
+
+    # Quadlet container unit ({{GITHUB_USERNAME}} already substituted by generate.sh)
+    - path: /etc/containers/systemd/podcast-ad-cutter.container
+      mode: 0644
+      contents:
+        local: podcast-ad-cutter.container
+
+    # Quadlet timer unit ({{INTERVAL_HOURS}} already substituted by generate.sh)
+    - path: /etc/containers/systemd/podcast-ad-cutter.timer
+      mode: 0644
+      contents:
+        local: podcast-ad-cutter.timer
+
+    # First-boot script
+    - path: /usr/local/bin/podcast-ad-cutter-first-boot
+      mode: 0755
+      contents:
+        local: first-boot.sh
+
+    # Systemd unit that runs first-boot.sh once, after network is online
+    - path: /etc/systemd/system/podcast-ad-cutter-first-boot.service
+      mode: 0644
+      contents:
+        inline: |
+          [Unit]
+          Description=Podcast Ad Cutter - First Boot Setup
+          After=network-online.target
+          Wants=network-online.target
+          ConditionPathExists=!/var/lib/podcast-ad-cutter/.setup-done
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/podcast-ad-cutter-first-boot
+          RemainAfterExit=yes
+
+          [Install]
+          WantedBy=multi-user.target
+
+# ── Systemd units enabled on first boot ──────────────────────────────────────
+systemd:
+  units:
+    # Runs first-boot.sh once after network is online
+    - name: podcast-ad-cutter-first-boot.service
+      enabled: true
+
+    # Ships with Fedora CoreOS — checks ghcr.io daily for new image digests
+    # and restarts containers whose image has changed (requires AutoUpdate=registry
+    # in the .container file)
+    - name: podman-auto-update.timer
+      enabled: true
