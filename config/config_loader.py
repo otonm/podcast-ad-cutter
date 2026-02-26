@@ -4,26 +4,34 @@ from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, computed_field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator
 
 from pipeline.exceptions import ConfigError
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_AD_DETECTION_PROMPT: str = (
+_DEFAULT_AD_DETECTION_BEHAVIOR: str = (
     "Identify advertisements in this podcast transcript segment.\n"
     "An ad is any span where the host or another person or persons"
     " promote a product, service, or sponsor.\n"
-    "Exclude brand mentions that are naturally part of the episode content.\n"
+    "Exclude brand mentions that are naturally part of the episode content."
+)
+
+_AD_DETECTION_JSON_SUFFIX: str = (
     "Return only a JSON array — no markdown, no preamble.\n"
     'Schema: [{"start_sec": float, "end_sec": float, "confidence": float,\n'
     '          "reason": str, "sponsor": str | null}]\n'
     "Return [] if no ads are found."
 )
 
-_DEFAULT_TOPIC_EXTRACTION_PROMPT: str = """Analyze the opening of this podcast transcript.
-Return only a JSON object — no markdown, no preamble.
-Schema: {"domain": str, "topic": str, "hosts": list[str], "notes": str}"""
+_DEFAULT_TOPIC_EXTRACTION_BEHAVIOR: str = (
+    "Analyze the opening of this podcast transcript."
+)
+
+_TOPIC_EXTRACTION_JSON_SUFFIX: str = (
+    "Return only a JSON object — no markdown, no preamble.\n"
+    'Schema: {"domain": str, "topic": str, "hosts": list[str], "notes": str}'
+)
 
 
 class AudioFormat(StrEnum):
@@ -120,8 +128,18 @@ class RetryConfig(BaseModel, frozen=True):
 
 
 class PromptsConfig(BaseModel, frozen=True):
-    ad_detection: str = _DEFAULT_AD_DETECTION_PROMPT
-    topic_extraction: str = _DEFAULT_TOPIC_EXTRACTION_PROMPT
+    ad_detection: str = Field(default=_DEFAULT_AD_DETECTION_BEHAVIOR, validate_default=True)
+    topic_extraction: str = Field(default=_DEFAULT_TOPIC_EXTRACTION_BEHAVIOR, validate_default=True)
+
+    @field_validator("ad_detection", mode="after")
+    @classmethod
+    def _append_ad_suffix(cls, v: str) -> str:
+        return v.rstrip("\n") + "\n" + _AD_DETECTION_JSON_SUFFIX
+
+    @field_validator("topic_extraction", mode="after")
+    @classmethod
+    def _append_topic_suffix(cls, v: str) -> str:
+        return v.rstrip("\n") + "\n" + _TOPIC_EXTRACTION_JSON_SUFFIX
 
 
 class AppConfig(BaseModel, frozen=True):
