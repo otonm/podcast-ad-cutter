@@ -1,0 +1,16 @@
+[Unit]
+Description=Podcast Ad Cutter - Feed Check Timer
+
+[Timer]
+# Fire 5 minutes after boot to catch any run that was missed while the server was off
+OnBootSec=5min
+
+# Fire every INTERVAL_HOURS hours, aligned to midnight.
+# Example with INTERVAL_HOURS=6: fires at 00:00, 06:00, 12:00, 18:00 daily.
+OnCalendar=*-*-* 0/{{INTERVAL_HOURS}}:00:00
+
+# If the server was off during a scheduled firing, run immediately on next boot
+Persistent=true
+
+[Install]
+WantedBy=timers.target
