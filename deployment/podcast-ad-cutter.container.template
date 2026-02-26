@@ -1,0 +1,40 @@
+[Unit]
+Description=Podcast Ad Cutter
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=ghcr.io/{{GITHUB_USERNAME}}/podcast-ad-cutter:latest
+
+# Tells 'podman auto-update' to check ghcr.io for a newer image digest daily
+AutoUpdate=registry
+
+# Named volumes — created automatically by Podman on first run
+Volume=podcast-ad-cutter-data:/app/data:Z
+Volume=podcast-ad-cutter-output:/app/output:Z
+
+# config.yaml is managed on the host; mounted read-only into the container
+Volume=/etc/podcast-ad-cutter/config.yaml:/etc/podcast-ad-cutter/config.yaml:ro,Z
+
+# API keys exposed as env vars from Podman secrets (created by first-boot.sh)
+# All secrets are always created (empty string for unused providers) so
+# this unit file stays static regardless of which providers are configured.
+Secret=anthropic_api_key,type=env,target=ANTHROPIC_API_KEY
+Secret=openai_api_key,type=env,target=OPENAI_API_KEY
+Secret=groq_api_key,type=env,target=GROQ_API_KEY
+Secret=openrouter_api_key,type=env,target=OPENROUTER_API_KEY
+Secret=gemini_api_key,type=env,target=GEMINI_API_KEY
+Secret=aws_access_key_id,type=env,target=AWS_ACCESS_KEY_ID
+Secret=aws_secret_access_key,type=env,target=AWS_SECRET_ACCESS_KEY
+Secret=aws_region_name,type=env,target=AWS_REGION_NAME
+
+# Arguments appended to the ENTRYPOINT defined in the Containerfile.
+# --use-cache: skip transcription if a transcript already exists in the DB
+# --config: read feed URLs and model settings from the host-managed config.yaml
+Exec=--use-cache --config /etc/podcast-ad-cutter/config.yaml
+
+[Service]
+# oneshot: container runs, does its work, exits — timer re-triggers next run
+Type=oneshot
+# no retry on failure — the next timer firing handles it (avoids API spam)
+Restart=no
