@@ -52,6 +52,22 @@ def test_prompts_defaults_are_non_empty_strings():
     assert len(cfg.prompts.topic_extraction) > 10
 
 
+def test_prompts_defaults_include_json_suffix():
+    from config.config_loader import load_config
+
+    cfg = load_config(Path("tests/fixtures/test_config.yaml"))
+    # Behavior text present
+    assert "advertisement" in cfg.prompts.ad_detection.lower()
+    # JSON suffix present
+    assert "JSON array" in cfg.prompts.ad_detection
+    assert "start_sec" in cfg.prompts.ad_detection
+    # Behavior text present
+    assert "transcript" in cfg.prompts.topic_extraction.lower()
+    # JSON suffix present
+    assert "JSON object" in cfg.prompts.topic_extraction
+    assert "domain" in cfg.prompts.topic_extraction
+
+
 def test_prompts_can_be_overridden(tmp_path):
     import shutil
 
@@ -66,5 +82,7 @@ def test_prompts_can_be_overridden(tmp_path):
             "  topic_extraction: 'Custom topic prompt'\n"
         )
     cfg = load_config(dst)
-    assert cfg.prompts.ad_detection == "Custom ad prompt"
-    assert cfg.prompts.topic_extraction == "Custom topic prompt"
+    assert "Custom ad prompt" in cfg.prompts.ad_detection
+    assert "JSON array" in cfg.prompts.ad_detection        # suffix was appended
+    assert "Custom topic prompt" in cfg.prompts.topic_extraction
+    assert "JSON object" in cfg.prompts.topic_extraction   # suffix was appended
