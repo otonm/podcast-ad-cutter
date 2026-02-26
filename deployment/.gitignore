@@ -1,0 +1,7 @@
+# Generated files — never commit
+env
+ignition.json
+butane.yaml
+podcast-ad-cutter.container
+podcast-ad-cutter.timer
+.staging/
