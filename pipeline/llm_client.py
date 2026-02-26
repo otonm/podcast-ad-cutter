@@ -1,10 +1,15 @@
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
 import litellm
-from tenacity import before_sleep_log, retry, stop_after_attempt, wait_exponential
+from tenacity import (
+    before_sleep_log,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from config.config_loader import AppConfig, InterpretationConfig, TranscriptionConfig
 from pipeline.exceptions import ConfigError, LLMError, TranscriptionError
@@ -13,18 +18,12 @@ logger = logging.getLogger(__name__)
 litellm.suppress_debug_info = True
 litellm.drop_params = True  # drop unsupported params (e.g. timestamp_granularities on Groq)
 
-_PROVIDER_ENV_VAR: dict[str, str] = {
-    "anthropic": "ANTHROPIC_API_KEY",
-    "groq": "GROQ_API_KEY",
-    "openai": "OPENAI_API_KEY",
-    "openrouter": "OPENROUTER_API_KEY",
-}
-
 
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(min=2, max=30),
     before_sleep=before_sleep_log(logger, logging.WARNING),
+    retry=retry_if_exception_type(LLMError),
     reraise=True,
 )
 async def complete(
@@ -51,6 +50,8 @@ async def complete(
 
     try:
         response = await litellm.acompletion(**kwargs)
+    except litellm.AuthenticationError as exc:  # type: ignore[attr-defined]
+        raise ConfigError(f"Invalid API key for {cfg.provider_model}: {exc}") from exc
     except litellm.APIError as exc:  # type: ignore[attr-defined]  # litellm stubs omit APIError
         raise LLMError(f"LLM call failed: {exc}") from exc
 
@@ -86,6 +87,8 @@ async def transcribe(audio_path: Path, cfg: TranscriptionConfig) -> tuple[dict[s
                 f"Transcription request model={cfg.provider_model} language={cfg.language}"
             )
             result = await litellm.atranscription(**kwargs)
+        except litellm.AuthenticationError as exc:  # type: ignore[attr-defined]
+            raise ConfigError(f"Invalid API key for {cfg.provider_model}: {exc}") from exc
         except litellm.APIError as exc:  # type: ignore[attr-defined]  # litellm stubs omit APIError
             raise TranscriptionError(f"Transcription failed: {exc}") from exc
 
@@ -126,10 +129,10 @@ def fits_in_context(
 
 
 def validate_api_keys(cfg: AppConfig) -> None:
-    """Probe each configured provider's API key. Raises ConfigError on missing or invalid keys.
+    """Check that required API key env vars are present for each configured model.
 
-    Deduplicates by provider — a provider used for both transcription and interpretation
-    is probed only once.
+    Uses litellm.validate_environment — a local check with no network calls.
+    Deduplicates by provider so a shared provider is checked only once.
     """
     seen: set[str] = set()
     for sub_cfg in (cfg.transcription, cfg.interpretation):
@@ -137,15 +140,11 @@ def validate_api_keys(cfg: AppConfig) -> None:
             continue
         seen.add(sub_cfg.provider)
 
-        env_var = _PROVIDER_ENV_VAR.get(sub_cfg.provider, f"{sub_cfg.provider.upper()}_API_KEY")
-        key = os.environ.get(env_var, "")
-        if not key:
+        result: dict[str, Any] = litellm.validate_environment(model=sub_cfg.provider_model)
+        if not result["keys_in_environment"]:
+            missing = ", ".join(result["missing_keys"])
             raise ConfigError(
-                f"Missing {env_var} environment variable (required for {sub_cfg.provider_model})"
-            )
-        if not litellm.check_valid_key(model=sub_cfg.provider_model, api_key=key):
-            raise ConfigError(
-                f"Invalid API key for {sub_cfg.provider_model} (check {env_var})"
+                f"Missing environment variable(s) for {sub_cfg.provider_model}: {missing}"
             )
 
     logger.info("API key validation passed")

@@ -46,6 +46,7 @@ async def test_complete_raises_llm_error_on_api_error(llm_config):
     from pipeline.llm_client import complete
 
     with patch("pipeline.llm_client.litellm") as mock_litellm:
+        mock_litellm.AuthenticationError = type("AuthenticationError", (Exception,), {})
         mock_litellm.APIError = type("APIError", (Exception,), {})
         mock_litellm.acompletion = AsyncMock(side_effect=mock_litellm.APIError("fail"))
         with pytest.raises(LLMError):
@@ -100,21 +101,7 @@ async def test_transcribe_fallback_cost_from_model_cost(tmp_path):
     assert cost == pytest.approx(expected_cost)
 
 
-def test_validate_api_keys_raises_when_env_var_missing(monkeypatch):
-    from pathlib import Path
-
-    from config.config_loader import load_config
-    from pipeline.exceptions import ConfigError
-    from pipeline.llm_client import validate_api_keys
-
-    cfg = load_config(Path("tests/fixtures/test_config.yaml"))
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-
-    with pytest.raises(ConfigError, match="OPENAI_API_KEY"):
-        validate_api_keys(cfg)
-
-
-def test_validate_api_keys_raises_when_key_invalid(monkeypatch):
+def test_validate_api_keys_raises_when_env_var_missing():
     from pathlib import Path
     from unittest.mock import patch
 
@@ -123,16 +110,18 @@ def test_validate_api_keys_raises_when_key_invalid(monkeypatch):
     from pipeline.llm_client import validate_api_keys
 
     cfg = load_config(Path("tests/fixtures/test_config.yaml"))
-    monkeypatch.setenv("OPENAI_API_KEY", "bad-key")
 
     with (
-        patch("pipeline.llm_client.litellm.check_valid_key", return_value=False),
-        pytest.raises(ConfigError, match="Invalid API key"),
+        patch(
+            "pipeline.llm_client.litellm.validate_environment",
+            return_value={"keys_in_environment": False, "missing_keys": ["OPENAI_API_KEY"]},
+        ),
+        pytest.raises(ConfigError, match="OPENAI_API_KEY"),
     ):
         validate_api_keys(cfg)
 
 
-def test_validate_api_keys_passes_with_valid_key(monkeypatch):
+def test_validate_api_keys_passes_with_valid_key():
     from pathlib import Path
     from unittest.mock import patch
 
@@ -140,14 +129,16 @@ def test_validate_api_keys_passes_with_valid_key(monkeypatch):
     from pipeline.llm_client import validate_api_keys
 
     cfg = load_config(Path("tests/fixtures/test_config.yaml"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-valid")
 
-    with patch("pipeline.llm_client.litellm.check_valid_key", return_value=True):
+    with patch(
+        "pipeline.llm_client.litellm.validate_environment",
+        return_value={"keys_in_environment": True, "missing_keys": []},
+    ):
         validate_api_keys(cfg)  # must not raise
 
 
-def test_validate_api_keys_deduplicates_providers(monkeypatch):
-    """When transcription and interpretation use the same provider, only one probe fires."""
+def test_validate_api_keys_deduplicates_providers():
+    """Same provider for both models: validate_environment is called only once."""
     from pathlib import Path
     from unittest.mock import patch
 
@@ -156,9 +147,45 @@ def test_validate_api_keys_deduplicates_providers(monkeypatch):
 
     # test_config.yaml uses openai for both transcription and interpretation
     cfg = load_config(Path("tests/fixtures/test_config.yaml"))
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-valid")
 
-    with patch("pipeline.llm_client.litellm.check_valid_key", return_value=True) as mock_check:
+    with patch(
+        "pipeline.llm_client.litellm.validate_environment",
+        return_value={"keys_in_environment": True, "missing_keys": []},
+    ) as mock_validate:
         validate_api_keys(cfg)
 
-    assert mock_check.call_count == 1  # deduped: openai only probed once
+    assert mock_validate.call_count == 1  # deduped: openai only checked once
+
+
+async def test_complete_raises_config_error_on_auth_error(llm_config):
+    from pipeline.exceptions import ConfigError
+    from pipeline.llm_client import complete
+
+    with patch("pipeline.llm_client.litellm") as mock_litellm:
+        mock_litellm.AuthenticationError = type("AuthenticationError", (Exception,), {})
+        mock_litellm.APIError = type("APIError", (Exception,), {})
+        mock_litellm.acompletion = AsyncMock(
+            side_effect=mock_litellm.AuthenticationError("bad key")
+        )
+        with pytest.raises(ConfigError):
+            await complete(
+                [{"role": "user", "content": "Hi"}],
+                llm_config,
+            )
+
+
+async def test_transcribe_raises_config_error_on_auth_error(transcription_config, tmp_path):
+    from pipeline.exceptions import ConfigError
+    from pipeline.llm_client import transcribe
+
+    audio_file = tmp_path / "test.mp3"
+    audio_file.write_bytes(b"fake audio data")
+
+    with patch("pipeline.llm_client.litellm") as mock_litellm:
+        mock_litellm.AuthenticationError = type("AuthenticationError", (Exception,), {})
+        mock_litellm.APIError = type("APIError", (Exception,), {})
+        mock_litellm.atranscription = AsyncMock(
+            side_effect=mock_litellm.AuthenticationError("bad key")
+        )
+        with pytest.raises(ConfigError):
+            await transcribe(audio_file, transcription_config)
