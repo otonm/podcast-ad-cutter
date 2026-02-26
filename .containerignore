@@ -1,0 +1,29 @@
+# .containerignore — excludes files from the podman/docker build context.
+# Prevents secrets and large files from being baked into the builder layer.
+
+# Never include API keys
+.env
+
+# Local runtime data — container uses named volumes for these
+output/
+data/
+
+# Local venv — container builds its own inside the image
+.venv/
+
+# Git metadata
+.git/
+.gitignore
+
+# Dev/test artifacts
+tests/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Deployment-specific files (not needed inside the container)
+deployment/
+docs/

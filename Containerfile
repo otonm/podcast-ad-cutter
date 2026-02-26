@@ -25,8 +25,7 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# Copy the populated venv and all source from the builder
-COPY --from=builder /app/.venv /app/.venv
+# Copy the venv and all source from the builder
 COPY --from=builder /app /app
 
 # Prepend .venv/bin to PATH so 'python' resolves to the venv interpreter
