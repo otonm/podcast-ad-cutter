@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/feeds")
 
 
-def _feed_status(enabled: bool) -> str:
+def _feed_status(enabled: bool) -> FeedStatus:
     """Return the display status string for a feed."""
     if is_running():
         return FeedStatus.RUNNING if enabled else FeedStatus.DISABLED

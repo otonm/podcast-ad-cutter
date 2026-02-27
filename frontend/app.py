@@ -38,7 +38,7 @@ async def _watch_config() -> None:
             config_cache.set_config(load_config(get_config_path()))
             logger.info("Config reloaded from disk")
         except Exception as exc:
-            logger.warning(f"Config reload failed: {exc}")
+            logger.error(f"Config reload failed: {exc}")
 
 
 @asynccontextmanager

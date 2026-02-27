@@ -30,7 +30,7 @@ async def run_pipeline(
         )
 
     global _active_queue
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     _active_queue = sse.attach_handler(loop)
 
     state.set_running(True)
@@ -55,7 +55,7 @@ async def _run_pipeline_task(dry_run: bool) -> None:
         logger.info("Pipeline cancelled by user")
         raise
     except Exception as exc:
-        logger.error(f"Pipeline failed: {exc}")
+        logger.exception(f"Pipeline failed: {exc}")
     finally:
         state.set_running(False)
         state.set_task(None)
@@ -87,7 +87,6 @@ async def pipeline_actions(request: Request) -> HTMLResponse:
 @router.get("/events")
 async def pipeline_events(request: Request) -> EventSourceResponse:
     """SSE endpoint: stream log lines from the active pipeline run."""
-    global _active_queue
 
     async def _generator() -> AsyncGenerator[dict[str, str], None]:
         queue = _active_queue
