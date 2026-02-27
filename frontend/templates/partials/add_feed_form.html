@@ -1,0 +1,37 @@
+<tr id="add-feed-row" class="border-t border-gray-100 bg-blue-50">
+  <td class="px-5 py-3" colspan="4">
+    <form hx-post="/feeds"
+          hx-target="#feed-tbody"
+          hx-swap="innerHTML"
+          hx-on::after-request="document.getElementById('add-feed-row').outerHTML = '<div id=\'add-feed-row\'></div>'"
+          class="flex items-center gap-3 flex-wrap">
+      <input
+        type="text"
+        name="name"
+        placeholder="Feed name"
+        required
+        class="flex-1 min-w-[140px] border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      <input
+        type="url"
+        name="url"
+        placeholder="https://..."
+        required
+        class="flex-[2] min-w-[200px] border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+      <label class="flex items-center gap-1 text-sm text-gray-700 cursor-pointer">
+        <input type="checkbox" name="enabled" value="true" checked class="rounded" />
+        Enabled
+      </label>
+      <button type="submit"
+              class="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+        Add
+      </button>
+      <button type="button"
+              hx-get="/feeds/cancel-add"
+              hx-target="#add-feed-row"
+              hx-swap="outerHTML"
+              class="px-3 py-1.5 text-sm bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors">
+        Cancel
+      </button>
+    </form>
+  </td>
+</tr>

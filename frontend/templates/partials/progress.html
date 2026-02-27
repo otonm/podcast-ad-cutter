@@ -1,0 +1,38 @@
+<div class="space-y-3">
+  <div class="flex items-center gap-2 text-sm font-medium text-green-700">
+    <span id="progress-status">⏳ Pipeline running…</span>
+  </div>
+  <div id="log-output"
+       class="bg-gray-900 text-green-400 rounded-lg p-4 text-xs font-mono h-64 overflow-y-auto space-y-0.5">
+  </div>
+</div>
+
+<script>
+(function () {
+  const output = document.getElementById("log-output");
+  const status = document.getElementById("progress-status");
+  const es = new EventSource("/pipeline/events");
+
+  es.addEventListener("log", function (e) {
+    const p = document.createElement("p");
+    p.className = "whitespace-pre-wrap break-all";
+    p.textContent = e.data;
+    output.appendChild(p);
+    output.scrollTop = output.scrollHeight;
+  });
+
+  es.addEventListener("done", function () {
+    es.close();
+    status.textContent = "✓ Pipeline complete";
+    status.className = "text-green-700 font-medium";
+    // Refresh cost badge
+    htmx.trigger("#header-cost", "load");
+  });
+
+  es.onerror = function () {
+    es.close();
+    status.textContent = "⚠ Connection lost";
+    status.className = "text-yellow-700 font-medium";
+  };
+})();
+</script>

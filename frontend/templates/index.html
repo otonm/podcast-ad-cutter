@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Podcast Ad Cutter{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Feed management -->
+  <!-- ------------------------------------------------------------------ -->
+  <section class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+    <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+      <h2 class="text-base font-semibold">Feeds</h2>
+      <button
+        hx-get="/feeds/add-form"
+        hx-target="#add-feed-row"
+        hx-swap="outerHTML"
+        class="text-sm px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
+        + Add Feed
+      </button>
+    </div>
+
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 text-xs font-medium text-gray-500 uppercase tracking-wide">
+        <tr>
+          <th class="px-5 py-2 text-left">Name</th>
+          <th class="px-5 py-2 text-left">URL</th>
+          <th class="px-5 py-2 text-center">Status</th>
+          <th class="px-5 py-2 text-center">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="feed-tbody">
+        {% include "partials/feed_table.html" %}
+      </tbody>
+    </table>
+
+    <!-- Placeholder row for the add-feed inline form -->
+    <div id="add-feed-row"></div>
+  </section>
+
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Run pipeline -->
+  <!-- ------------------------------------------------------------------ -->
+  <section class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-base font-semibold">Pipeline</h2>
+      <div class="flex gap-2">
+        <button
+          hx-post="/pipeline/run"
+          hx-target="#progress-section"
+          hx-swap="innerHTML"
+          hx-indicator="#run-spinner"
+          class="text-sm px-4 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-1.5">
+          <span>▶ Run</span>
+          <span id="run-spinner" class="htmx-indicator text-xs">⏳</span>
+        </button>
+        <button
+          hx-post="/pipeline/run?dry_run=true"
+          hx-target="#progress-section"
+          hx-swap="innerHTML"
+          hx-indicator="#dry-spinner"
+          class="text-sm px-4 py-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center gap-1.5">
+          <span>⚙ Dry Run</span>
+          <span id="dry-spinner" class="htmx-indicator text-xs">⏳</span>
+        </button>
+      </div>
+    </div>
+    <div id="progress-section" class="text-sm text-gray-500 italic">
+      Click ▶ Run to start processing enabled feeds.
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Settings accordion -->
+  <!-- ------------------------------------------------------------------ -->
+  <section class="bg-white rounded-xl border border-gray-200 shadow-sm">
+    <button
+      hx-get="/settings"
+      hx-target="#settings-accordion"
+      hx-swap="innerHTML"
+      class="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-gray-50 transition-colors">
+      <h2 class="text-base font-semibold">⚙ Settings</h2>
+      <span class="text-gray-400 text-sm">Click to expand</span>
+    </button>
+    <div id="settings-accordion" class="px-5 pb-4"></div>
+  </section>
+
+</div>
+{% endblock %}

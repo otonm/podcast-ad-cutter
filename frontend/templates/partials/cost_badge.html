@@ -1,0 +1,8 @@
+<div id="header-cost"
+     hx-get="/cost"
+     hx-trigger="every 10s"
+     hx-swap="outerHTML"
+     class="inline-flex items-center gap-1 px-2.5 py-1 bg-gray-100 rounded-full text-xs font-mono text-gray-700 border border-gray-200"
+     title="Total LLM cost (all time)">
+  💰 ${{ "%.4f" | format(total_cost) }}
+</div>

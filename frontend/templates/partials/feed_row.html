@@ -1,0 +1,40 @@
+<tr id="feed-{{ feed.name | slugify }}" class="border-t border-gray-100 hover:bg-gray-50 transition-colors">
+  <td class="px-5 py-3 font-medium">{{ feed.name }}</td>
+  <td class="px-5 py-3 text-gray-500 max-w-xs truncate">
+    <a href="{{ feed.url }}" target="_blank" class="hover:text-blue-600 hover:underline">{{ feed.url }}</a>
+  </td>
+  <td class="px-5 py-3 text-center">
+    {% if status == "running" %}
+      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">⚡ running</span>
+    {% elif status == "done" %}
+      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">✓ done</span>
+    {% elif status == "error" %}
+      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">✕ error</span>
+    {% elif feed.enabled %}
+      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">● enabled</span>
+    {% else %}
+      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">● disabled</span>
+    {% endif %}
+  </td>
+  <td class="px-5 py-3 text-center">
+    <div class="flex items-center justify-center gap-2">
+      <button
+        hx-put="/feeds/{{ feed.name | urlencode }}/toggle"
+        hx-target="#feed-{{ feed.name | slugify }}"
+        hx-swap="outerHTML"
+        class="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 transition-colors"
+        title="Toggle enabled/disabled">
+        {{ "Disable" if feed.enabled else "Enable" }}
+      </button>
+      <button
+        hx-delete="/feeds/{{ feed.name | urlencode }}"
+        hx-target="#feed-{{ feed.name | slugify }}"
+        hx-swap="outerHTML"
+        hx-confirm="Delete feed '{{ feed.name }}'?"
+        class="text-xs px-2 py-1 rounded bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
+        title="Delete feed">
+        ✕
+      </button>
+    </div>
+  </td>
+</tr>
