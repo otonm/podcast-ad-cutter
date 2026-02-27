@@ -34,7 +34,7 @@ async def _apply_migrations(conn: aiosqlite.Connection) -> None:
     cursor = await conn.execute("SELECT filename FROM _migrations")
     applied = {row[0] for row in await cursor.fetchall()}
 
-    migrations_dir = Path("db/migrations")
+    migrations_dir = Path(__file__).parent / "migrations"
     if not migrations_dir.exists():
         return
 

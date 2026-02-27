@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timezone
+from time import mktime
 
 import feedparser
 import httpx
@@ -62,8 +63,6 @@ def _extract_audio_url(entry: feedparser.FeedParserDict) -> str | None:
 def _parse_date(entry: feedparser.FeedParserDict) -> datetime:
     """Parse the published date from a feed entry."""
     if hasattr(entry, "published_parsed") and entry.published_parsed:
-        from time import mktime
-
         return datetime.fromtimestamp(mktime(entry.published_parsed), tz=timezone.utc)
     return datetime.now(tz=timezone.utc)
 

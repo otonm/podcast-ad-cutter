@@ -1,11 +1,18 @@
 import logging
 import re
 
-from config.config_loader import AppConfig
+import aiosqlite
+
+from config.config_loader import AppConfig, FeedConfig
 from db.connection import get_db
 from db.repositories import AdSegmentRepository, EpisodeRepository
 from db.repositories.llm_call_repo import LLMCallRepository
+from models.ad_segment import AdSegment, TopicContext
+from models.episode import Episode
 from models.llm_call import CallType, LLMCall
+from models.transcript import Transcript
+from pipeline.ad_detector import detect_ads as detect_ads_impl
+from pipeline.ad_detector import merge_segments
 from pipeline.audio_editor import cut_ads
 from pipeline.downloader import download_episode
 from pipeline.rss import fetch_episodes
@@ -35,7 +42,7 @@ async def run_pipeline(cfg: AppConfig, *, dry_run: bool = False) -> None:
 
 
 async def process_feed(
-    feed_cfg,
+    feed_cfg: FeedConfig,
     cfg: AppConfig,
     *,
     dry_run: bool = False,
@@ -51,7 +58,7 @@ async def process_feed(
 
 
 async def _process_episode(
-    episode,
+    episode: Episode,
     cfg: AppConfig,
     *,
     dry_run: bool = False,
@@ -75,12 +82,14 @@ async def _process_episode(
         ad_repo = AdSegmentRepository(db)
 
         # Checkpoint 2 — ad segments already detected, only need to cut
-        cached_segments = await ad_repo.get_by_episode(episode.guid)
+        cached_segments = [
+            s for s in await ad_repo.get_by_episode(episode.guid)
+            if s.confidence >= cfg.ad_detection.min_confidence
+        ]
         if cached_segments:
             logger.debug(
                 f"Ad segments cache hit for {episode.guid}: {len(cached_segments)} segments"
             )
-            logger.debug(f"Segments: {cached_segments}")
             
             audio_path = await download_episode(episode)
             try:
@@ -101,6 +110,9 @@ async def _process_episode(
                 return
 
             topic_context = await extract_topic(transcript, cfg, db)
+            if topic_context is None:
+                logger.error(f"Topic extraction failed for {episode.guid}, aborting")
+                return
 
             ad_segments = await detect_ads(topic_context, transcript, cfg, db)
 
@@ -112,11 +124,13 @@ async def _process_episode(
             audio_path.unlink(missing_ok=True)
 
 
-async def detect_ads(topic_context, transcript, cfg, db):
+async def detect_ads(
+    topic_context: TopicContext,
+    transcript: Transcript,
+    cfg: AppConfig,
+    db: aiosqlite.Connection,
+) -> list[AdSegment]:
     """Detect ad segments in the transcript using LLM."""
-    from pipeline.ad_detector import detect_ads as detect_ads_impl
-    from pipeline.ad_detector import merge_segments
-
     ad_repo = AdSegmentRepository(db)
     llm_repo = LLMCallRepository(db)
 
@@ -138,4 +152,4 @@ async def detect_ads(topic_context, transcript, cfg, db):
             cost_usd=total_cost,
         )
     )
-    return merged
+    return above_threshold

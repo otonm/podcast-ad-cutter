@@ -1,10 +1,22 @@
 import logging
+from datetime import datetime
 
 import aiosqlite
 
 from models.episode import Episode
 
 logger = logging.getLogger(__name__)
+
+
+def _row_to_episode(row: aiosqlite.Row) -> Episode:
+    return Episode(
+        guid=row[0],
+        feed_title=row[1],
+        title=row[2],
+        audio_url=row[3],
+        published=datetime.fromisoformat(row[4]),
+        duration_seconds=row[5],
+    )
 
 
 class EpisodeRepository:
@@ -41,14 +53,7 @@ class EpisodeRepository:
         row = await cursor.fetchone()
         if row is None:
             return None
-        return Episode(
-            guid=row[0],
-            feed_title=row[1],
-            title=row[2],
-            audio_url=row[3],
-            published=row[4],
-            duration_seconds=row[5],
-        )
+        return _row_to_episode(row)
 
     async def list_by_feed(self, feed_name: str) -> list[Episode]:
         cursor = await self._conn.execute(
@@ -57,14 +62,4 @@ class EpisodeRepository:
             (feed_name,),
         )
         rows = await cursor.fetchall()
-        return [
-            Episode(
-                guid=r[0],
-                feed_title=r[1],
-                title=r[2],
-                audio_url=r[3],
-                published=r[4],
-                duration_seconds=r[5],
-            )
-            for r in rows
-        ]
+        return [_row_to_episode(r) for r in rows]

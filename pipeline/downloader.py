@@ -1,4 +1,5 @@
 import logging
+import os
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
@@ -10,6 +11,8 @@ from pipeline.exceptions import DownloadError
 
 logger = logging.getLogger(__name__)
 
+_DOWNLOAD_CHUNK_SIZE: int = 65_536
+
 
 async def download_episode(
     episode: Episode,
@@ -19,7 +22,6 @@ async def download_episode(
     """Stream-download the episode audio to a temp file and return the path."""
     suffix = Path(urlparse(str(episode.audio_url)).path).suffix or ".mp3"
     fd, tmp = tempfile.mkstemp(suffix=suffix)
-    import os
     os.close(fd)
     dest = Path(tmp)
 
@@ -32,7 +34,7 @@ async def download_episode(
         async with client.stream("GET", str(episode.audio_url)) as response:
             response.raise_for_status()
             with dest.open("wb") as f:
-                async for chunk in response.aiter_bytes(chunk_size=65536):
+                async for chunk in response.aiter_bytes(chunk_size=_DOWNLOAD_CHUNK_SIZE):
                     f.write(chunk)
     except httpx.HTTPError as exc:
         dest.unlink(missing_ok=True)

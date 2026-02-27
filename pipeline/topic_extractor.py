@@ -8,7 +8,7 @@ from db.repositories.llm_call_repo import LLMCallRepository
 from models.ad_segment import TopicContext
 from models.llm_call import CallType, LLMCall
 from models.transcript import Transcript
-from pipeline.llm_client import complete
+from pipeline.llm_client import append_json_correction, complete
 
 logger = logging.getLogger(__name__)
 
@@ -75,17 +75,7 @@ async def extract_topic(
                     f"Topic extraction invalid JSON"
                     f" (attempt {attempt + 1}/{_MAX_PARSE_RETRIES}), retrying: {exc}"
                 )
-                messages = [
-                    *messages,
-                    {"role": "assistant", "content": response},
-                    {
-                        "role": "user",
-                        "content": (
-                            "Your response was not valid JSON. Please respond with only a valid"
-                            " JSON object, no markdown, no code blocks, no preamble."
-                        ),
-                    },
-                ]
+                messages = append_json_correction(messages, response, schema_hint="object")
             else:
                 logger.warning(
                     f"Topic extraction failed after {_MAX_PARSE_RETRIES} parse attempts: {exc}"

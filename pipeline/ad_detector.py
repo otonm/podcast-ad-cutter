@@ -1,15 +1,15 @@
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
+import operator
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from config.config_loader import AppConfig
 from models.ad_segment import AdSegment, TopicContext
 from models.transcript import Transcript
 from pipeline.exceptions import AdDetectionError, LLMError
-from pipeline.llm_client import complete, fits_in_context
+from pipeline.llm_client import append_json_correction, complete, fits_in_context
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +18,7 @@ _MAX_PARSE_RETRIES: int = 3
 _MIN_AD_DURATION_MS: int = 10_000  # ads shorter than 10s are not real ads
 
 
-@dataclass
-class TranscriptChunk:
+class TranscriptChunk(BaseModel, frozen=True):
     episode_guid: str
     start_sec: float
     end_sec: float
@@ -119,17 +118,7 @@ async def _detect_single(
                     f"Single-call invalid JSON (attempt {attempt + 1}/{_MAX_PARSE_RETRIES}),"
                     " retrying with feedback"
                 )
-                messages = [
-                    *messages,
-                    {"role": "assistant", "content": response},
-                    {
-                        "role": "user",
-                        "content": (
-                            "Your response was not valid JSON. Please respond with only a valid"
-                            " JSON array, no markdown, no code blocks, no preamble."
-                        ),
-                    },
-                ]
+                messages = append_json_correction(messages, response, schema_hint="array")
             else:
                 logger.warning(
                     f"Single-call failed after {_MAX_PARSE_RETRIES} parse attempts,"
@@ -165,17 +154,7 @@ async def _detect_chunk(
                         f"Chunk {index} invalid JSON (attempt {attempt + 1}/{_MAX_PARSE_RETRIES}),"
                         " retrying with feedback"
                     )
-                    messages = [
-                        *messages,
-                        {"role": "assistant", "content": response},
-                        {
-                            "role": "user",
-                            "content": (
-                                "Your response was not valid JSON. Please respond with only a valid"
-                                " JSON array, no markdown, no code blocks, no preamble."
-                            ),
-                        },
-                    ]
+                    messages = append_json_correction(messages, response, schema_hint="array")
                 else:
                     logger.warning(
                         f"Chunk {index} failed after {_MAX_PARSE_RETRIES} parse attempts,"
@@ -269,7 +248,7 @@ def merge_segments(segments: list[AdSegment], merge_gap_sec: int) -> list[AdSegm
     if not segments:
         return []
 
-    sorted_segments = sorted(segments, key=lambda s: s.start_ms)
+    sorted_segments = sorted(segments, key=operator.attrgetter("start_ms"))
     merged = [sorted_segments[0]]
 
     for seg in sorted_segments[1:]:

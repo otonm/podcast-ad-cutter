@@ -1,6 +1,8 @@
 import logging
 from pathlib import Path
 
+import aiosqlite
+
 from config.config_loader import AppConfig
 from db.repositories import TranscriptRepository
 from db.repositories.llm_call_repo import LLMCallRepository
@@ -8,8 +10,8 @@ from models.episode import Episode
 from models.llm_call import CallType, LLMCall
 from models.transcript import Segment, Transcript
 from pipeline import audio_preprocessor
-from pipeline.llm_client import transcribe as llm_transcribe
 from pipeline.exceptions import TranscriptionError
+from pipeline.llm_client import transcribe as llm_transcribe
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +20,7 @@ async def transcribe_episode(
     episode: Episode,
     audio_path: Path,
     cfg: AppConfig,
-    db,
+    db: aiosqlite.Connection,
 ) -> Transcript | None:
     """Transcribe the episode audio. Returns cached transcript if available."""
     repo = TranscriptRepository(db)

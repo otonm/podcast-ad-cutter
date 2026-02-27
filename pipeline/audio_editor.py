@@ -2,10 +2,12 @@ import asyncio
 import logging
 from pathlib import Path
 
+import aiosqlite
+from pydub import AudioSegment
+
 from config.config_loader import AppConfig
 from db.repositories import AdSegmentRepository
 from models.ad_segment import AdSegment
-from pydub import AudioSegment
 from pipeline.exceptions import AudioEditError
 
 logger = logging.getLogger(__name__)
@@ -15,7 +17,7 @@ async def cut_ads(
     audio_path: Path,
     ad_segments: list[AdSegment],
     cfg: AppConfig,
-    db,
+    db: aiosqlite.Connection,
     *,
     output_path: Path,
 ) -> Path:
@@ -52,8 +54,7 @@ def _cut_ads_sync(
         keep_segments.append(audio[last_end:])
 
     if not keep_segments:
-        logger.warning("No audio segments to keep after cutting ads")
-        return audio_path
+        raise AudioEditError("All audio would be cut; no keep segments remain")
 
     try:
         clean_audio = sum(keep_segments[1:], keep_segments[0])
@@ -80,7 +81,7 @@ def _cut_ads_sync(
     return output_path
 
 
-async def _mark_segments_cut(segments: list[AdSegment], db) -> None:
+async def _mark_segments_cut(segments: list[AdSegment], db: aiosqlite.Connection) -> None:
     """Mark segments as cut in database."""
     repo = AdSegmentRepository(db)
     if segments:

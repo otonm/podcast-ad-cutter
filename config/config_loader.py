@@ -53,10 +53,9 @@ class PathsConfig(BaseModel, frozen=True):
     database: Path
 
 
-class TranscriptionConfig(BaseModel, frozen=True):
+class LLMProviderConfig(BaseModel, frozen=True):
     provider: str
     model: str
-    language: str | None = "en"
     api_base: str | None = None
 
     @field_validator("provider")
@@ -74,27 +73,14 @@ class TranscriptionConfig(BaseModel, frozen=True):
         return f"{self.provider}/{self.model}"
 
 
-class InterpretationConfig(BaseModel, frozen=True):
-    provider: str
-    model: str
-    api_base: str | None = None
+class TranscriptionConfig(LLMProviderConfig, frozen=True):
+    language: str | None = "en"
+
+
+class InterpretationConfig(LLMProviderConfig, frozen=True):
     temperature: float = 0
     max_tokens: int = 2048
     topic_excerpt_words: int = 2000
-
-    @field_validator("provider")
-    @classmethod
-    def check_provider(cls, v: str) -> str:
-        if v not in SUPPORTED_PROVIDERS:
-            raise ValueError(
-                f"Unsupported provider '{v}'. Allowed: {sorted(SUPPORTED_PROVIDERS)}"
-            )
-        return v
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def provider_model(self) -> str:
-        return f"{self.provider}/{self.model}"
 
 
 class AdDetectionConfig(BaseModel, frozen=True):
@@ -174,7 +160,7 @@ def load_config(config_path: Path) -> AppConfig:
 
     try:
         cfg = AppConfig(**raw)
-    except Exception as exc:
+    except (ValueError, TypeError) as exc:
         raise ConfigError(f"Config validation failed: {exc}") from exc
 
     logger.info(f"Config loaded from {config_path}")

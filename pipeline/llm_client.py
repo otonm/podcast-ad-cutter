@@ -148,3 +148,23 @@ def validate_api_keys(cfg: AppConfig) -> None:
             )
 
     logger.info("API key validation passed")
+
+
+def append_json_correction(
+    messages: list[dict[str, str]],
+    bad_response: str,
+    *,
+    schema_hint: str,
+) -> list[dict[str, str]]:
+    """Append a correction request to the message list for JSON parse failures."""
+    return [
+        *messages,
+        {"role": "assistant", "content": bad_response},
+        {
+            "role": "user",
+            "content": (
+                f"Your response was not valid JSON. Please respond with only a valid"
+                f" JSON {schema_hint}, no markdown, no code blocks, no preamble."
+            ),
+        },
+    ]
