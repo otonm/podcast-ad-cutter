@@ -75,6 +75,21 @@ def toggle_feed(name: str) -> None:
     _save(data)
 
 
+def reorder_feeds(names: list[str]) -> None:
+    """Reorder feeds in config.yaml to match the given name order.
+
+    Any feed name not present in `names` is appended at the end unchanged.
+    """
+    data = _load()
+    existing = data.get("feeds")
+    feeds: list[dict[str, object]] = cast(list[dict[str, object]], existing) if existing else []
+    feed_map = {str(f.get("name", "")): f for f in feeds}
+    reordered = [feed_map[n] for n in names if n in feed_map]
+    leftover = [f for f in feeds if str(f.get("name", "")) not in names]
+    data["feeds"] = reordered + leftover
+    _save(data)
+
+
 # ---------------------------------------------------------------------------
 # Settings mutations
 # ---------------------------------------------------------------------------
