@@ -9,7 +9,7 @@ To generate plans or proposals, to generate code that accesses APIs, or in other
 This project downloads the latest episode of a podcast, transcribes it, uses an LLM to identify advertisements, and exports a clean audio file with all ads removed.
 
 ```
-RSS Feed → Download Episode → Transcribe → Extract Topic → Detect Ads → Cut Audio → Export
+RSS Feed → Download Episode → Preprocess Audio → Transcribe → Extract Topic → Detect Ads → Cut Audio → Export
 ```
 
 ---
@@ -20,6 +20,7 @@ RSS Feed → Download Episode → Transcribe → Extract Topic → Detect Ads �
 podcast-ad-cutter/
 ├── CLAUDE.md
 ├── README.md
+├── Containerfile               # Container build definition
 ├── pyproject.toml              # Single source of truth: deps, metadata, tool config
 ├── .python-version             # Contains "3.12" — pins the interpreter for uv and pyenv
 ├── uv.lock                     # Committed lockfile — never edit manually
@@ -27,8 +28,12 @@ podcast-ad-cutter/
 ├── .env.example                # Committed template
 ├── config.yaml                 # All non-secret runtime settings
 ├── config.example.yaml         # Committed template with documented defaults
-├── config_loader.py            # Loads config.yaml → AppConfig; fails fast on errors
 ├── main.py                     # CLI entry point — only place asyncio.run() is called
+├── web.py                      # Web UI launcher (uvicorn + argparse)
+│
+├── config/
+│   ├── __init__.py
+│   └── config_loader.py        # Loads config.yaml → AppConfig; fails fast on errors
 │
 ├── pipeline/
 │   ├── __init__.py
@@ -36,11 +41,26 @@ podcast-ad-cutter/
 │   ├── runner.py               # Orchestrates the full pipeline
 │   ├── rss.py                  # RSS feed parsing and episode discovery
 │   ├── downloader.py           # Streaming audio download
+│   ├── audio_preprocessor.py   # Converts audio to mono 16 kHz 32 kbps MP3 for transcription
 │   ├── transcriber.py          # Audio → timestamped Transcript
 │   ├── topic_extractor.py      # Transcript excerpt → TopicContext
 │   ├── ad_detector.py          # TopicContext + Transcript → AdSegment list
 │   ├── audio_editor.py         # Cut AdSegments from audio, export clean file
 │   └── exceptions.py           # All custom exception classes
+│
+├── frontend/
+│   ├── __init__.py
+│   ├── app.py                  # FastAPI factory + Jinja2Templates with slugify filter
+│   ├── state.py                # Pipeline running flag + FeedStatus enum
+│   ├── config_editor.py        # Read/mutate/write config.yaml via PyYAML
+│   ├── config_cache.py         # Cached AppConfig loader for web routes
+│   ├── sse.py                  # QueueLogHandler + async SSE generator
+│   └── routes/
+│       ├── __init__.py
+│       ├── pages.py            # Main page rendering
+│       ├── feeds.py            # Feed management endpoints
+│       ├── settings.py         # Settings form endpoints
+│       └── pipeline.py         # Pipeline start/stop + SSE log stream
 │
 ├── models/
 │   ├── __init__.py
@@ -59,6 +79,9 @@ podcast-ad-cutter/
 │       ├── episode_repo.py
 │       ├── transcript_repo.py
 │       └── ad_segment_repo.py
+│
+├── docs/                       # Project documentation
+├── deployment/                 # Deployment configs
 │
 ├── tests/
 │   ├── conftest.py             # In-memory SQLite fixture, test AppConfig
@@ -178,26 +201,23 @@ paths:
   output_dir: "./output"
   database: "./data/podcasts.db"   # Created automatically on first run
 
+# How many recent episodes to retain in the database per feed (older are pruned)
+episodes_to_keep: 5
+
 transcription:
-  # Use fully-qualified provider/model names.
-  # Examples:
-  # - "openai/whisper-1"            (OpenAI Whisper)
-  # - "groq/whisper-large-v3"       (Groq Whisper)
-  # - "azure/azure-whisper"         (Azure OpenAI Whisper)
-  # - "fireworks_ai/whisper-large-v3" (Fireworks AI)
-  model: "openai/whisper-1"
+  # Supported providers: groq, openai, openrouter
+  provider: "groq"
+  # Model name without the provider prefix (prefix is added automatically from provider field)
+  # Examples: "whisper-large-v3" (Groq/OpenAI), "whisper-1" (OpenAI)
+  model: "whisper-large-v3"
   language: "en"                   # null = auto-detect
   api_base: null                    # Override API endpoint, e.g. "http://localhost:11434"
 
 interpretation:
-  # Use fully-qualified provider/model names.
-  # Examples:
-  # - "anthropic/claude-opus-4-5"
-  # - "openai/gpt-4o"
-  # - "groq/llama-3.1-70b-versatile"
-  # - "openrouter/anthropic/claude-3-opus"
-  # - "bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0"
-  # - "ollama/llama3.1"  (requires api_base)
+  # Supported providers: groq, openai, openrouter
+  provider: "openrouter"
+  # Model name without the provider prefix
+  # Examples: "anthropic/claude-opus-4-5", "gpt-4o", "llama-3.1-70b-versatile"
   model: "anthropic/claude-opus-4-5"
   api_base: null                   # Override API endpoint, e.g. "http://localhost:11434"
   temperature: 0
@@ -209,7 +229,6 @@ ad_detection:
   chunk_overlap_sec: 30            # Overlap to catch ads spanning chunk boundaries
   min_confidence: 0.75             # Segments below this threshold are logged but not cut
   merge_gap_sec: 5                 # Merge adjacent ad segments within this gap
-  max_tokens_per_chunk: 6000       # Hard cap on tokens per LLM call
 
 audio:
   output_format: "mp3"             # mp3 | m4a
@@ -222,6 +241,16 @@ logging:
 retry:
   max_attempts: 3
   backoff_factor: 2
+
+# Optional: override the LLM instruction text for each stage.
+# The JSON schema suffix is always appended automatically — do not include it here.
+prompts:
+  ad_detection: |
+    Identify advertisements in this podcast transcript segment.
+    An ad is any span where the host or another person promotes a product, service, or sponsor.
+    Exclude brand mentions that are naturally part of the episode content.
+  topic_extraction: |
+    Analyze the opening of this podcast transcript.
 ```
 
 ### `.env`
@@ -239,19 +268,30 @@ AWS_REGION_NAME=us-east-1
 # Ollama: no key needed — set interpretation.api_base in config.yaml
 ```
 
-### `config_loader.py` contract
+### `config/config_loader.py` contract
 
 - Loads `config.yaml` with PyYAML, validates against `AppConfig` (Pydantic v2), and calls `python-dotenv` to populate the environment.
 - Raises `ConfigError` on any missing required field, invalid value, or API key pattern found inside the YAML.
 - Fails fast — all validation runs at startup, before the pipeline executes.
 - litellm reads API keys directly from the environment; `AppConfig` does not store them.
 - Accepts `config_path: Path` so tests can pass `tests/fixtures/test_config.yaml`.
+- `TranscriptionConfig` and `InterpretationConfig` both inherit from `LLMProviderConfig(provider, model, api_base)`.
+- `SUPPORTED_PROVIDERS = frozenset({"groq", "openai", "openrouter"})` — validated at load time.
+- `LLMProviderConfig.provider_model` is a computed field that returns `f"{provider}/{model}"` for use as the litellm model string.
 
 ```python
+from config.config_loader import load_config
+
 cfg = load_config(Path("config.yaml"))
+cfg.transcription.provider      # "groq"
+cfg.transcription.model         # "whisper-large-v3"
+cfg.transcription.provider_model  # "groq/whisper-large-v3"  ← pass to litellm
+cfg.interpretation.provider     # "openrouter"
 cfg.interpretation.model        # "anthropic/claude-opus-4-5"
+cfg.interpretation.provider_model  # "openrouter/anthropic/claude-opus-4-5"
 cfg.interpretation.api_base     # None
-cfg.paths.database   # Path("./data/podcasts.db")
+cfg.paths.database              # Path("./data/podcasts.db")
+cfg.episodes_to_keep            # 5
 ```
 
 ---
@@ -264,14 +304,13 @@ cfg.paths.database   # Path("./data/podcasts.db")
 
 litellm routes to the correct backend based on the model string prefix. The corresponding env var must be set.
 
-| Prefix | Provider |
-|---|---|
-| `anthropic/` | Anthropic API |
-| `openai/` | OpenAI |
-| `groq/` | Groq |
-| `openrouter/` | OpenRouter |
-| `bedrock/` | AWS Bedrock |
-| `ollama/` | Local Ollama (requires `interpretation.api_base`) |
+| Provider value | litellm prefix used | Notes |
+|---|---|---|
+| `groq` | `groq/` | Requires `GROQ_API_KEY` |
+| `openai` | `openai/` | Requires `OPENAI_API_KEY`; also used for Whisper |
+| `openrouter` | `openrouter/` | Requires `OPENROUTER_API_KEY`; model can be any OpenRouter model string |
+
+`SUPPORTED_PROVIDERS = frozenset({"groq", "openai", "openrouter"})` — config validation rejects anything else at startup.
 
 ### Implementation
 
@@ -283,7 +322,7 @@ from typing import Any
 import litellm
 from tenacity import before_sleep_log, retry, stop_after_attempt, wait_exponential
 
-from config_loader import InterpretationConfig, TranscriptionConfig
+from config.config_loader import InterpretationConfig, TranscriptionConfig
 from pipeline.exceptions import LLMError, TranscriptionError
 
 logger = logging.getLogger(__name__)
@@ -357,12 +396,25 @@ async def transcribe(audio_path: Path, cfg: TranscriptionConfig) -> dict[str, An
 
 Each pipeline stage follows the same pattern: log `INFO` at entry and completion, log `DEBUG` for internal details, log `WARNING` for recoverable issues, and raise on unrecoverable errors.
 
+### Audio preprocessing (`audio_preprocessor.py`)
+
+Runs between Download and Transcription to reduce upload size and improve Whisper accuracy.
+
+1. Convert the downloaded audio to mono 16 kHz 32 kbps MP3 via `pydub` (inside `asyncio.to_thread`).
+2. Write the result as `transcription_input.mp3` alongside the source file.
+3. Log `INFO` ("Pre-processing audio for transcription: {source} → {output}").
+4. Return the output path. **Caller (`transcriber.py`) is responsible for deleting it after use.**
+
+The CBR 32 kbps mono format is sufficient for speech recognition and cuts upload size by ~80% vs a typical podcast file.
+
 ### Transcription (`transcriber.py`)
 
 1. Check the `transcripts` table for a row matching `episode.guid`. If found, log `INFO` ("Transcript cache hit for {guid}") and return immediately.
-2. Log `INFO` ("Starting transcription for {guid}"). Call `llm_client.transcribe()`. The `verbose_json` response includes word-level timestamps required for precise cuts.
-3. Persist the `Transcript` and all `Segment` rows to the database.
-4. Log `INFO` ("Transcription saved: {n} segments, {duration}s").
+2. Call `audio_preprocessor.prepare_for_transcription()` to produce a lean input file.
+3. Log `INFO` ("Starting transcription for {guid}"). Call `llm_client.transcribe()`. The `verbose_json` response includes word-level timestamps required for precise cuts.
+4. Delete the preprocessed file.
+5. Persist the `Transcript` and all `Segment` rows to the database.
+6. Log `INFO` ("Transcription saved: {n} segments, {duration}s").
 
 ### Topic extraction (`topic_extractor.py`)
 
@@ -730,12 +782,13 @@ logger.info("Detected %d ad segments, cutting %d", total, above_threshold)  # wr
 |---|---|
 | `rss.py` | async |
 | `downloader.py` | async |
+| `audio_preprocessor.py` | async (wraps sync via `asyncio.to_thread`) |
 | `transcriber.py` | async |
 | `topic_extractor.py` | async |
 | `ad_detector.py` | async |
 | `db/repositories/` | async |
 | `audio_editor.py` | sync, called via `asyncio.to_thread` |
-| `config_loader.py` | sync |
+| `config/config_loader.py` | sync |
 
 ### Blocking code
 
@@ -844,6 +897,33 @@ uv run python main.py --use-cache              # Skip transcription if DB row ex
 uv run python main.py --dry-run                # Detect ads but skip audio cutting
 uv run python main.py -v                       # Set log level to DEBUG
 ```
+
+## Web Frontend
+
+A browser-based UI built with **FastAPI + HTMX + Tailwind CSS CDN**. Provides feed management, live pipeline log streaming (SSE), and settings editing without touching config.yaml manually.
+
+```bash
+uv run python web.py                                  # Web UI on http://127.0.0.1:8000
+uv run python web.py --host 0.0.0.0 --port 8080      # Custom host/port
+uv run python web.py --reload                         # Dev mode with auto-reload
+uv run python web.py --config ./alt.yaml              # Use a different config file
+uv run python web.py -v                               # Set log level to DEBUG
+```
+
+Key files:
+
+| File | Role |
+|---|---|
+| `web.py` | uvicorn launcher + argparse; imports `setup_logging` from `main.py` |
+| `frontend/app.py` | FastAPI factory (`create_app()`); registers routers; Jinja2 with `slugify` filter |
+| `frontend/state.py` | Module-level pipeline running flag; `FeedStatus` enum |
+| `frontend/config_editor.py` | `set_config_path()`, `read_config()`, `write_config()` — all config mutations go here |
+| `frontend/config_cache.py` | Cached `AppConfig` loader used by route handlers |
+| `frontend/sse.py` | `QueueLogHandler` captures pipeline logs; async SSE generator streams them to browser |
+| `frontend/routes/pages.py` | Main page render |
+| `frontend/routes/feeds.py` | Feed CRUD endpoints (HTMX partials) |
+| `frontend/routes/settings.py` | Settings form — reads/writes via `config_editor` |
+| `frontend/routes/pipeline.py` | Start/Stop pipeline; `/log` SSE endpoint |
 
 ---
 

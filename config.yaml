@@ -1,53 +1,46 @@
-feeds:
-  - name: "The Daily"
-    url: "https://feeds.simplecast.com/Sl5CSM3S"
-    enabled: true
-
-episodes_to_keep: 1
-
-paths:
-  output_dir: "./output"
-  database: "./data/podcasts.db"
-
-transcription:
-  provider: "groq"
-  model: "whisper-large-v3"
-  language: "en"
-  # Optional override for OpenAI-compatible endpoints (e.g., local proxy).
-  api_base: null
-
-interpretation:
-  provider: "groq"
-  model: "openai/gpt-oss-20b"
-  # Optional override for OpenAI-compatible endpoints.
-  api_base: null
-  temperature: 0
-  max_tokens: 2048
-  topic_excerpt_words: 2000
-
 ad_detection:
   chunk_duration_sec: 300
   chunk_overlap_sec: 30
-  min_confidence: 0.75
   merge_gap_sec: 5
-
+  min_confidence: 0.75
 audio:
-  output_format: "mp3"
-  cbr_bitrate: "192k"
-
+  cbr_bitrate: 192k
+  output_format: mp3
+episodes_to_keep: 1
+feeds:
+- enabled: true
+  name: The Daily
+  url: https://feeds.simplecast.com/Sl5CSM3S
+interpretation:
+  api_base: null
+  max_tokens: 2048
+  model: openai/gpt-oss-20b
+  provider: groq
+  temperature: 0
+  topic_excerpt_words: 2000
 logging:
-  level: "INFO"
+  level: INFO
   log_file: null
-
-retry:
-  max_attempts: 3
-  backoff_factor: 2
-
+paths:
+  database: ./data/podcasts.db
+  output_dir: ./output
 prompts:
-  ad_detection: |
-    Identify advertisements in this podcast transcript segment.
-    An ad is any span where the host or another person or persons promote a product, service, or sponsor.
+  ad_detection: 'Identify advertisements in this podcast transcript segment.
+
+    An ad is any span where the host or another person or persons promote a product,
+    service, or sponsor.
+
     Exclude brand mentions that are naturally part of the episode content.
 
-  topic_extraction: |
-    Analyze the opening of this podcast transcript.
+    '
+  topic_extraction: 'Analyze the opening of this podcast transcript.
+
+    '
+retry:
+  backoff_factor: 2
+  max_attempts: 3
+transcription:
+  api_base: null
+  language: en
+  model: whisper-large-v3
+  provider: groq
