@@ -56,8 +56,8 @@ for var in "${required_vars[@]}"; do
 done
 
 if ! [[ "${FEED_CHECK_INTERVAL_HOURS}" =~ ^[0-9]+$ ]] || \
-   (( FEED_CHECK_INTERVAL_HOURS < 1 || FEED_CHECK_INTERVAL_HOURS > 23 )); then
-    echo "ERROR: FEED_CHECK_INTERVAL_HOURS must be an integer between 1 and 23."
+   (( FEED_CHECK_INTERVAL_HOURS < 1 || FEED_CHECK_INTERVAL_HOURS > 24 )); then
+    echo "ERROR: FEED_CHECK_INTERVAL_HOURS must be an integer between 1 and 24."
     exit 1
 fi
 
@@ -80,9 +80,17 @@ sed "s|{{GITHUB_USERNAME}}|${GITHUB_USERNAME}|g" \
     > "${STAGING}/podcast-ad-cutter.container"
 
 # Quadlet timer unit: replace {{INTERVAL_HOURS}}
-sed "s|{{INTERVAL_HOURS}}|${FEED_CHECK_INTERVAL_HOURS}|g" \
-    "${SCRIPT_DIR}/podcast-ad-cutter.timer.template" \
-    > "${STAGING}/podcast-ad-cutter.timer"
+# FEED_CHECK_INTERVAL_HOURS=24 maps to systemd 'daily' shorthand because
+# 0/24 is not a valid systemd hour value (valid range is 0-23).
+if (( FEED_CHECK_INTERVAL_HOURS == 24 )); then
+    sed "s|OnCalendar=.*|OnCalendar=daily|g" \
+        "${SCRIPT_DIR}/podcast-ad-cutter.timer.template" \
+        > "${STAGING}/podcast-ad-cutter.timer"
+else
+    sed "s|{{INTERVAL_HOURS}}|${FEED_CHECK_INTERVAL_HOURS}|g" \
+        "${SCRIPT_DIR}/podcast-ad-cutter.timer.template" \
+        > "${STAGING}/podcast-ad-cutter.timer"
+fi
 
 # Copy first-boot script (no substitution — it reads secrets at runtime)
 cp "${SCRIPT_DIR}/first-boot.sh" "${STAGING}/first-boot.sh"
