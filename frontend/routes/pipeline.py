@@ -1,23 +1,20 @@
-"""Pipeline control routes: run, SSE events, and status."""
+"""Pipeline control routes: run, stop, SSE events, and status."""
 
 import asyncio
 import logging
 from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from sse_starlette import EventSourceResponse
 
-from config.config_loader import load_config
-from frontend import sse, state
+from frontend import config_cache, sse, state
 from frontend.app import templates
-from frontend.config_editor import get_config_path
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/pipeline")
 
-# Module-level reference to the active SSE queue so /pipeline/events can drain it.
 _active_queue: asyncio.Queue[str | None] | None = None
 
 
@@ -37,7 +34,8 @@ async def run_pipeline(
     _active_queue = sse.attach_handler(loop)
 
     state.set_running(True)
-    asyncio.create_task(_run_pipeline_task(dry_run))
+    task = asyncio.create_task(_run_pipeline_task(dry_run))
+    state.set_task(task)
 
     return templates.TemplateResponse(
         request=request,
@@ -51,17 +49,39 @@ async def _run_pipeline_task(dry_run: bool) -> None:
     from pipeline.runner import run_pipeline as _run_pipeline
 
     try:
-        cfg = load_config(get_config_path())
+        cfg = config_cache.get_config()
         await _run_pipeline(cfg, dry_run=dry_run)
+    except asyncio.CancelledError:
+        logger.info("Pipeline cancelled by user")
+        raise
     except Exception as exc:
         logger.error(f"Pipeline failed: {exc}")
     finally:
         state.set_running(False)
-        # Signal SSE generator to close the stream.
+        state.set_task(None)
         queue = sse._active_queue  # noqa: SLF001
         if queue is not None:
             queue.put_nowait(None)
         sse.detach_handler()
+
+
+@router.post("/stop", response_class=HTMLResponse)
+async def stop_pipeline() -> HTMLResponse:
+    """Cancel the running pipeline task. The SSE 'done' event restores the UI."""
+    task = state.get_task()
+    if task is not None and not task.done():
+        task.cancel()
+    return HTMLResponse("")
+
+
+@router.get("/actions", response_class=HTMLResponse)
+async def pipeline_actions(request: Request) -> HTMLResponse:
+    """Return the Run / Dry Run button pair partial (used to restore UI after stop)."""
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/pipeline_actions.html",
+        context={},
+    )
 
 
 @router.get("/events")
@@ -83,6 +103,6 @@ async def pipeline_events(request: Request) -> EventSourceResponse:
 
 
 @router.get("/status")
-async def pipeline_status() -> JSONResponse:
+async def pipeline_status() -> dict[str, bool]:
     """Return JSON with the current pipeline running state."""
-    return JSONResponse({"running": state.is_running()})
+    return {"running": state.is_running()}

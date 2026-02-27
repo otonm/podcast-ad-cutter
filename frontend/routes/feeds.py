@@ -1,13 +1,14 @@
 """Feed management routes."""
 
 import logging
+from typing import Any, cast
 from urllib.parse import unquote
 
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from config.config_loader import load_config
-from frontend import config_editor
+from frontend import config_cache, config_editor
 from frontend.app import templates
 from frontend.config_editor import get_config_path
 from frontend.state import FeedStatus, is_running
@@ -27,14 +28,11 @@ def _feed_status(enabled: bool) -> str:
 @router.get("", response_class=HTMLResponse)
 async def list_feeds(request: Request) -> HTMLResponse:
     """Return the feed table rows partial."""
-    cfg = load_config(get_config_path())
-    feeds_with_status = [
-        {"feed": f, "status": _feed_status(f.enabled)} for f in cfg.feeds
-    ]
+    cfg = config_cache.get_config()
     return templates.TemplateResponse(
         request=request,
         name="partials/feed_table.html",
-        context={"feeds": cfg.feeds, "feeds_with_status": feeds_with_status},
+        context={"feeds": cfg.feeds},
     )
 
 
@@ -65,6 +63,7 @@ async def add_feed(
     is_enabled = enabled.lower() in ("true", "on", "1", "yes")
     config_editor.add_feed(name, url, enabled=is_enabled)
     cfg = load_config(get_config_path())
+    config_cache.set_config(cfg)
     return templates.TemplateResponse(
         request=request,
         name="partials/feed_table.html",
@@ -79,12 +78,22 @@ async def delete_feed(name: str) -> HTMLResponse:
     return HTMLResponse("")
 
 
+@router.put("/reorder")
+async def reorder_feeds(request: Request) -> Response:
+    """Reorder feeds in config.yaml to match the provided name order."""
+    body = cast(dict[str, Any], await request.json())
+    names = [str(n) for n in body.get("names", [])]
+    config_editor.reorder_feeds(names)
+    return Response(status_code=200)
+
+
 @router.put("/{name}/toggle", response_class=HTMLResponse)
 async def toggle_feed(request: Request, name: str) -> HTMLResponse:
     """Toggle a feed's enabled state and return the updated row."""
     decoded_name = unquote(name)
     config_editor.toggle_feed(decoded_name)
     cfg = load_config(get_config_path())
+    config_cache.set_config(cfg)
     feed = next((f for f in cfg.feeds if f.name == decoded_name), None)
     if feed is None:
         return HTMLResponse("")

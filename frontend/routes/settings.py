@@ -4,10 +4,9 @@ import logging
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse
-from pydantic import ValidationError
 
 from config.config_loader import SUPPORTED_PROVIDERS, AppConfig, load_config
-from frontend import config_editor
+from frontend import config_cache, config_editor
 from frontend.app import templates
 from frontend.config_editor import get_config_path
 
@@ -19,7 +18,7 @@ router = APIRouter()
 @router.get("/settings", response_class=HTMLResponse)
 async def get_settings(request: Request) -> HTMLResponse:
     """Return the settings form partial with current values."""
-    cfg = load_config(get_config_path())
+    cfg = config_cache.get_config()
     return templates.TemplateResponse(
         request=request,
         name="partials/settings_form.html",
@@ -27,7 +26,6 @@ async def get_settings(request: Request) -> HTMLResponse:
             "cfg": cfg,
             "providers": sorted(SUPPORTED_PROVIDERS),
             "error": None,
-            "saved": False,
         },
     )
 
@@ -41,10 +39,9 @@ async def save_settings(
     interpretation_model: str = Form(...),
     min_confidence: float = Form(...),
 ) -> HTMLResponse:
-    """Validate and save settings, then re-render the settings form."""
+    """Validate and save settings. Returns empty on success (collapses accordion)."""
     cfg: AppConfig | None = None
     error: str | None = None
-    saved = False
 
     try:
         config_editor.update_settings(
@@ -54,15 +51,16 @@ async def save_settings(
             interpretation_model=interpretation_model,
             min_confidence=min_confidence,
         )
-        # Validate by loading — raises ConfigError or ValidationError on bad input.
-        cfg = load_config(get_config_path())
-        saved = True
-    except (ValidationError, Exception) as exc:
+        validated = load_config(get_config_path())
+        config_cache.set_config(validated)
+        # Return empty — HTMX clears #settings-accordion, collapsing the panel.
+        return HTMLResponse("")
+    except Exception as exc:
         logger.warning(f"Settings save failed: {exc}")
         error = str(exc)
         try:
-            cfg = load_config(get_config_path())
-        except Exception:
+            cfg = config_cache.get_config()
+        except RuntimeError:
             cfg = None
 
     return templates.TemplateResponse(
@@ -72,6 +70,5 @@ async def save_settings(
             "cfg": cfg,
             "providers": sorted(SUPPORTED_PROVIDERS),
             "error": error,
-            "saved": saved,
         },
     )
