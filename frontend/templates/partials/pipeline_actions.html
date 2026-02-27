@@ -1,0 +1,20 @@
+<div id="pipeline-actions" class="flex gap-2">
+  <button
+    hx-post="/pipeline/run"
+    hx-target="#progress-section"
+    hx-swap="innerHTML"
+    hx-indicator="#run-spinner"
+    class="text-sm px-4 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-1.5">
+    <span>▶ Run</span>
+    <span id="run-spinner" class="htmx-indicator text-xs">⏳</span>
+  </button>
+  <button
+    hx-post="/pipeline/run?dry_run=true"
+    hx-target="#progress-section"
+    hx-swap="innerHTML"
+    hx-indicator="#dry-spinner"
+    class="text-sm px-4 py-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center gap-1.5">
+    <span>⚙ Dry Run</span>
+    <span id="dry-spinner" class="htmx-indicator text-xs">⏳</span>
+  </button>
+</div>
