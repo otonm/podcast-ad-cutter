@@ -1,5 +1,9 @@
 # CLAUDE.md — Podcast Ad Cutter
 
+## Main instruction for all agents
+
+To generate plans or proposals, to generate code that accesses APIs, or in other cases when a resource is accessed or used, ALWAYS check the documentation using provided MCP servers (context7) or seearch online fo information. As a last resort, inspect the source code of the library in the virtual einvironment itself.
+
 ## Project Overview
 
 This project downloads the latest episode of a podcast, transcribes it, uses an LLM to identify advertisements, and exports a clean audio file with all ads removed.

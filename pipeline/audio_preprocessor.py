@@ -25,13 +25,20 @@ async def prepare_for_transcription(audio_path: Path) -> Path:
 def _convert_sync(audio_path: Path) -> Path:
     output_path = audio_path.parent / "transcription_input.mp3"
     logger.info(f"Pre-processing audio for transcription: {audio_path.name} → {output_path.name}")
+
     audio = AudioSegment.from_file(audio_path)
+
+    logger.debug(f"Input audio channels: {audio.channels}")
+
     audio = (
         audio.set_channels(_TARGET_CHANNELS)
              .set_frame_rate(_TARGET_FRAME_RATE)
              .set_sample_width(_TARGET_SAMPLE_WIDTH)
     )
+
     audio.export(output_path, format=_TARGET_FORMAT, bitrate=_TARGET_BITRATE)
+
     size_mb = output_path.stat().st_size / 1_048_576
     logger.info(f"Pre-processing complete: {output_path.name} ({size_mb:.1f} MB)")
+
     return output_path

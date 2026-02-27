@@ -3,7 +3,7 @@ feeds:
     url: "https://feeds.simplecast.com/Sl5CSM3S"
     enabled: true
 
-episodes_to_keep: 5
+episodes_to_keep: 1
 
 paths:
   output_dir: "./output"
@@ -44,13 +44,10 @@ retry:
   backoff_factor: 2
 
 prompts:
-  # Customize the ad detection instructions.
-  # The JSON schema and format directives are added automatically — do not include them here.
   ad_detection: |
     Identify advertisements in this podcast transcript segment.
     An ad is any span where the host or another person or persons promote a product, service, or sponsor.
     Exclude brand mentions that are naturally part of the episode content.
 
-  # Customize the topic extraction instructions.
   topic_extraction: |
     Analyze the opening of this podcast transcript.
