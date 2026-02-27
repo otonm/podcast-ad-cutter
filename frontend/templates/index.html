@@ -22,6 +22,7 @@
     <table class="w-full text-sm">
       <thead class="bg-gray-50 text-xs font-medium text-gray-500 uppercase tracking-wide">
         <tr>
+          <th class="pl-3 pr-1 py-2 w-8"></th>
           <th class="px-5 py-2 text-left">Name</th>
           <th class="px-5 py-2 text-left">URL</th>
           <th class="px-5 py-2 text-center">Status</th>
@@ -42,27 +43,12 @@
   <!-- ------------------------------------------------------------------ -->
   <section class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
     <div class="flex items-center justify-between mb-4">
-      <h2 class="text-base font-semibold">Pipeline</h2>
-      <div class="flex gap-2">
-        <button
-          hx-post="/pipeline/run"
-          hx-target="#progress-section"
-          hx-swap="innerHTML"
-          hx-indicator="#run-spinner"
-          class="text-sm px-4 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-1.5">
-          <span>▶ Run</span>
-          <span id="run-spinner" class="htmx-indicator text-xs">⏳</span>
-        </button>
-        <button
-          hx-post="/pipeline/run?dry_run=true"
-          hx-target="#progress-section"
-          hx-swap="innerHTML"
-          hx-indicator="#dry-spinner"
-          class="text-sm px-4 py-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors flex items-center gap-1.5">
-          <span>⚙ Dry Run</span>
-          <span id="dry-spinner" class="htmx-indicator text-xs">⏳</span>
-        </button>
-      </div>
+      <h2 class="text-base font-semibold cursor-pointer select-none flex items-center gap-1"
+          onclick="togglePipelineLog()">
+        Pipeline
+        <span id="pipeline-chevron" class="text-gray-400 font-normal text-sm">▼</span>
+      </h2>
+      {% include "partials/pipeline_actions.html" %}
     </div>
     <div id="progress-section" class="text-sm text-gray-500 italic">
       Click ▶ Run to start processing enabled feeds.
@@ -74,15 +60,59 @@
   <!-- ------------------------------------------------------------------ -->
   <section class="bg-white rounded-xl border border-gray-200 shadow-sm">
     <button
-      hx-get="/settings"
-      hx-target="#settings-accordion"
-      hx-swap="innerHTML"
+      id="settings-toggle-btn"
+      onclick="toggleSettings()"
       class="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-gray-50 transition-colors">
       <h2 class="text-base font-semibold">⚙ Settings</h2>
-      <span class="text-gray-400 text-sm">Click to expand</span>
+      <span id="settings-chevron" class="text-gray-400 text-sm">▶ Click to expand</span>
     </button>
     <div id="settings-accordion" class="px-5 pb-4"></div>
   </section>
 
 </div>
+
+<script>
+function toggleSettings() {
+  var accordion = document.getElementById('settings-accordion');
+  var chevron = document.getElementById('settings-chevron');
+  if (accordion.children.length > 0) {
+    accordion.innerHTML = '';
+    chevron.textContent = '▶ Click to expand';
+  } else {
+    htmx.ajax('GET', '/settings', {target: '#settings-accordion', swap: 'innerHTML'});
+    chevron.textContent = '▼ Click to collapse';
+  }
+}
+
+function togglePipelineLog() {
+  var section = document.getElementById('progress-section');
+  var chevron = document.getElementById('pipeline-chevron');
+  if (section.style.display === 'none') {
+    section.style.display = '';
+    chevron.textContent = '▼';
+  } else {
+    section.style.display = 'none';
+    chevron.textContent = '▶';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  var tbody = document.getElementById('feed-tbody');
+  if (tbody && typeof Sortable !== 'undefined') {
+    Sortable.create(tbody, {
+      handle: '.drag-handle',
+      animation: 150,
+      onEnd: function () {
+        var names = Array.from(tbody.querySelectorAll('tr[data-name]'))
+          .map(function (row) { return row.dataset.name; });
+        fetch('/feeds/reorder', {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({names: names})
+        });
+      }
+    });
+  }
+});
+</script>
 {% endblock %}

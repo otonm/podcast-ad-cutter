@@ -25,14 +25,25 @@
     es.close();
     status.textContent = "✓ Pipeline complete";
     status.className = "text-green-700 font-medium";
-    // Refresh cost badge
     htmx.trigger("#header-cost", "load");
+    htmx.ajax("GET", "/pipeline/actions", {target: "#pipeline-actions", swap: "outerHTML"});
   });
 
   es.onerror = function () {
     es.close();
     status.textContent = "⚠ Connection lost";
     status.className = "text-yellow-700 font-medium";
+    htmx.ajax("GET", "/pipeline/actions", {target: "#pipeline-actions", swap: "outerHTML"});
   };
 })();
 </script>
+
+<!-- OOB: swap #pipeline-actions with a Stop button while pipeline is running -->
+<div id="pipeline-actions" hx-swap-oob="true">
+  <button
+    hx-post="/pipeline/stop"
+    hx-swap="none"
+    class="text-sm px-4 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">
+    ⏹ Stop
+  </button>
+</div>
