@@ -1,0 +1,27 @@
+[Unit]
+Description=Tailscale VPN
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=tailscale/tailscale:latest
+ContainerName=tailscale
+AutoUpdate=registry
+# Share host network namespace so CoreOS host joins the tailnet
+Network=host
+# State survives container updates
+Volume=/var/lib/tailscale:/var/lib/tailscale:z
+# Userspace networking — no NET_ADMIN or /dev/net/tun required
+Environment=TS_USERSPACE=true
+Environment=TS_STATE_DIR=/var/lib/tailscale
+Environment=TS_HOSTNAME={{TAILSCALE_HOSTNAME}}
+# --ssh: Tailscale manages SSH (enable in tailnet ACLs after first boot)
+Environment=TS_EXTRA_ARGS=--ssh
+Secret=tailscale_auth_key,type=env,target=TS_AUTHKEY
+
+[Service]
+Restart=always
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target default.target

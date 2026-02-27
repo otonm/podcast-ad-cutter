@@ -21,6 +21,11 @@ if ! command -v butane &>/dev/null; then
     exit 1
 fi
 
+if ! command -v systemd-escape &>/dev/null; then
+    echo "ERROR: 'systemd-escape' not found (required for NFS unit name computation)"
+    exit 1
+fi
+
 if [[ ! -f "$ENV_FILE" ]]; then
     echo "ERROR: deployment/env not found."
     echo "  cp deployment/env.example deployment/env"
@@ -47,6 +52,8 @@ required_vars=(
     GITHUB_USERNAME
     SSH_PUBLIC_KEY
     FEED_CHECK_INTERVAL_HOURS
+    TAILSCALE_AUTH_KEY
+    TAILSCALE_HOSTNAME
 )
 for var in "${required_vars[@]}"; do
     if [[ -z "${!var:-}" ]]; then
@@ -64,6 +71,8 @@ fi
 echo "==> Generating ignition.json"
 echo "    GITHUB_USERNAME=${GITHUB_USERNAME}"
 echo "    FEED_CHECK_INTERVAL_HOURS=${FEED_CHECK_INTERVAL_HOURS}"
+echo "    TAILSCALE_HOSTNAME=${TAILSCALE_HOSTNAME}"
+echo "    NFS_SHARE=${NFS_SHARE:-<none, using named volume>}"
 
 # ── Create staging directory ──────────────────────────────────────────────────
 rm -rf "$STAGING"
@@ -92,6 +101,11 @@ else
         > "${STAGING}/podcast-ad-cutter.timer"
 fi
 
+# Tailscale Quadlet unit: replace {{TAILSCALE_HOSTNAME}}
+sed "s|{{TAILSCALE_HOSTNAME}}|${TAILSCALE_HOSTNAME}|g" \
+    "${SCRIPT_DIR}/tailscale.container.template" \
+    > "${STAGING}/tailscale.container"
+
 # Copy first-boot script (no substitution — it reads secrets at runtime)
 cp "${SCRIPT_DIR}/first-boot.sh" "${STAGING}/first-boot.sh"
 
@@ -101,6 +115,7 @@ cp "${PROJECT_ROOT}/config.yaml" "${STAGING}/config.yaml"
 # Render butane template: substitute ${VAR} placeholders.
 # The explicit variable list prevents envsubst from corrupting other $ chars.
 BUTANE_VARS='${SSH_PUBLIC_KEY}${GITHUB_USERNAME}${GHCR_TOKEN}'\
+'${TAILSCALE_AUTH_KEY}'\
 '${ANTHROPIC_API_KEY}${OPENAI_API_KEY}${GROQ_API_KEY}'\
 '${OPENROUTER_API_KEY}${GEMINI_API_KEY}'\
 '${AWS_ACCESS_KEY_ID}${AWS_SECRET_ACCESS_KEY}${AWS_REGION_NAME}'
@@ -108,6 +123,48 @@ BUTANE_VARS='${SSH_PUBLIC_KEY}${GITHUB_USERNAME}${GHCR_TOKEN}'\
 envsubst "$BUTANE_VARS" \
     < "${SCRIPT_DIR}/butane.yaml.template" \
     > "${STAGING}/butane.yaml"
+
+# ── Render podcast-ad-cutter.container NFS placeholders ───────────────────────
+if [[ -n "${NFS_SHARE:-}" ]]; then
+    NFS_MOUNT_PATH="${NFS_MOUNT_PATH:-/mnt/podcast-output}"
+    NFS_UNIT_NAME=$(systemd-escape --path --suffix=mount "${NFS_MOUNT_PATH}")
+
+    echo "    NFS_SHARE=${NFS_SHARE} → ${NFS_UNIT_NAME}"
+
+    # Render NFS mount unit into staging
+    sed -e "s|{{NFS_SHARE}}|${NFS_SHARE}|g" \
+        -e "s|{{NFS_MOUNT_PATH}}|${NFS_MOUNT_PATH}|g" \
+        "${SCRIPT_DIR}/nfs-output.mount.template" \
+        > "${STAGING}/${NFS_UNIT_NAME}"
+
+    # Inject NFS directory into butane.yaml (replace marker line)
+    NFS_DIR_YAML="    - path: ${NFS_MOUNT_PATH}\n      mode: 0755"
+    sed -i "s|    # <<<NFS_DIRECTORIES>>>|${NFS_DIR_YAML}|" "${STAGING}/butane.yaml"
+
+    # Inject NFS unit into butane.yaml (replace marker line)
+    NFS_UNIT_YAML="    - name: ${NFS_UNIT_NAME}\n      enabled: true\n      contents:\n        local: ${NFS_UNIT_NAME}"
+    sed -i "s|    # <<<NFS_UNITS>>>|${NFS_UNIT_YAML}|" "${STAGING}/butane.yaml"
+
+    # Podcast-ad-cutter container: NFS dependency and host bind mount
+    OUTPUT_VOLUME_LINE="Volume=${NFS_MOUNT_PATH}:/app/output:z"
+    NFS_AFTER_LINE="After=${NFS_UNIT_NAME}"
+    NFS_REQUIRES_LINE="Requires=${NFS_UNIT_NAME}"
+else
+    # Remove NFS marker lines from butane.yaml
+    sed -i "/# <<<NFS_DIRECTORIES>>>/d" "${STAGING}/butane.yaml"
+    sed -i "/# <<<NFS_UNITS>>>/d" "${STAGING}/butane.yaml"
+
+    OUTPUT_VOLUME_LINE="Volume=podcast-ad-cutter-output:/app/output:Z"
+    NFS_AFTER_LINE=""
+    NFS_REQUIRES_LINE=""
+fi
+
+# Apply NFS/output placeholders to podcast-ad-cutter.container
+sed -i \
+    -e "s|{{OUTPUT_VOLUME_LINE}}|${OUTPUT_VOLUME_LINE}|g" \
+    -e "s|{{NFS_AFTER_LINE}}|${NFS_AFTER_LINE}|g" \
+    -e "s|{{NFS_REQUIRES_LINE}}|${NFS_REQUIRES_LINE}|g" \
+    "${STAGING}/podcast-ad-cutter.container"
 
 # ── Run butane ────────────────────────────────────────────────────────────────
 butane \
@@ -135,3 +192,6 @@ echo "After first boot, verify:"
 echo "  ssh core@<server-ip>"
 echo "  systemctl status podcast-ad-cutter-first-boot.service"
 echo "  journalctl -u podcast-ad-cutter-first-boot.service"
+echo ""
+echo "  Tailscale:  After first boot, enable SSH in your tailnet ACLs"
+echo "              Then: ssh core@${TAILSCALE_HOSTNAME}.<tailnet-name>.ts.net"

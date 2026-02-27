@@ -29,6 +29,7 @@ fi
 # All secrets are always created so the .container unit file stays static.
 # Unused providers get an empty-string secret value — litellm ignores them.
 for secret_name in \
+    tailscale_auth_key \
     anthropic_api_key \
     openai_api_key \
     groq_api_key \
@@ -56,6 +57,10 @@ podman pull "ghcr.io/${GITHUB_USERNAME}/podcast-ad-cutter:latest"
 # ── 4. Reload systemd so Quadlet generates podcast-ad-cutter.service ──────────
 echo "==> Running systemctl daemon-reload (Quadlet generator)"
 systemctl daemon-reload
+
+# ── 4b. Enable and start Tailscale ────────────────────────────────────────────
+echo "==> Enabling tailscale.service"
+systemctl enable --now tailscale.service
 
 # ── 5. Enable and start the feed check timer ──────────────────────────────────
 echo "==> Enabling podcast-ad-cutter.timer"

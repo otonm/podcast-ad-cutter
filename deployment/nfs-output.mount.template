@@ -1,0 +1,15 @@
+[Unit]
+Description=NFS Output Mount
+After=network-online.target
+Wants=network-online.target
+
+[Mount]
+What={{NFS_SHARE}}
+Where={{NFS_MOUNT_PATH}}
+Type=nfs
+# _netdev: delay until network is up
+# soft + timeo=30: fail fast if NFS server unreachable (30 × 0.1s = 3s retries by default)
+Options=_netdev,nfsvers=4,soft,timeo=30
+
+[Install]
+WantedBy=multi-user.target

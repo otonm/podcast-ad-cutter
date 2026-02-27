@@ -2,6 +2,8 @@
 Description=Podcast Ad Cutter
 After=network-online.target
 Wants=network-online.target
+{{NFS_AFTER_LINE}}
+{{NFS_REQUIRES_LINE}}
 
 [Container]
 Image=ghcr.io/{{GITHUB_USERNAME}}/podcast-ad-cutter:latest
@@ -11,7 +13,8 @@ AutoUpdate=registry
 
 # Named volumes — created automatically by Podman on first run
 Volume=podcast-ad-cutter-data:/app/data:Z
-Volume=podcast-ad-cutter-output:/app/output:Z
+# Output — named Podman volume (default) or NFS host bind mount (if NFS_SHARE is set)
+{{OUTPUT_VOLUME_LINE}}
 
 # config.yaml is managed on the host; mounted read-only into the container
 Volume=/etc/podcast-ad-cutter/config.yaml:/etc/podcast-ad-cutter/config.yaml:ro,Z
