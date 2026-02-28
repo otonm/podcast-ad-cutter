@@ -78,3 +78,21 @@ async def scheduler_partial(request: Request) -> HTMLResponse:
             "interval_minutes": scheduler.get_interval_minutes(),
         },
     )
+
+
+@router.post("/stop-pipeline", response_class=HTMLResponse)
+async def stop_scheduled_pipeline(request: Request) -> HTMLResponse:
+    """Cancel the current pipeline run; leave the scheduler active for the next interval."""
+    task = state.get_task()
+    if task is not None and not task.done():
+        task.cancel()
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/scheduler_fieldset.html",
+        context={
+            "scheduler_running": scheduler.is_running(),
+            "pipeline_running": False,
+            "next_run_at": scheduler.get_next_run_at(),
+            "interval_minutes": scheduler.get_interval_minutes(),
+        },
+    )
