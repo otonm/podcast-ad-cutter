@@ -1,14 +1,16 @@
 """Pipeline control routes: run, stop, SSE events, and status."""
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncGenerator
 
+import psutil
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from sse_starlette import EventSourceResponse
 
-from frontend import config_cache, sse, state
+from frontend import config_cache, scheduler, sse, state
 from frontend.app import templates
 
 logger = logging.getLogger(__name__)
@@ -37,10 +39,19 @@ async def run_pipeline(
     task = asyncio.create_task(_run_pipeline_task(dry_run))
     state.set_task(task)
 
+    sched_running = scheduler.is_running()
+    if sched_running:
+        scheduler.reset()
     return templates.TemplateResponse(
         request=request,
         name="partials/progress.html",
-        context={},
+        context={
+            "scheduler_running": sched_running,
+            "pipeline_running": True,
+            "next_run_at": scheduler.get_next_run_at(),
+            "interval_minutes": scheduler.get_interval_minutes(),
+            "oob_swap": sched_running,
+        },
     )
 
 
@@ -67,7 +78,13 @@ async def _run_pipeline_task(dry_run: bool) -> None:
 
 @router.post("/stop", response_class=HTMLResponse)
 async def stop_pipeline() -> HTMLResponse:
-    """Cancel the running pipeline task. The SSE 'done' event restores the UI."""
+    """Cancel the running pipeline task and kill any spawned child processes."""
+    try:
+        for child in psutil.Process().children(recursive=True):
+            with contextlib.suppress(psutil.NoSuchProcess):
+                child.terminate()
+    except Exception:
+        logger.debug("Could not enumerate child processes")
     task = state.get_task()
     if task is not None and not task.done():
         task.cancel()
