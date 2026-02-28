@@ -35,16 +35,16 @@ async def _watch_config() -> None:
     """Reload config whenever config.yaml is modified on disk (external edits)."""
     async for _ in awatch(get_config_path()):
         try:
-            config_cache.set_config(load_config(get_config_path()))
+            config_cache.set_config(await asyncio.to_thread(load_config, get_config_path()))
             logger.info("Config reloaded from disk")
-        except Exception as exc:
-            logger.error(f"Config reload failed: {exc}")
+        except Exception:
+            logger.exception("Config reload failed")
 
 
 @asynccontextmanager
-async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+async def _lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """Load config on startup; watch for file changes; cancel watcher on shutdown."""
-    config_cache.set_config(load_config(get_config_path()))
+    config_cache.set_config(await asyncio.to_thread(load_config, get_config_path()))
     task = asyncio.create_task(_watch_config())
     yield
     task.cancel()

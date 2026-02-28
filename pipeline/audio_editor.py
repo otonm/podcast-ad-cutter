@@ -33,7 +33,7 @@ def _cut_ads_sync(
     cfg: AppConfig,
     output_path: Path,
 ) -> Path:
-    """Synchronous audio cutting function (runs in thread)."""
+    """Cut ad segments from audio and export the clean file (runs in a thread)."""
     try:
         audio = AudioSegment.from_file(audio_path)
     except Exception as exc:
@@ -54,7 +54,8 @@ def _cut_ads_sync(
         keep_segments.append(audio[last_end:])
 
     if not keep_segments:
-        raise AudioEditError("All audio would be cut; no keep segments remain")
+        msg = "All audio would be cut; no keep segments remain"
+        raise AudioEditError(msg)
 
     try:
         clean_audio = sum(keep_segments[1:], keep_segments[0])

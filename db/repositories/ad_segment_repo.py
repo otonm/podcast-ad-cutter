@@ -8,10 +8,13 @@ logger = logging.getLogger(__name__)
 
 
 class AdSegmentRepository:
+    """Persist and retrieve ad segment records from the database."""
+
     def __init__(self, conn: aiosqlite.Connection) -> None:
         self._conn = conn
 
     async def save_all(self, segments: list[AdSegment]) -> None:
+        """Insert all segments for an episode, then commit."""
         for seg in segments:
             await self._conn.execute(
                 "INSERT INTO ad_segments"
@@ -32,6 +35,7 @@ class AdSegmentRepository:
         logger.debug(f"Saved {len(segments)} ad segments for episode_guid={guid}")
 
     async def get_by_episode(self, episode_guid: str) -> list[AdSegment]:
+        """Return all ad segments for the given episode, ordered by start time."""
         cursor = await self._conn.execute(
             "SELECT episode_guid, start_ms, end_ms, confidence, reason, sponsor_name, was_cut"
             " FROM ad_segments WHERE episode_guid = ? ORDER BY start_ms",
@@ -52,6 +56,7 @@ class AdSegmentRepository:
         ]
 
     async def mark_cut(self, episode_guid: str) -> None:
+        """Set was_cut=1 for all segments belonging to the given episode."""
         await self._conn.execute(
             "UPDATE ad_segments SET was_cut = 1 WHERE episode_guid = ?",
             (episode_guid,),

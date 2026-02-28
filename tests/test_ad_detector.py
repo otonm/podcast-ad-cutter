@@ -187,8 +187,8 @@ async def test_detect_ads_falls_back_to_chunks_when_context_exceeded(
     app_config: AppConfig, topic_ctx: TopicContext
 ) -> None:
     """When fits_in_context returns False, complete() is called once per chunk."""
-    # 600 1-sec segments with 300s chunks and 30s overlap → 3 chunks
-    # (0–300s, 270–570s, 540–600s)
+    # 600 1-sec segments with 300s chunks and 30s overlap -> 3 chunks
+    # (0-300s, 270-570s, 540-600s)
     transcript = _make_transcript(600)
 
     with (
@@ -199,9 +199,9 @@ async def test_detect_ads_falls_back_to_chunks_when_context_exceeded(
             return_value=("[]", 0.01),
         ) as mock_complete,
     ):
-        segments, cost = await detect_ads(topic_ctx, transcript, app_config)
+        segments, _cost = await detect_ads(topic_ctx, transcript, app_config)
 
-    # Three chunks → three calls
+    # Three chunks -> three calls
     assert mock_complete.call_count == 3
     assert segments == []
 

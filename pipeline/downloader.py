@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
 
+import anyio
 import httpx
 
 from models.episode import Episode
@@ -23,7 +24,8 @@ async def download_episode(
     suffix = Path(urlparse(str(episode.audio_url)).path).suffix or ".mp3"
     fd, tmp = tempfile.mkstemp(suffix=suffix)
     os.close(fd)
-    dest = Path(tmp)
+    dest_path = Path(tmp)
+    dest = anyio.Path(tmp)
 
     logger.info(f"Downloading {episode.audio_url} → {dest}")
     should_close = client is None
@@ -33,17 +35,17 @@ async def download_episode(
     try:
         async with client.stream("GET", str(episode.audio_url)) as response:
             response.raise_for_status()
-            with dest.open("wb") as f:
+            async with await dest.open("wb") as f:
                 async for chunk in response.aiter_bytes(chunk_size=_DOWNLOAD_CHUNK_SIZE):
-                    f.write(chunk)
+                    await f.write(chunk)
     except httpx.HTTPError as exc:
-        dest.unlink(missing_ok=True)
-        logger.error(f"Download failed for {episode.guid}: {exc}")
+        await dest.unlink(missing_ok=True)
+        logger.error(f"Download failed for {episode.guid}: {exc}")  # noqa: TRY400
         raise DownloadError(f"Download failed: {exc}") from exc
     finally:
         if should_close:
             await client.aclose()
 
-    file_size = dest.stat().st_size
+    file_size = (await dest.stat()).st_size
     logger.info(f"Download complete: {dest.name} ({file_size} bytes)")
-    return dest
+    return dest_path

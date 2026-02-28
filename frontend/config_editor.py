@@ -14,11 +14,13 @@ _config_path: Path = Path("config.yaml")
 
 
 def set_config_path(path: Path) -> None:
+    """Override the default config path. Called by webui.py at startup."""
     global _config_path
     _config_path = path
 
 
 def get_config_path() -> Path:
+    """Return the active config file path."""
     return _config_path
 
 
@@ -30,8 +32,8 @@ def get_config_path() -> Path:
 def _load() -> dict[str, object]:
     raw = yaml.safe_load(_config_path.read_text())
     if not isinstance(raw, dict):
-        raise ValueError(f"config.yaml must be a mapping, got {type(raw).__name__}")
-    return cast(dict[str, object], raw)
+        raise TypeError(f"config.yaml must be a mapping, got {type(raw).__name__}")
+    return cast("dict[str, object]", raw)
 
 
 def _save(data: dict[str, object]) -> None:
@@ -47,7 +49,7 @@ def add_feed(name: str, url: str, *, enabled: bool = True) -> None:
     """Append a new feed entry to config.yaml."""
     data = _load()
     existing = data.get("feeds")
-    feeds: list[dict[str, object]] = cast(list[dict[str, object]], existing) if existing else []
+    feeds: list[dict[str, object]] = cast("list[dict[str, object]]", existing) if existing else []
     feeds.append({"name": name, "url": url, "enabled": enabled})
     data["feeds"] = feeds
     _save(data)
@@ -57,7 +59,7 @@ def delete_feed(name: str) -> None:
     """Remove the feed with the given name from config.yaml."""
     data = _load()
     existing = data.get("feeds")
-    feeds: list[dict[str, object]] = cast(list[dict[str, object]], existing) if existing else []
+    feeds: list[dict[str, object]] = cast("list[dict[str, object]]", existing) if existing else []
     data["feeds"] = [f for f in feeds if f.get("name") != name]
     _save(data)
 
@@ -66,7 +68,7 @@ def toggle_feed(name: str) -> None:
     """Flip the enabled boolean for the feed with the given name."""
     data = _load()
     existing = data.get("feeds")
-    feeds: list[dict[str, object]] = cast(list[dict[str, object]], existing) if existing else []
+    feeds: list[dict[str, object]] = cast("list[dict[str, object]]", existing) if existing else []
     for feed in feeds:
         if feed.get("name") == name:
             feed["enabled"] = not bool(feed.get("enabled", True))
@@ -82,7 +84,7 @@ def reorder_feeds(names: list[str]) -> None:
     """
     data = _load()
     existing = data.get("feeds")
-    feeds: list[dict[str, object]] = cast(list[dict[str, object]], existing) if existing else []
+    feeds: list[dict[str, object]] = cast("list[dict[str, object]]", existing) if existing else []
     feed_map = {str(f.get("name", "")): f for f in feeds}
     reordered = [feed_map[n] for n in names if n in feed_map]
     leftover = [f for f in feeds if str(f.get("name", "")) not in names]
@@ -107,19 +109,19 @@ def update_settings(
     data = _load()
 
     raw_t = data.get("transcription")
-    transcription: dict[str, object] = cast(dict[str, object], raw_t) if raw_t else {}
+    transcription: dict[str, object] = cast("dict[str, object]", raw_t) if raw_t else {}
     transcription["provider"] = transcription_provider
     transcription["model"] = transcription_model
     data["transcription"] = transcription
 
     raw_i = data.get("interpretation")
-    interpretation: dict[str, object] = cast(dict[str, object], raw_i) if raw_i else {}
+    interpretation: dict[str, object] = cast("dict[str, object]", raw_i) if raw_i else {}
     interpretation["provider"] = interpretation_provider
     interpretation["model"] = interpretation_model
     data["interpretation"] = interpretation
 
     raw_a = data.get("ad_detection")
-    ad_detection: dict[str, object] = cast(dict[str, object], raw_a) if raw_a else {}
+    ad_detection: dict[str, object] = cast("dict[str, object]", raw_a) if raw_a else {}
     ad_detection["min_confidence"] = min_confidence
     data["ad_detection"] = ad_detection
 

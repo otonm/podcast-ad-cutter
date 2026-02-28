@@ -1,7 +1,7 @@
 """Web frontend launcher for Podcast Ad Cutter.
 
 Usage:
-    uv run python web.py [--host 127.0.0.1] [--port 8000] [--reload] [--config config.yaml]
+    uv run python webui.py [--host 127.0.0.1] [--port 8000] [--reload] [--config config.yaml]
 
 Imports:
     - setup_logging from main.py to configure logging at startup
@@ -10,9 +10,14 @@ Imports:
 
 import argparse
 import logging
+import sys
 from pathlib import Path
 
 import uvicorn
+
+from config.config_loader import load_config
+from frontend.config_editor import set_config_path
+from main import setup_logging
 
 
 def _parse_args() -> argparse.Namespace:
@@ -33,23 +38,19 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Parse arguments, configure logging, then start the uvicorn server."""
     args = _parse_args()
-
-    # Configure logging before anything else.
-    from config.config_loader import load_config
-    from main import setup_logging
 
     try:
         cfg = load_config(args.config)
     except Exception as exc:
-        print(f"Failed to load config: {exc}")
+        sys.stderr.write(f"Failed to load config: {exc}\n")
         raise SystemExit(1) from exc
 
     log_level = "DEBUG" if args.verbose else cfg.logging.level
     setup_logging(log_level, cfg.logging.log_file)
 
     # Point config_editor at the selected config file.
-    from frontend.config_editor import set_config_path
     set_config_path(args.config)
 
     logging.getLogger(__name__).info(

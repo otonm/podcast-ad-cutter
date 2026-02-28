@@ -1,6 +1,8 @@
 """Settings routes."""
 
+import asyncio
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse
@@ -33,25 +35,26 @@ async def get_settings(request: Request) -> HTMLResponse:
 @router.post("/settings", response_class=HTMLResponse)
 async def save_settings(
     request: Request,
-    transcription_provider: str = Form(...),
-    transcription_model: str = Form(...),
-    interpretation_provider: str = Form(...),
-    interpretation_model: str = Form(...),
-    min_confidence: float = Form(...),
+    transcription_provider: Annotated[str, Form()],
+    transcription_model: Annotated[str, Form()],
+    interpretation_provider: Annotated[str, Form()],
+    interpretation_model: Annotated[str, Form()],
+    min_confidence: Annotated[float, Form()],
 ) -> HTMLResponse:
     """Validate and save settings. Returns empty on success (collapses accordion)."""
     cfg: AppConfig | None = None
     error: str | None = None
 
     try:
-        config_editor.update_settings(
+        await asyncio.to_thread(
+            config_editor.update_settings,
             transcription_provider=transcription_provider,
             transcription_model=transcription_model,
             interpretation_provider=interpretation_provider,
             interpretation_model=interpretation_model,
             min_confidence=min_confidence,
         )
-        validated = load_config(get_config_path())
+        validated = await asyncio.to_thread(load_config, get_config_path())
         config_cache.set_config(validated)
         # Return empty — HTMX clears #settings-accordion, collapsing the panel.
         return HTMLResponse("")

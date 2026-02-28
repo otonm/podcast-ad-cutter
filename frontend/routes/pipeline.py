@@ -54,8 +54,8 @@ async def _run_pipeline_task(dry_run: bool) -> None:
     except asyncio.CancelledError:
         logger.info("Pipeline cancelled by user")
         raise
-    except Exception as exc:
-        logger.exception(f"Pipeline failed: {exc}")
+    except Exception:
+        logger.exception("Pipeline failed")
     finally:
         state.set_running(False)
         state.set_task(None)

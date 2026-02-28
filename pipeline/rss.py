@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from time import mktime
 
 import feedparser
@@ -32,7 +32,7 @@ def parse_feed(xml: str, *, feed_name: str) -> list[Episode]:
                 guid=guid,
                 feed_title=feed_name,
                 title=title,
-                audio_url=audio_url,
+                audio_url=audio_url,  # type: ignore[arg-type]
                 published=published,
             )
         )
@@ -63,8 +63,8 @@ def _extract_audio_url(entry: feedparser.FeedParserDict) -> str | None:
 def _parse_date(entry: feedparser.FeedParserDict) -> datetime:
     """Parse the published date from a feed entry."""
     if hasattr(entry, "published_parsed") and entry.published_parsed:
-        return datetime.fromtimestamp(mktime(entry.published_parsed), tz=timezone.utc)
-    return datetime.now(tz=timezone.utc)
+        return datetime.fromtimestamp(mktime(entry.published_parsed), tz=UTC)
+    return datetime.now(tz=UTC)
 
 
 async def fetch_episodes(

@@ -1,7 +1,5 @@
 from pathlib import Path
 
-import pytest
-
 
 def test_parse_feed_with_enclosure():
     from pipeline.rss import parse_feed

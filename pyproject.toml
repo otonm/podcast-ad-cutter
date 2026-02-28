@@ -21,6 +21,7 @@ dependencies = [
     "python-multipart>=0.0.22",
     "sse-starlette>=3.2.0",
     "watchfiles>=1.1.1",
+    "anyio>=4.12.1",
 ]
 
 [tool.setuptools.packages.find]
@@ -39,23 +40,53 @@ dev = [
 ]
 
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "ANN"]
+select = [
+    "ALL",
+]
+ignore = [
+    "D100",     # missing module docstring
+    "D104",     # missing package docstring
+    "D107",     # missing __init__ docstring
+    "D203",     # conflicts with D211 (no-blank-line-before-class wins)
+    "D213",     # conflicts with D212 (multi-line-summary-first-line wins)
+    "TRY003",   # exception message in raise
+    "EM102",    # f-string in exception
+    "COM812",   # trailing comma
+    "G004",     # f-string in logging
+    "PLR0913",  # too many function arguments
+    "PLW0603",  # global statement (module singleton pattern)
+    "BLE001",   # broad exception catch (intentional in error handlers)
+    "FBT001",   # boolean-typed positional argument
+    "FBT002",   # boolean default positional argument
+]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["ANN"]
+"tests/**" = [
+    "ANN",
+    "S101",
+    "PLC0415",
+    "D103",
+    "SLF001",
+    "PLR2004",
+    "INP001",
+    "ASYNC240", # test fixtures use sync path reads; anyio.Path not needed in tests
+]
+"frontend/app.py" = ["PLC0415"]
+"frontend/routes/pipeline.py" = ["PLC0415"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
+disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
-# Pre-existing mypy issues in non-frontend modules; ignore when checking frontend/web.py
-module = ["pipeline.*", "main", "db.*", "models.*"]
-ignore_errors = true
+module = "tests.*"
+disallow_untyped_defs = false
+check_untyped_defs = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

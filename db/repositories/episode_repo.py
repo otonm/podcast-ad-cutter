@@ -20,10 +20,13 @@ def _row_to_episode(row: aiosqlite.Row) -> Episode:
 
 
 class EpisodeRepository:
+    """Persist and retrieve episode records from the database."""
+
     def __init__(self, conn: aiosqlite.Connection) -> None:
         self._conn = conn
 
     async def upsert(self, episode: Episode) -> None:
+        """Insert or update an episode row, then commit."""
         await self._conn.execute(
             "INSERT INTO episodes (guid, feed_name, title, audio_url, published_at, duration_sec)"
             " VALUES (?, ?, ?, ?, ?, ?)"
@@ -45,6 +48,7 @@ class EpisodeRepository:
         logger.debug(f"Upserted episode guid={episode.guid}")
 
     async def get_by_guid(self, guid: str) -> Episode | None:
+        """Return the episode with the given GUID, or None if not found."""
         cursor = await self._conn.execute(
             "SELECT guid, feed_name, title, audio_url, published_at, duration_sec"
             " FROM episodes WHERE guid = ?",
@@ -56,6 +60,7 @@ class EpisodeRepository:
         return _row_to_episode(row)
 
     async def list_by_feed(self, feed_name: str) -> list[Episode]:
+        """Return all episodes for a feed, newest first."""
         cursor = await self._conn.execute(
             "SELECT guid, feed_name, title, audio_url, published_at, duration_sec"
             " FROM episodes WHERE feed_name = ? ORDER BY published_at DESC",

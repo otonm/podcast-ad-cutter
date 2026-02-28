@@ -1,9 +1,8 @@
-from models.episode import Episode
 from models.transcript import Segment, Transcript
 
 
 async def _insert_episode(db_conn) -> None:
-    """Helper to satisfy foreign key."""
+    """Insert a minimal episode row to satisfy the foreign key constraint."""
     await db_conn.execute(
         "INSERT INTO episodes (guid, feed_name, title, audio_url, published_at)"
         " VALUES ('ep-001', 'Test', 'Ep 1', 'https://example.com/ep1.mp3', '2025-01-01')"

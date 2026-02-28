@@ -8,10 +8,13 @@ logger = logging.getLogger(__name__)
 
 
 class TranscriptRepository:
+    """Persist and retrieve transcript records from the database."""
+
     def __init__(self, conn: aiosqlite.Connection) -> None:
         self._conn = conn
 
     async def save(self, transcript: Transcript) -> None:
+        """Insert the transcript header and all its segments, then commit."""
         cursor = await self._conn.execute(
             "INSERT INTO transcripts (episode_guid, language, full_text, provider_model)"
             " VALUES (?, ?, ?, ?)",
@@ -33,6 +36,7 @@ class TranscriptRepository:
         logger.debug(f"Saved transcript for episode_guid={transcript.episode_guid}")
 
     async def get_by_episode_guid(self, episode_guid: str) -> Transcript | None:
+        """Return the transcript for the given episode GUID, or None if not cached."""
         cursor = await self._conn.execute(
             "SELECT id, language, full_text, provider_model"
             " FROM transcripts WHERE episode_guid = ?",
@@ -58,6 +62,7 @@ class TranscriptRepository:
         )
 
     async def delete(self, episode_guid: str) -> None:
+        """Delete the transcript and all its segments for the given episode."""
         await self._conn.execute("DELETE FROM transcripts WHERE episode_guid = ?", (episode_guid,))
         await self._conn.commit()
         logger.debug(f"Deleted transcript for episode_guid={episode_guid}")

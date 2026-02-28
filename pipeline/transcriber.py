@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 
 import aiosqlite
+import anyio
 
 from config.config_loader import AppConfig
 from db.repositories import TranscriptRepository
@@ -36,10 +37,10 @@ async def transcribe_episode(
     try:
         result, cost = await llm_transcribe(transcription_path, cfg.transcription)
     except Exception as exc:
-        logger.error(f"Transcription failed for {episode.guid}: {exc}")
+        logger.error(f"Transcription failed for {episode.guid}: {exc}")  # noqa: TRY400
         raise TranscriptionError(f"Transcription failed: {exc}") from exc
     finally:
-        transcription_path.unlink(missing_ok=True)
+        await anyio.Path(transcription_path).unlink(missing_ok=True)
 
     raw_items = result.get("words") or result.get("segments") or []
     segments = []

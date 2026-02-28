@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 from db.connection import get_db
+from db.repositories.llm_call_repo import LLMCallRepository
 from frontend import config_cache
 from frontend.app import templates
 
@@ -32,10 +33,7 @@ async def cost_badge(request: Request) -> HTMLResponse:
     try:
         cfg = config_cache.get_config()
         async with get_db(cfg.paths.database) as db:
-            cursor = await db.execute("SELECT COALESCE(SUM(cost_usd), 0.0) FROM llm_calls")
-            row = await cursor.fetchone()
-            if row:
-                total_cost = float(row[0])
+            total_cost = await LLMCallRepository(db).get_global_total_cost()
     except Exception:
         logger.debug("Could not fetch cost from database (may not exist yet)")
 

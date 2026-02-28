@@ -657,6 +657,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "aiosqlite" },
+    { name = "anyio" },
     { name = "fastapi" },
     { name = "feedparser" },
     { name = "ffmpeg-python" },
@@ -689,6 +690,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20" },
+    { name = "anyio", specifier = ">=4.12.1" },
     { name = "fastapi", specifier = ">=0.133.1" },
     { name = "feedparser", specifier = ">=6.0" },
     { name = "ffmpeg-python", specifier = ">=0.2" },

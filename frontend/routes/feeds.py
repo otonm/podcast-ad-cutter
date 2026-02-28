@@ -1,7 +1,8 @@
 """Feed management routes."""
 
+import asyncio
 import logging
-from typing import Any, cast
+from typing import Annotated, Any, cast
 from urllib.parse import unquote
 
 from fastapi import APIRouter, Form, Request
@@ -55,14 +56,14 @@ async def cancel_add(request: Request) -> HTMLResponse:  # noqa: ARG001
 @router.post("", response_class=HTMLResponse)
 async def add_feed(
     request: Request,
-    name: str = Form(...),
-    url: str = Form(...),
-    enabled: str = Form(default=""),
+    name: Annotated[str, Form()],
+    url: Annotated[str, Form()],
+    enabled: Annotated[str, Form()] = "",
 ) -> HTMLResponse:
     """Add a new feed and return the full updated feed table body."""
     is_enabled = enabled.lower() in ("true", "on", "1", "yes")
-    config_editor.add_feed(name, url, enabled=is_enabled)
-    cfg = load_config(get_config_path())
+    await asyncio.to_thread(config_editor.add_feed, name, url, enabled=is_enabled)
+    cfg = await asyncio.to_thread(load_config, get_config_path())
     config_cache.set_config(cfg)
     return templates.TemplateResponse(
         request=request,
@@ -74,16 +75,16 @@ async def add_feed(
 @router.delete("/{name}", response_class=HTMLResponse)
 async def delete_feed(name: str) -> HTMLResponse:
     """Delete a feed and return an empty string to remove the row."""
-    config_editor.delete_feed(unquote(name))
+    await asyncio.to_thread(config_editor.delete_feed, unquote(name))
     return HTMLResponse("")
 
 
 @router.put("/reorder")
 async def reorder_feeds(request: Request) -> Response:
     """Reorder feeds in config.yaml to match the provided name order."""
-    body = cast(dict[str, Any], await request.json())
+    body = cast("dict[str, Any]", await request.json())
     names = [str(n) for n in body.get("names", [])]
-    config_editor.reorder_feeds(names)
+    await asyncio.to_thread(config_editor.reorder_feeds, names)
     return Response(status_code=200)
 
 
@@ -91,8 +92,8 @@ async def reorder_feeds(request: Request) -> Response:
 async def toggle_feed(request: Request, name: str) -> HTMLResponse:
     """Toggle a feed's enabled state and return the updated row."""
     decoded_name = unquote(name)
-    config_editor.toggle_feed(decoded_name)
-    cfg = load_config(get_config_path())
+    await asyncio.to_thread(config_editor.toggle_feed, decoded_name)
+    cfg = await asyncio.to_thread(load_config, get_config_path())
     config_cache.set_config(cfg)
     feed = next((f for f in cfg.feeds if f.name == decoded_name), None)
     if feed is None:

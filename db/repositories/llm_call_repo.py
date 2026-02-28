@@ -8,6 +8,8 @@ logger = logging.getLogger(__name__)
 
 
 class LLMCallRepository:
+    """Persist and retrieve LLM call records from the database."""
+
     def __init__(self, db: aiosqlite.Connection) -> None:
         self._db = db
 
@@ -20,11 +22,8 @@ class LLMCallRepository:
         )
         await self._db.commit()
         logger.debug(
-            "Saved LLM call episode=%s type=%s model=%s cost_usd=%.6f",
-            record.episode_guid,
-            record.call_type,
-            record.model,
-            record.cost_usd,
+            f"Saved LLM call episode={record.episode_guid} type={record.call_type}"
+            f" model={record.model} cost_usd={record.cost_usd:.6f}"
         )
 
     async def get_by_episode(self, episode_guid: str) -> list[LLMCall]:
@@ -50,6 +49,14 @@ class LLMCallRepository:
         async with self._db.execute(
             "SELECT COALESCE(SUM(cost_usd), 0.0) FROM llm_calls WHERE episode_guid = ?",
             (episode_guid,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return float(row[0]) if row else 0.0
+
+    async def get_global_total_cost(self) -> float:
+        """Return sum of all LLM costs across all episodes."""
+        async with self._db.execute(
+            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM llm_calls",
         ) as cursor:
             row = await cursor.fetchone()
         return float(row[0]) if row else 0.0

@@ -5,6 +5,7 @@ import aiosqlite
 
 from config.config_loader import AppConfig
 from db.repositories.llm_call_repo import LLMCallRepository
+from db.repositories.topic_context_repo import TopicContextRepository
 from models.ad_segment import TopicContext
 from models.llm_call import CallType, LLMCall
 from models.transcript import Transcript
@@ -15,31 +16,14 @@ logger = logging.getLogger(__name__)
 _MAX_PARSE_RETRIES: int = 3
 
 
-async def _get_topic_context(episode_guid: str, db: aiosqlite.Connection) -> TopicContext | None:
-    """Return a cached TopicContext for this episode, or None if not yet extracted."""
-    cursor = await db.execute(
-        "SELECT domain, topic, hosts, notes FROM topic_contexts WHERE episode_guid = ?",
-        (episode_guid,),
-    )
-    row = await cursor.fetchone()
-    if row is None:
-        return None
-    return TopicContext(
-        domain=row[0],
-        topic=row[1],
-        hosts=tuple(json.loads(row[2]) if row[2] else []),
-        notes=row[3] or "",
-    )
-
-
 async def extract_topic(
     transcript: Transcript,
     cfg: AppConfig,
     db: aiosqlite.Connection,
 ) -> TopicContext | None:
     """Extract topic context from the transcript using LLM."""
-    cached = await _get_topic_context(transcript.episode_guid, db)
-    if cached:
+    repo = TopicContextRepository(db)
+    if cached := await repo.get_by_episode_guid(transcript.episode_guid):
         logger.info(f"Topic context cache hit for {transcript.episode_guid}")
         return cached
 
@@ -55,7 +39,9 @@ async def extract_topic(
     response = ""
     for attempt in range(_MAX_PARSE_RETRIES):
         try:
-            response, cost = await complete(messages, cfg.interpretation)
+            response, cost = await complete(
+                messages, cfg.interpretation, response_format={"type": "json_object"}
+            )
             total_cost += cost
         except Exception as exc:
             logger.warning(f"Topic extraction LLM call failed: {exc}")
@@ -92,26 +78,8 @@ async def extract_topic(
                 cost_usd=total_cost,
             )
         )
-        await _save_topic_context(topic, transcript.episode_guid, db)
+        await repo.save(topic, episode_guid=transcript.episode_guid)
         logger.info(f"Topic extracted: domain={topic.domain} topic={topic.topic}")
         return topic
 
     return None
-
-
-async def _save_topic_context(
-    topic: TopicContext, episode_guid: str, db: aiosqlite.Connection
-) -> None:
-    """Persist topic context to database."""
-    await db.execute(
-        "INSERT OR REPLACE INTO topic_contexts (episode_guid, domain, topic, hosts, notes)"
-        " VALUES (?, ?, ?, ?, ?)",
-        (
-            episode_guid,
-            topic.domain,
-            topic.topic,
-            json.dumps(list(topic.hosts)),
-            topic.notes,
-        ),
-    )
-    await db.commit()

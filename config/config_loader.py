@@ -35,6 +35,8 @@ _TOPIC_EXTRACTION_JSON_SUFFIX: str = (
 
 
 class AudioFormat(StrEnum):
+    """Supported audio output formats."""
+
     MP3 = "mp3"
     M4A = "m4a"
 
@@ -43,17 +45,23 @@ SUPPORTED_PROVIDERS: frozenset[str] = frozenset({"groq", "openai", "openrouter"}
 
 
 class FeedConfig(BaseModel, frozen=True):
+    """Configuration for a single RSS feed."""
+
     name: str
     url: str
     enabled: bool = True
 
 
 class PathsConfig(BaseModel, frozen=True):
+    """File-system paths for outputs and the database."""
+
     output_dir: Path
     database: Path
 
 
 class LLMProviderConfig(BaseModel, frozen=True):
+    """Base configuration for an LLM provider and model pair."""
+
     provider: str
     model: str
     api_base: str | None = None
@@ -61,6 +69,7 @@ class LLMProviderConfig(BaseModel, frozen=True):
     @field_validator("provider")
     @classmethod
     def check_provider(cls, v: str) -> str:
+        """Reject unknown provider names at config load time."""
         if v not in SUPPORTED_PROVIDERS:
             raise ValueError(
                 f"Unsupported provider '{v}'. Allowed: {sorted(SUPPORTED_PROVIDERS)}"
@@ -70,20 +79,27 @@ class LLMProviderConfig(BaseModel, frozen=True):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def provider_model(self) -> str:
+        """Return the litellm-prefixed model string, e.g. ``groq/llama3``."""
         return f"{self.provider}/{self.model}"
 
 
 class TranscriptionConfig(LLMProviderConfig, frozen=True):
+    """Configuration for the Whisper-compatible transcription model."""
+
     language: str | None = "en"
 
 
 class InterpretationConfig(LLMProviderConfig, frozen=True):
+    """Configuration for the chat completion model used for interpretation tasks."""
+
     temperature: float = 0
     max_tokens: int = 2048
     topic_excerpt_words: int = 2000
 
 
 class AdDetectionConfig(BaseModel, frozen=True):
+    """Tuning parameters for the ad detection stage."""
+
     chunk_duration_sec: int = 300
     chunk_overlap_sec: int = 30
     min_confidence: float = 0.75
@@ -91,17 +107,22 @@ class AdDetectionConfig(BaseModel, frozen=True):
 
 
 class AudioConfig(BaseModel, frozen=True):
+    """Audio export settings."""
+
     output_format: AudioFormat = AudioFormat.MP3
     cbr_bitrate: str = "192k"
 
 
 class LoggingConfig(BaseModel, frozen=True):
+    """Logging level and optional log file path."""
+
     level: str = "INFO"
     log_file: str | None = None
 
     @field_validator("level")
     @classmethod
     def validate_level(cls, v: str) -> str:
+        """Normalise and validate the log level string."""
         valid = {"DEBUG", "INFO", "WARNING", "ERROR"}
         if v.upper() not in valid:
             raise ValueError(f"Invalid log level: {v}. Must be one of {valid}")
@@ -109,11 +130,15 @@ class LoggingConfig(BaseModel, frozen=True):
 
 
 class RetryConfig(BaseModel, frozen=True):
+    """Retry parameters for transient LLM failures."""
+
     max_attempts: int = 3
     backoff_factor: int = 2
 
 
 class PromptsConfig(BaseModel, frozen=True):
+    """Configurable system prompts for LLM stages."""
+
     ad_detection: str = Field(default=_DEFAULT_AD_DETECTION_BEHAVIOR, validate_default=True)
     topic_extraction: str = Field(default=_DEFAULT_TOPIC_EXTRACTION_BEHAVIOR, validate_default=True)
 
@@ -129,6 +154,8 @@ class PromptsConfig(BaseModel, frozen=True):
 
 
 class AppConfig(BaseModel, frozen=True):
+    """Root configuration object parsed from ``config.yaml``."""
+
     feeds: list[FeedConfig]
     paths: PathsConfig
     transcription: TranscriptionConfig

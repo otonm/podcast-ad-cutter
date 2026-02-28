@@ -2,6 +2,8 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class TopicContext(BaseModel, frozen=True):
+    """Topic metadata extracted from the podcast transcript opening."""
+
     domain: str
     topic: str
     hosts: tuple[str, ...]
@@ -9,6 +11,8 @@ class TopicContext(BaseModel, frozen=True):
 
 
 class AdSegment(BaseModel, frozen=True):
+    """A detected advertisement segment with timing and confidence metadata."""
+
     episode_guid: str
     start_ms: int
     end_ms: int
@@ -19,6 +23,7 @@ class AdSegment(BaseModel, frozen=True):
 
     @model_validator(mode="after")
     def end_after_start(self) -> "AdSegment":
+        """Validate that end_ms is strictly greater than start_ms."""
         if self.end_ms <= self.start_ms:
             raise ValueError(f"end_ms {self.end_ms} must be > start_ms {self.start_ms}")
         return self

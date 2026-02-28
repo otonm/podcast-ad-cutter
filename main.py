@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def setup_logging(level: str, log_file: str | None) -> None:
+    """Configure the root logger with console (and optional file) handlers."""
     handlers: list[logging.Handler] = [logging.StreamHandler()]
     if log_file:
         handlers.append(logging.FileHandler(Path(log_file)))
@@ -31,16 +32,17 @@ def setup_logging(level: str, log_file: str | None) -> None:
     )
 
     litellm_logger = logging.getLogger("LiteLLM")
-    
+
     if level == "INFO":
-        # Suppress httpx request and litellm logging at INFO level 
+        # Suppress httpx request and litellm logging at INFO level
         logging.getLogger("httpx").setLevel(logging.WARNING)
         litellm_logger.setLevel(logging.WARNING)
-    
+
     litellm_logger.propagate = True
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse and return CLI arguments."""
     parser = argparse.ArgumentParser(
         description="Download podcast episodes, detect and remove ads, export clean audio."
     )
@@ -85,12 +87,13 @@ def parse_args() -> argparse.Namespace:
 
 
 async def main() -> None:
+    """Entry point: load config, set up logging, run the pipeline."""
     args = parse_args()
 
     try:
         cfg = load_config(args.config)
     except (ConfigError, yaml.YAMLError) as exc:
-        print(f"Failed to load config: {exc}", file=sys.stderr)
+        sys.stderr.write(f"Failed to load config: {exc}\n")
         sys.exit(1)
 
     log_level = "DEBUG" if args.verbose else cfg.logging.level
@@ -99,7 +102,7 @@ async def main() -> None:
     try:
         validate_api_keys(cfg)
     except ConfigError as exc:
-        logger.error(f"API key validation failed: {exc}")
+        logger.exception(f"API key validation failed: {exc}")  # noqa: TRY401
         sys.exit(1)
 
     if args.feed:
@@ -119,8 +122,8 @@ async def main() -> None:
 
     try:
         await run_pipeline(cfg, dry_run=args.dry_run)
-    except Exception as exc:
-        logger.error(f"Pipeline failed: {exc}")
+    except Exception:
+        logger.exception("Pipeline failed")
         sys.exit(1)
 
 

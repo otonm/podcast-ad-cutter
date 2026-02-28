@@ -12,7 +12,8 @@ _config: AppConfig | None = None
 def get_config() -> AppConfig:
     """Return the cached config. Raises RuntimeError if not yet loaded."""
     if _config is None:
-        raise RuntimeError("Config cache not initialised — lifespan must run first")
+        msg = "Config cache not initialised — lifespan must run first"
+        raise RuntimeError(msg)
     return _config
 
 

@@ -19,6 +19,8 @@ _MIN_AD_DURATION_MS: int = 10_000  # ads shorter than 10s are not real ads
 
 
 class TranscriptChunk(BaseModel, frozen=True):
+    """A time-bounded slice of a transcript used for chunked LLM ad detection."""
+
     episode_guid: str
     start_sec: float
     end_sec: float
@@ -106,9 +108,10 @@ async def _detect_single(
     response = ""
     for attempt in range(_MAX_PARSE_RETRIES):
         try:
-            response, cost = await complete(messages, cfg.interpretation)
+            response, cost = await complete(
+                messages, cfg.interpretation, response_format={"type": "json_object"}
+            )
             segments = _parse_ad_segments(response, transcript.episode_guid)
-            return segments, cost
         except LLMError as exc:
             logger.warning(f"Single-call ad detection LLM error: {exc}")
             return [], 0.0
@@ -124,6 +127,8 @@ async def _detect_single(
                     f"Single-call failed after {_MAX_PARSE_RETRIES} parse attempts,"
                     " returning empty"
                 )
+        else:
+            return segments, cost
     return [], 0.0
 
 
@@ -141,10 +146,11 @@ async def _detect_chunk(
         response = ""
         for attempt in range(_MAX_PARSE_RETRIES):
             try:
-                response, cost = await complete(messages, cfg.interpretation)
+                response, cost = await complete(
+                    messages, cfg.interpretation, response_format={"type": "json_object"}
+                )
                 costs[index] = cost
                 results[index] = _parse_ad_segments(response, chunk.episode_guid)
-                return
             except LLMError as exc:
                 logger.warning(f"Chunk {index} LLM call failed: {exc}")
                 return  # API error — don't retry (tenacity already did)
@@ -160,6 +166,8 @@ async def _detect_chunk(
                         f"Chunk {index} failed after {_MAX_PARSE_RETRIES} parse attempts,"
                         " returning empty"
                     )
+            else:
+                return
         results[index] = []
 
 
@@ -187,7 +195,7 @@ def _parse_ad_segments(response: str, episode_guid: str) -> list[AdSegment]:
 
         if seg.end_ms - seg.start_ms < _MIN_AD_DURATION_MS:
             logger.debug(
-                f"Skipping segment {seg.start_ms}–{seg.end_ms}ms:"
+                f"Skipping segment {seg.start_ms}-{seg.end_ms}ms:"
                 f" duration {seg.end_ms - seg.start_ms}ms < {_MIN_AD_DURATION_MS}ms minimum"
             )
             continue

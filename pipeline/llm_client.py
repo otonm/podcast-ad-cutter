@@ -33,7 +33,6 @@ async def complete(
     response_format: dict[str, str] | None = None,
 ) -> tuple[str, float]:
     """Return (content, cost_usd) of the first completion choice."""
-
     kwargs: dict[str, Any] = {
         "model": cfg.provider_model,
         "messages": messages,
@@ -56,7 +55,7 @@ async def complete(
         raise LLMError(f"LLM call failed: {exc}") from exc
 
     content: str = response.choices[0].message.content or ""
-    cost: float = response._hidden_params.get("response_cost") or 0.0
+    cost: float = response._hidden_params.get("response_cost") or 0.0  # noqa: SLF001
     logger.debug(
         f"LLM response model={cfg.provider_model}"
         f" prompt_tokens={response.usage.prompt_tokens}"
@@ -69,7 +68,6 @@ async def complete(
 
 async def transcribe(audio_path: Path, cfg: TranscriptionConfig) -> tuple[dict[str, Any], float]:
     """Transcribe audio via litellm.atranscription. Returns (verbose JSON, cost_usd)."""
-
     logger.info(f"Transcribing {audio_path.name} with model={cfg.provider_model}")
 
     with audio_path.open("rb") as f:
@@ -92,7 +90,7 @@ async def transcribe(audio_path: Path, cfg: TranscriptionConfig) -> tuple[dict[s
         except litellm.APIError as exc:  # type: ignore[attr-defined]  # litellm stubs omit APIError
             raise TranscriptionError(f"Transcription failed: {exc}") from exc
 
-    cost: float = result._hidden_params.get("response_cost") or 0.0
+    cost: float = result._hidden_params.get("response_cost") or 0.0  # noqa: SLF001
     if not cost:
         duration: float = result.get("duration", 0.0)
         model_info: dict[str, Any] = litellm.model_cost.get(cfg.provider_model, {})

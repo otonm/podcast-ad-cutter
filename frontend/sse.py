@@ -37,6 +37,7 @@ class QueueLogHandler(logging.Handler):
         self._loop = loop
 
     def emit(self, record: logging.LogRecord) -> None:
+        """Format the record and push it to the asyncio queue in a thread-safe way."""
         try:
             msg = self.format(record)
             if threading.current_thread() is threading.main_thread():

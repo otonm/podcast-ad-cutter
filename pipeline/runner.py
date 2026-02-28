@@ -2,6 +2,7 @@ import logging
 import re
 
 import aiosqlite
+import anyio
 
 from config.config_loader import AppConfig, FeedConfig
 from db.connection import get_db
@@ -68,10 +69,10 @@ async def _process_episode(
     date_str = episode.published.strftime("%d.%m.%Y")
     ext = cfg.audio.output_format.value
     clean_path = podcast_dir / f"{date_str} - {_safe_name(episode.title)}.{ext}"
-    podcast_dir.mkdir(parents=True, exist_ok=True)
+    await anyio.Path(podcast_dir).mkdir(parents=True, exist_ok=True)
 
     # Checkpoint 1 — final file already exists
-    if clean_path.exists():
+    if await anyio.Path(clean_path).exists():
         logger.info(f"Clean file already exists, skipping: {clean_path.name}")
         return
 
@@ -90,7 +91,7 @@ async def _process_episode(
             logger.debug(
                 f"Ad segments cache hit for {episode.guid}: {len(cached_segments)} segments"
             )
-            
+
             audio_path = await download_episode(episode)
             try:
                 if not dry_run:
@@ -98,7 +99,7 @@ async def _process_episode(
                 else:
                     logger.info("Dry run: skipping audio cutting")
             finally:
-                audio_path.unlink(missing_ok=True)
+                await anyio.Path(audio_path).unlink(missing_ok=True)
             return
 
         # Checkpoints 3 & 4: transcript and topic context have internal cache checks
@@ -121,7 +122,7 @@ async def _process_episode(
             elif dry_run:
                 logger.info("Dry run: skipping audio cutting")
         finally:
-            audio_path.unlink(missing_ok=True)
+            await anyio.Path(audio_path).unlink(missing_ok=True)
 
 
 async def detect_ads(
