@@ -51,6 +51,17 @@ async def complete(
         response = await litellm.acompletion(**kwargs)
     except litellm.AuthenticationError as exc:  # type: ignore[attr-defined]
         raise ConfigError(f"Invalid API key for {cfg.provider_model}: {exc}") from exc
+    except litellm.BadRequestError as exc:  # type: ignore[attr-defined]
+        if "json_validate_failed" not in str(exc) or not response_format:
+            raise LLMError(f"LLM call failed: {exc}") from exc
+        logger.warning(
+            f"Provider rejected JSON mode for {cfg.provider_model}; retrying without response_format"
+        )
+        kwargs.pop("response_format", None)
+        try:
+            response = await litellm.acompletion(**kwargs)
+        except litellm.APIError as retry_exc:  # type: ignore[attr-defined]
+            raise LLMError(f"LLM call failed: {retry_exc}") from retry_exc
     except litellm.APIError as exc:  # type: ignore[attr-defined]  # litellm stubs omit APIError
         raise LLMError(f"LLM call failed: {exc}") from exc
 
@@ -96,8 +107,12 @@ async def transcribe(audio_path: Path, cfg: TranscriptionConfig) -> tuple[dict[s
         model_info: dict[str, Any] = litellm.model_cost.get(cfg.provider_model, {})
         rate: float = float(model_info.get("input_cost_per_second", 0.0))
         cost = duration * rate
+        logger.debug(
+            f"Transcription cost fallback: duration={duration:.1f}s"
+            f" rate={rate} cost_usd={cost:.6f}"
+        )
     n_segments = len(result.get("words") or result.get("segments") or [])
-    logger.info(f"Transcription complete segments={n_segments}")
+    logger.info(f"Transcription complete segments={n_segments} cost_usd={cost:.6f}")
 
     return result, cost
 

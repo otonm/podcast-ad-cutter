@@ -48,6 +48,7 @@ async def test_complete_raises_llm_error_on_api_error(llm_config):
     with patch("pipeline.llm_client.litellm") as mock_litellm:
         mock_litellm.AuthenticationError = type("AuthenticationError", (Exception,), {})
         mock_litellm.APIError = type("APIError", (Exception,), {})
+        mock_litellm.BadRequestError = type("BadRequestError", (mock_litellm.APIError,), {})
         mock_litellm.acompletion = AsyncMock(side_effect=mock_litellm.APIError("fail"))
         with pytest.raises(LLMError):
             await complete(
