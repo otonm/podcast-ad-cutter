@@ -7,6 +7,9 @@ paths:
   output_dir: "./output"
   database: "./data/podcasts.db"
 
+# Number of most-recent episodes to download and process per feed.
+episodes_to_keep: 1
+
 transcription:
   # Supported providers: groq, openai, openrouter
   provider: "openai"
