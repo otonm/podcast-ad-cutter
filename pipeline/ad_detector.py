@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import operator
+from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
@@ -71,6 +72,14 @@ async def detect_ads(
     return all_segments, sum(costs)
 
 
+_JSON_SCHEMA_SUFFIX = (
+    "\nReturn only a JSON array of objects with this schema, no markdown, no preamble:\n"
+    '[{"start_sec": <float>, "end_sec": <float>, "confidence": <float 0-1>,'
+    ' "reason": <str>, "sponsor": <str or null>}]\n'
+    "If no ads are found, return an empty array: []"
+)
+
+
 def _build_messages(
     topic_context: TopicContext,
     transcript_text: str,
@@ -84,7 +93,7 @@ def _build_messages(
         f"Hosts: {', '.join(topic_context.hosts)}"
     )
     return [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": system_prompt + _JSON_SCHEMA_SUFFIX},
         {
             "role": "user",
             "content": (
@@ -174,12 +183,25 @@ async def _detect_chunk(
 def _parse_ad_segments(response: str, episode_guid: str) -> list[AdSegment]:
     """Parse LLM response into AdSegment list. Raises AdDetectionError on invalid JSON."""
     try:
-        data = json.loads(response)
+        data: Any = json.loads(response)
     except json.JSONDecodeError as exc:
         raise AdDetectionError(f"Invalid JSON response: {response[:200]}") from exc
 
+    # json_object mode forces a dict; extract the first list value or wrap a single segment.
+    if isinstance(data, dict):
+        array = next((v for v in data.values() if isinstance(v, list)), None)
+        data = array if array is not None else [data]
+
+    if not isinstance(data, list):
+        raise AdDetectionError(
+            f"Expected JSON array or object, got {type(data).__name__}: {response[:200]}"
+        )
+
     segments = []
     for item in data:
+        if not isinstance(item, dict):
+            logger.debug(f"Skipping non-dict item in ad segments: {type(item).__name__}")
+            continue
         try:
             seg = AdSegment(
                 episode_guid=episode_guid,
