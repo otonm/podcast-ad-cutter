@@ -1,0 +1,71 @@
+<section id="scheduler-fieldset"
+         {% if scheduler_running %}
+         hx-get="/scheduler/partial"
+         hx-trigger="every 7s"
+         hx-swap="outerHTML"
+         hx-target="#scheduler-fieldset"
+         {% endif %}
+         {% if oob_swap is defined and oob_swap %}hx-swap-oob="outerHTML"{% endif %}
+         class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+  <div class="flex items-center justify-between mb-4">
+    <h2 class="text-base font-semibold">⏰ Scheduler</h2>
+    <div class="flex items-center gap-3">
+      <input type="number" name="interval_minutes" value="{{ interval_minutes }}"
+             min="1" max="1440"
+             {% if scheduler_running %}disabled{% endif %}
+             class="w-24 border border-gray-300 rounded-lg px-2 py-1.5 text-sm
+                    focus:outline-none focus:ring-2 focus:ring-blue-400
+                    {% if scheduler_running %}bg-gray-100 text-gray-400{% endif %}" />
+      <span class="text-sm text-gray-500">min</span>
+      {% if not scheduler_running %}
+      <button hx-post="/scheduler/start"
+              hx-include="[name='interval_minutes']"
+              hx-target="#scheduler-fieldset"
+              hx-swap="outerHTML"
+              class="px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors">
+        Start
+      </button>
+      {% elif pipeline_running %}
+      <button hx-post="/scheduler/stop-pipeline"
+              hx-target="#scheduler-fieldset"
+              hx-swap="outerHTML"
+              class="px-3 py-1.5 text-sm bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors">
+        ■ Stop Pipeline
+      </button>
+      {% else %}
+      <button hx-post="/scheduler/stop"
+              hx-target="#scheduler-fieldset"
+              hx-swap="outerHTML"
+              class="px-3 py-1.5 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">
+        Stop
+      </button>
+      {% endif %}
+    </div>
+  </div>
+  {% if scheduler_running %}
+  <p class="text-sm text-gray-500">
+    {% if pipeline_running %}
+    ⏳ Running now…
+    {% else %}
+    Next run in <span id="countdown-value">--:--:--</span>
+    {% endif %}
+  </p>
+  {% if not pipeline_running %}
+  <script>
+    (function() {
+      const nextRunAt = {{ next_run_at }};
+      const el = document.getElementById('countdown-value');
+      function update() {
+        const remaining = Math.max(0, Math.floor(nextRunAt - Date.now() / 1000));
+        const h = Math.floor(remaining / 3600);
+        const m = Math.floor((remaining % 3600) / 60);
+        const s = remaining % 60;
+        el.textContent = String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+      }
+      update();
+      setInterval(update, 1000);
+    })();
+  </script>
+  {% endif %}
+  {% endif %}
+</section>
