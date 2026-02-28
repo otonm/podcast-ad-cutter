@@ -89,6 +89,10 @@ module = "tests.*"
 disallow_untyped_defs = false
 check_untyped_defs = false
 
+[tool.pyright]
+pythonVersion = "3.12"
+extraPaths = ["."]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
