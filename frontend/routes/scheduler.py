@@ -36,6 +36,7 @@ async def start_scheduler(
         name="partials/scheduler_fieldset.html",
         context={
             "scheduler_running": True,
+            "pipeline_running": state.is_running(),
             "next_run_at": scheduler.get_next_run_at(),
             "interval_minutes": interval_minutes,
         },
@@ -59,6 +60,7 @@ async def stop_scheduler(request: Request) -> HTMLResponse:
         name="partials/scheduler_fieldset.html",
         context={
             "scheduler_running": False,
+            "pipeline_running": False,
             "next_run_at": None,
             "interval_minutes": interval_minutes,
         },
