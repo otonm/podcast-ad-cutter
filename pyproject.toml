@@ -92,6 +92,8 @@ check_untyped_defs = false
 [tool.pyright]
 pythonVersion = "3.12"
 extraPaths = ["."]
+venvPath = "."
+venv = ".venv"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
