@@ -51,7 +51,6 @@ set +a
 required_vars=(
     GITHUB_USERNAME
     SSH_PUBLIC_KEY
-    FEED_CHECK_INTERVAL_HOURS
     TAILSCALE_AUTH_KEY
     TAILSCALE_HOSTNAME
 )
@@ -62,15 +61,8 @@ for var in "${required_vars[@]}"; do
     fi
 done
 
-if ! [[ "${FEED_CHECK_INTERVAL_HOURS}" =~ ^[0-9]+$ ]] || \
-   (( FEED_CHECK_INTERVAL_HOURS < 1 || FEED_CHECK_INTERVAL_HOURS > 24 )); then
-    echo "ERROR: FEED_CHECK_INTERVAL_HOURS must be an integer between 1 and 24."
-    exit 1
-fi
-
 echo "==> Generating ignition.json"
 echo "    GITHUB_USERNAME=${GITHUB_USERNAME}"
-echo "    FEED_CHECK_INTERVAL_HOURS=${FEED_CHECK_INTERVAL_HOURS}"
 echo "    TAILSCALE_HOSTNAME=${TAILSCALE_HOSTNAME}"
 echo "    NFS_SHARE=${NFS_SHARE:-<none, using named volume>}"
 
@@ -87,19 +79,6 @@ trap 'rm -rf "$STAGING"' EXIT
 sed "s|{{GITHUB_USERNAME}}|${GITHUB_USERNAME}|g" \
     "${SCRIPT_DIR}/podcast-ad-cutter.container.template" \
     > "${STAGING}/podcast-ad-cutter.container"
-
-# Quadlet timer unit: replace {{INTERVAL_HOURS}}
-# FEED_CHECK_INTERVAL_HOURS=24 maps to systemd 'daily' shorthand because
-# 0/24 is not a valid systemd hour value (valid range is 0-23).
-if (( FEED_CHECK_INTERVAL_HOURS == 24 )); then
-    sed "s|OnCalendar=.*|OnCalendar=daily|g" \
-        "${SCRIPT_DIR}/podcast-ad-cutter.timer.template" \
-        > "${STAGING}/podcast-ad-cutter.timer"
-else
-    sed "s|{{INTERVAL_HOURS}}|${FEED_CHECK_INTERVAL_HOURS}|g" \
-        "${SCRIPT_DIR}/podcast-ad-cutter.timer.template" \
-        > "${STAGING}/podcast-ad-cutter.timer"
-fi
 
 # Tailscale Quadlet unit: replace {{TAILSCALE_HOSTNAME}}
 sed "s|{{TAILSCALE_HOSTNAME}}|${TAILSCALE_HOSTNAME}|g" \
@@ -160,11 +139,20 @@ else
 fi
 
 # Apply NFS/output placeholders to podcast-ad-cutter.container
-sed -i \
-    -e "s|{{OUTPUT_VOLUME_LINE}}|${OUTPUT_VOLUME_LINE}|g" \
-    -e "s|{{NFS_AFTER_LINE}}|${NFS_AFTER_LINE}|g" \
-    -e "s|{{NFS_REQUIRES_LINE}}|${NFS_REQUIRES_LINE}|g" \
+sed -i "s|{{OUTPUT_VOLUME_LINE}}|${OUTPUT_VOLUME_LINE}|g" \
     "${STAGING}/podcast-ad-cutter.container"
+
+if [[ -n "$NFS_AFTER_LINE" ]]; then
+    sed -i \
+        -e "s|{{NFS_AFTER_LINE}}|${NFS_AFTER_LINE}|" \
+        -e "s|{{NFS_REQUIRES_LINE}}|${NFS_REQUIRES_LINE}|" \
+        "${STAGING}/podcast-ad-cutter.container"
+else
+    sed -i \
+        -e "/{{NFS_AFTER_LINE}}/d" \
+        -e "/{{NFS_REQUIRES_LINE}}/d" \
+        "${STAGING}/podcast-ad-cutter.container"
+fi
 
 # ── Run butane ────────────────────────────────────────────────────────────────
 butane \
@@ -186,7 +174,9 @@ echo ""
 echo "  Cloud (user-data):  pass deployment/ignition.json as instance user-data"
 echo "  Bare metal:         coreos-installer install /dev/sda \\"
 echo "                        --ignition-file deployment/ignition.json"
-echo "  VM (libvirt):       add ignition config path to VM definition"
+echo "  VM (Proxmox/libvirt):  scp deployment/ignition.json root@proxmox:/root/"
+echo "                         qm set <vmid> --args \"-fw_cfg name=opt/com.coreos/config,file=/root/ignition.json\""
+echo "                         qm start <vmid>"
 echo ""
 echo "After first boot, verify:"
 echo "  ssh core@<server-ip>"

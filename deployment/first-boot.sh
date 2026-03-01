@@ -62,9 +62,12 @@ systemctl daemon-reload
 echo "==> Enabling tailscale.service"
 systemctl enable --now tailscale.service
 
-# ── 5. Enable and start the feed check timer ──────────────────────────────────
-echo "==> Enabling podcast-ad-cutter.timer"
-systemctl enable --now podcast-ad-cutter.timer
+# ── 5. Start the web UI service ───────────────────────────────────────────────
+# daemon-reload causes Quadlet to generate podcast-ad-cutter.service, but systemd
+# does not auto-start units that become wanted by an already-active target.
+# We start it explicitly here; WantedBy=default.target handles subsequent reboots.
+echo "==> Starting podcast-ad-cutter.service"
+systemctl start podcast-ad-cutter.service
 
 # ── 6. Destroy the plaintext secrets file ────────────────────────────────────
 echo "==> Shredding /etc/podcast-ad-cutter/secrets.env"
@@ -75,5 +78,5 @@ mkdir -p "$(dirname "$SENTINEL")"
 touch "$SENTINEL"
 
 echo "==> First-boot setup complete."
-echo "    Next feed check: systemctl status podcast-ad-cutter.timer"
+echo "    Web UI:          http://<tailscale-hostname>.<tailnet>.ts.net:8000"
 echo "    Live logs:       journalctl -u podcast-ad-cutter.service -f"
