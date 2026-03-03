@@ -17,6 +17,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _settings_context(
+    cfg: AppConfig | None,
+    *,
+    error: str | None,
+) -> dict[str, object]:
+    return {
+        "cfg": cfg,
+        "providers": sorted(SUPPORTED_PROVIDERS),
+        "error": error,
+    }
+
+
 @router.get("/settings", response_class=HTMLResponse)
 async def get_settings(request: Request) -> HTMLResponse:
     """Return the settings form partial with current values."""
@@ -24,11 +36,7 @@ async def get_settings(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request=request,
         name="partials/settings_form.html",
-        context={
-            "cfg": cfg,
-            "providers": sorted(SUPPORTED_PROVIDERS),
-            "error": None,
-        },
+        context=_settings_context(cfg, error=None),
     )
 
 
@@ -40,6 +48,8 @@ async def save_settings(
     interpretation_provider: Annotated[str, Form()],
     interpretation_model: Annotated[str, Form()],
     min_confidence: Annotated[float, Form()],
+    episodes_to_keep: Annotated[int, Form()],
+    verbose_log: Annotated[str | None, Form()] = None,
 ) -> HTMLResponse:
     """Validate and save settings. Returns empty on success (collapses accordion)."""
     cfg: AppConfig | None = None
@@ -53,9 +63,14 @@ async def save_settings(
             interpretation_provider=interpretation_provider,
             interpretation_model=interpretation_model,
             min_confidence=min_confidence,
+            episodes_to_keep=episodes_to_keep,
+            verbose_log=verbose_log is not None,
         )
         validated = await asyncio.to_thread(load_config, get_config_path())
         config_cache.set_config(validated)
+        _debug = verbose_log is not None
+        for _name in ("pipeline", "frontend", "config"):
+            logging.getLogger(_name).setLevel(logging.DEBUG if _debug else logging.NOTSET)
         # Return empty — HTMX clears #settings-accordion, collapsing the panel.
         return HTMLResponse("")
     except Exception as exc:
@@ -69,9 +84,5 @@ async def save_settings(
     return templates.TemplateResponse(
         request=request,
         name="partials/settings_form.html",
-        context={
-            "cfg": cfg,
-            "providers": sorted(SUPPORTED_PROVIDERS),
-            "error": error,
-        },
+        context=_settings_context(cfg, error=error),
     )

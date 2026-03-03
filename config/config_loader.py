@@ -153,6 +153,13 @@ class PromptsConfig(BaseModel, frozen=True):
         return v.rstrip("\n") + "\n" + _TOPIC_EXTRACTION_JSON_SUFFIX
 
 
+class SchedulerConfig(BaseModel, frozen=True):
+    """In-process scheduler settings for the WebUI."""
+
+    enabled: bool = False
+    interval_minutes: int = 30
+
+
 class AppConfig(BaseModel, frozen=True):
     """Root configuration object parsed from ``config.yaml``."""
 
@@ -166,6 +173,7 @@ class AppConfig(BaseModel, frozen=True):
     retry: RetryConfig
     episodes_to_keep: int = 5
     prompts: PromptsConfig = PromptsConfig()
+    scheduler: SchedulerConfig = SchedulerConfig()
 
 
 def load_config(config_path: Path) -> AppConfig:

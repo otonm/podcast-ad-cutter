@@ -44,12 +44,18 @@ async def _watch_config() -> None:
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """Load config on startup; watch for file changes; cancel watcher on shutdown."""
-    config_cache.set_config(await asyncio.to_thread(load_config, get_config_path()))
+    from frontend import scheduler as _scheduler
+
+    cfg = await asyncio.to_thread(load_config, get_config_path())
+    config_cache.set_config(cfg)
+    if cfg.scheduler.enabled:
+        _scheduler.start(cfg.scheduler.interval_minutes)
     task = asyncio.create_task(_watch_config())
     yield
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
+    _scheduler.stop()
 
 
 def create_app() -> FastAPI:
@@ -57,6 +63,7 @@ def create_app() -> FastAPI:
     from frontend.routes.feeds import router as feeds_router
     from frontend.routes.pages import router as pages_router
     from frontend.routes.pipeline import router as pipeline_router
+    from frontend.routes.scheduler import router as scheduler_router
     from frontend.routes.settings import router as settings_router
 
     app = FastAPI(
@@ -70,5 +77,6 @@ def create_app() -> FastAPI:
     app.include_router(feeds_router)
     app.include_router(pipeline_router)
     app.include_router(settings_router)
+    app.include_router(scheduler_router)
 
     return app

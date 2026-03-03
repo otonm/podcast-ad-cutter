@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse
 
 from db.connection import get_db
 from db.repositories.llm_call_repo import LLMCallRepository
-from frontend import config_cache
+from frontend import config_cache, scheduler
 from frontend.app import templates
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,12 @@ async def index(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={"feeds": cfg.feeds},
+        context={
+            "feeds": cfg.feeds,
+            "scheduler_running": scheduler.is_running(),
+            "next_run_at": scheduler.get_next_run_at(),
+            "interval_minutes": cfg.scheduler.interval_minutes,
+        },
     )
 
 

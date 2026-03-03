@@ -104,6 +104,8 @@ def update_settings(
     interpretation_provider: str,
     interpretation_model: str,
     min_confidence: float,
+    episodes_to_keep: int,
+    verbose_log: bool,
 ) -> None:
     """Update model and confidence settings in config.yaml."""
     data = _load()
@@ -125,4 +127,21 @@ def update_settings(
     ad_detection["min_confidence"] = min_confidence
     data["ad_detection"] = ad_detection
 
+    data["episodes_to_keep"] = episodes_to_keep
+
+    raw_l = data.get("logging")
+    logging_cfg: dict[str, object] = cast("dict[str, object]", raw_l) if raw_l else {}
+    logging_cfg["level"] = "DEBUG" if verbose_log else "INFO"
+    data["logging"] = logging_cfg
+
+    _save(data)
+
+
+def update_scheduler(*, enabled: bool, interval_minutes: int) -> None:
+    """Update scheduler settings in config.yaml."""
+    data = _load()
+    scheduler: dict[str, object] = cast("dict[str, object]", data.get("scheduler") or {})
+    scheduler["enabled"] = enabled
+    scheduler["interval_minutes"] = interval_minutes
+    data["scheduler"] = scheduler
     _save(data)

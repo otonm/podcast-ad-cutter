@@ -31,5 +31,5 @@ COPY --from=builder /app /app
 # Prepend .venv/bin to PATH so 'python' resolves to the venv interpreter
 ENV PATH="/app/.venv/bin:$PATH"
 
-# No default CMD — Quadlet's Exec= appends runtime flags (--use-cache --config ...)
-ENTRYPOINT ["python", "main.py"]
+# No default CMD — Quadlet's Exec= appends runtime flags (--host --config ...)
+ENTRYPOINT ["python", "webui.py"]

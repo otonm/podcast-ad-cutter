@@ -9,7 +9,7 @@
   <!-- ------------------------------------------------------------------ -->
   <section class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
     <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-      <h2 class="text-base font-semibold">Feeds</h2>
+      <h2 class="text-base font-semibold">🌐 Feeds</h2>
       <button
         hx-get="/feeds/add-form"
         hx-target="#add-feed-row"
@@ -43,17 +43,18 @@
   <!-- ------------------------------------------------------------------ -->
   <section class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
     <div class="flex items-center justify-between mb-4">
-      <h2 class="text-base font-semibold cursor-pointer select-none flex items-center gap-1"
-          onclick="togglePipelineLog()">
-        Pipeline
-        <span id="pipeline-chevron" class="text-gray-400 font-normal text-sm">▼</span>
-      </h2>
+      <h2 class="text-base font-semibold">▶ Processing</h2>
       {% include "partials/pipeline_actions.html" %}
     </div>
     <div id="progress-section" class="text-sm text-gray-500 italic">
       Click ▶ Run to start processing enabled feeds.
     </div>
   </section>
+
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Scheduler -->
+  <!-- ------------------------------------------------------------------ -->
+  {% include "partials/scheduler_fieldset.html" %}
 
   <!-- ------------------------------------------------------------------ -->
   <!-- Settings accordion -->
@@ -84,17 +85,11 @@ function toggleSettings() {
   }
 }
 
-function togglePipelineLog() {
-  var section = document.getElementById('progress-section');
-  var chevron = document.getElementById('pipeline-chevron');
-  if (section.style.display === 'none') {
-    section.style.display = '';
-    chevron.textContent = '▼';
-  } else {
-    section.style.display = 'none';
-    chevron.textContent = '▶';
+document.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target.id === 'settings-accordion' && e.detail.target.children.length === 0) {
+    document.getElementById('settings-chevron').textContent = '▶ Click to expand';
   }
-}
+});
 
 document.addEventListener('DOMContentLoaded', function () {
   var tbody = document.getElementById('feed-tbody');
