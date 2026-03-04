@@ -1,7 +1,9 @@
+import aiosqlite
+
 from models.transcript import Segment, Transcript
 
 
-async def _insert_episode(db_conn) -> None:
+async def _insert_episode(db_conn: aiosqlite.Connection) -> None:
     """Insert a minimal episode row to satisfy the foreign key constraint."""
     await db_conn.execute(
         "INSERT INTO episodes (guid, feed_name, title, audio_url, published_at)"
@@ -10,7 +12,7 @@ async def _insert_episode(db_conn) -> None:
     await db_conn.commit()
 
 
-async def test_save_and_get_transcript(db_conn):
+async def test_save_and_get_transcript(db_conn: aiosqlite.Connection) -> None:
     from db.repositories.transcript_repo import TranscriptRepository
 
     await _insert_episode(db_conn)
@@ -34,7 +36,7 @@ async def test_save_and_get_transcript(db_conn):
     assert result.full_text == "Hello world Welcome back"
 
 
-async def test_get_returns_none_for_missing(db_conn):
+async def test_get_returns_none_for_missing(db_conn: aiosqlite.Connection) -> None:
     from db.repositories.transcript_repo import TranscriptRepository
 
     repo = TranscriptRepository(db_conn)
@@ -42,7 +44,7 @@ async def test_get_returns_none_for_missing(db_conn):
     assert result is None
 
 
-async def test_delete_transcript(db_conn):
+async def test_delete_transcript(db_conn: aiosqlite.Connection) -> None:
     from db.repositories.transcript_repo import TranscriptRepository
 
     await _insert_episode(db_conn)

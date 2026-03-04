@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -6,7 +7,7 @@ from config.config_loader import InterpretationConfig, TranscriptionConfig
 
 
 @pytest.fixture
-def llm_config():
+def llm_config() -> InterpretationConfig:
     return InterpretationConfig(
         provider="openai",
         model="gpt-4o",
@@ -16,11 +17,11 @@ def llm_config():
 
 
 @pytest.fixture
-def transcription_config():
+def transcription_config() -> TranscriptionConfig:
     return TranscriptionConfig(provider="openai", model="whisper-1", language="en")
 
 
-async def test_complete_returns_text(llm_config):
+async def test_complete_returns_text(llm_config: InterpretationConfig) -> None:
     from pipeline.llm_client import complete
 
     mock_response = MagicMock()
@@ -41,7 +42,7 @@ async def test_complete_returns_text(llm_config):
     assert cost == 0.001
 
 
-async def test_complete_raises_llm_error_on_api_error(llm_config):
+async def test_complete_raises_llm_error_on_api_error(llm_config: InterpretationConfig) -> None:
     from pipeline.exceptions import LLMError
     from pipeline.llm_client import complete
 
@@ -57,7 +58,9 @@ async def test_complete_raises_llm_error_on_api_error(llm_config):
             )
 
 
-async def test_transcribe_returns_dict(transcription_config, tmp_path):
+async def test_transcribe_returns_dict(
+    transcription_config: TranscriptionConfig, tmp_path: Path
+) -> None:
     from pipeline.llm_client import transcribe
 
     audio_file = tmp_path / "test.mp3"
@@ -75,7 +78,7 @@ async def test_transcribe_returns_dict(transcription_config, tmp_path):
     assert cost == 0.002
 
 
-async def test_transcribe_fallback_cost_from_model_cost(tmp_path):
+async def test_transcribe_fallback_cost_from_model_cost(tmp_path: Path) -> None:
     from pipeline.llm_client import transcribe
 
     audio_file = tmp_path / "test.mp3"
@@ -102,10 +105,7 @@ async def test_transcribe_fallback_cost_from_model_cost(tmp_path):
     assert cost == pytest.approx(expected_cost)
 
 
-def test_validate_api_keys_raises_when_env_var_missing():
-    from pathlib import Path
-    from unittest.mock import patch
-
+def test_validate_api_keys_raises_when_env_var_missing() -> None:
     from config.config_loader import load_config
     from pipeline.exceptions import ConfigError
     from pipeline.llm_client import validate_api_keys
@@ -122,10 +122,7 @@ def test_validate_api_keys_raises_when_env_var_missing():
         validate_api_keys(cfg)
 
 
-def test_validate_api_keys_passes_with_valid_key():
-    from pathlib import Path
-    from unittest.mock import patch
-
+def test_validate_api_keys_passes_with_valid_key() -> None:
     from config.config_loader import load_config
     from pipeline.llm_client import validate_api_keys
 
@@ -138,11 +135,8 @@ def test_validate_api_keys_passes_with_valid_key():
         validate_api_keys(cfg)  # must not raise
 
 
-def test_validate_api_keys_deduplicates_providers():
+def test_validate_api_keys_deduplicates_providers() -> None:
     """Same provider for both models: validate_environment is called only once."""
-    from pathlib import Path
-    from unittest.mock import patch
-
     from config.config_loader import load_config
     from pipeline.llm_client import validate_api_keys
 
@@ -158,7 +152,9 @@ def test_validate_api_keys_deduplicates_providers():
     assert mock_validate.call_count == 1  # deduped: openai only checked once
 
 
-async def test_complete_raises_config_error_on_auth_error(llm_config):
+async def test_complete_raises_config_error_on_auth_error(
+    llm_config: InterpretationConfig,
+) -> None:
     from pipeline.exceptions import ConfigError
     from pipeline.llm_client import complete
 
@@ -175,7 +171,9 @@ async def test_complete_raises_config_error_on_auth_error(llm_config):
             )
 
 
-async def test_transcribe_raises_config_error_on_auth_error(transcription_config, tmp_path):
+async def test_transcribe_raises_config_error_on_auth_error(
+    transcription_config: TranscriptionConfig, tmp_path: Path
+) -> None:
     from pipeline.exceptions import ConfigError
     from pipeline.llm_client import transcribe
 

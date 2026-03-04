@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-def test_parse_feed_with_enclosure():
+def test_parse_feed_with_enclosure() -> None:
     from pipeline.rss import parse_feed
 
     xml = Path("tests/fixtures/sample_feed.xml").read_text()
@@ -11,7 +11,7 @@ def test_parse_feed_with_enclosure():
     assert str(enclosure_ep[0].audio_url) == "https://example.com/ep42.mp3"
 
 
-def test_parse_feed_with_media_content():
+def test_parse_feed_with_media_content() -> None:
     from pipeline.rss import parse_feed
 
     xml = Path("tests/fixtures/sample_feed.xml").read_text()
@@ -21,7 +21,7 @@ def test_parse_feed_with_media_content():
     assert str(media_ep[0].audio_url) == "https://example.com/ep41.mp3"
 
 
-def test_parse_feed_skips_items_without_audio():
+def test_parse_feed_skips_items_without_audio() -> None:
     from pipeline.rss import parse_feed
 
     xml = Path("tests/fixtures/sample_feed.xml").read_text()
@@ -30,7 +30,7 @@ def test_parse_feed_skips_items_without_audio():
     assert "ep-040" not in guids
 
 
-def test_parse_feed_returns_sorted_by_date():
+def test_parse_feed_returns_sorted_by_date() -> None:
     from pipeline.rss import parse_feed
 
     xml = Path("tests/fixtures/sample_feed.xml").read_text()
@@ -38,7 +38,7 @@ def test_parse_feed_returns_sorted_by_date():
     assert episodes[0].guid == "ep-042"  # newest first
 
 
-async def test_fetch_episodes():
+async def test_fetch_episodes() -> None:
     import httpx
     import respx
 

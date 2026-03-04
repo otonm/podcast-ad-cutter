@@ -2,8 +2,10 @@ from pathlib import Path
 
 import pytest
 
+from config.config_loader import AppConfig
 
-def test_load_valid_config():
+
+def test_load_valid_config() -> None:
     from config.config_loader import load_config
 
     cfg = load_config(Path("tests/fixtures/test_config.yaml"))
@@ -16,7 +18,7 @@ def test_load_valid_config():
     assert cfg.audio.output_format == "mp3"
 
 
-def test_config_paths_are_path_objects():
+def test_config_paths_are_path_objects() -> None:
     from config.config_loader import load_config
 
     cfg = load_config(Path("tests/fixtures/test_config.yaml"))
@@ -24,7 +26,7 @@ def test_config_paths_are_path_objects():
     assert isinstance(cfg.paths.database, Path)
 
 
-def test_missing_config_raises():
+def test_missing_config_raises() -> None:
     from config.config_loader import load_config
     from pipeline.exceptions import ConfigError
 
@@ -32,7 +34,7 @@ def test_missing_config_raises():
         load_config(Path("nonexistent.yaml"))
 
 
-def test_invalid_config_raises(tmp_path):
+def test_invalid_config_raises(tmp_path: Path) -> None:
     from config.config_loader import load_config
     from pipeline.exceptions import ConfigError
 
@@ -42,7 +44,7 @@ def test_invalid_config_raises(tmp_path):
         load_config(bad)
 
 
-def test_prompts_defaults_are_non_empty_strings():
+def test_prompts_defaults_are_non_empty_strings() -> None:
     from config.config_loader import load_config
 
     cfg = load_config(Path("tests/fixtures/test_config.yaml"))
@@ -52,7 +54,7 @@ def test_prompts_defaults_are_non_empty_strings():
     assert len(cfg.prompts.topic_extraction) > 10
 
 
-def test_prompts_defaults_include_json_suffix():
+def test_prompts_defaults_include_json_suffix() -> None:
     from config.config_loader import load_config
 
     cfg = load_config(Path("tests/fixtures/test_config.yaml"))
@@ -68,7 +70,7 @@ def test_prompts_defaults_include_json_suffix():
     assert "domain" in cfg.prompts.topic_extraction
 
 
-def test_prompts_can_be_overridden(tmp_path):
+def test_prompts_can_be_overridden(tmp_path: Path) -> None:
     import shutil
 
     from config.config_loader import load_config
@@ -88,26 +90,26 @@ def test_prompts_can_be_overridden(tmp_path):
     assert "JSON object" in cfg.prompts.topic_extraction   # suffix was appended
 
 
-def test_publishing_config_defaults():
+def test_publishing_config_defaults() -> None:
     from config.config_loader import PublishingConfig
     cfg = PublishingConfig()
     assert cfg.base_url is None
     assert cfg.max_episodes_per_feed is None
 
 
-def test_publishing_config_strips_trailing_slash():
+def test_publishing_config_strips_trailing_slash() -> None:
     from config.config_loader import PublishingConfig
     cfg = PublishingConfig(base_url="https://example.com/")
     assert cfg.base_url == "https://example.com"
 
 
-def test_publishing_config_strips_multiple_trailing_slashes():
+def test_publishing_config_strips_multiple_trailing_slashes() -> None:
     from config.config_loader import PublishingConfig
     cfg = PublishingConfig(base_url="https://example.com///")
     assert cfg.base_url == "https://example.com"
 
 
-def test_app_config_publishing_optional(app_config):
+def test_app_config_publishing_optional(app_config: AppConfig) -> None:
     # test_config.yaml has no publishing section — must not raise
     from config.config_loader import PublishingConfig
     assert isinstance(app_config.publishing, PublishingConfig)

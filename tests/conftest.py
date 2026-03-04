@@ -1,5 +1,7 @@
+from collections.abc import AsyncGenerator
 from pathlib import Path
 
+import aiosqlite
 import pytest
 
 from config.config_loader import AppConfig, load_config
@@ -11,10 +13,8 @@ def app_config() -> AppConfig:
 
 
 @pytest.fixture
-async def db_conn():
+async def db_conn() -> AsyncGenerator[aiosqlite.Connection, None]:
     """In-memory SQLite connection with schema applied."""
-    import aiosqlite
-
     conn = await aiosqlite.connect(":memory:")
     await conn.execute("PRAGMA foreign_keys = ON")
     schema = Path("db/schema.sql").read_text()
