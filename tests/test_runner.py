@@ -1,6 +1,4 @@
-from datetime import datetime, timezone
-
-import pytest
+from datetime import UTC, datetime
 
 from models.episode import Episode
 
@@ -34,6 +32,6 @@ def test_episode_filename_format():
         feed_title="My Podcast",
         title="Hello World! #42",
         audio_url="https://example.com/ep.mp3",  # type: ignore[arg-type]
-        published=datetime(2025, 3, 15, tzinfo=timezone.utc),
+        published=datetime(2025, 3, 15, tzinfo=UTC),
     )
     assert _episode_filename(ep, "mp3") == "15.03.2025-hello-world-42.mp3"
