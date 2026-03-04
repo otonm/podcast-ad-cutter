@@ -1,8 +1,8 @@
 import logging
-import re
 
 import aiosqlite
 import anyio
+from slugify import slugify
 
 from config.config_loader import AppConfig, FeedConfig
 from db.connection import get_db
@@ -22,12 +22,17 @@ from pipeline.transcriber import transcribe_episode
 
 logger = logging.getLogger(__name__)
 
-_INVALID_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+def _feed_slug(title: str) -> str:
+    """Return a URL-safe slug for a feed title (used for folder and RSS filename)."""
+    return slugify(title, max_length=80)
 
 
-def _safe_name(text: str) -> str:
-    """Strip filesystem-invalid chars; truncate to 120 chars."""
-    return _INVALID_CHARS.sub("", text).strip()[:120]
+def _episode_filename(episode: Episode, ext: str) -> str:
+    """Return a URL-safe filename for a cleaned episode file."""
+    date_str = episode.published.strftime("%d.%m.%Y")
+    slug = slugify(episode.title, max_length=80)
+    return f"{date_str}-{slug}.{ext}"
 
 
 async def run_pipeline(cfg: AppConfig, *, dry_run: bool = False) -> None:
@@ -65,10 +70,9 @@ async def _process_episode(
     dry_run: bool = False,
 ) -> None:
     """Download, transcribe, detect ads, and cut a single episode."""
-    podcast_dir = cfg.paths.output_dir / _safe_name(episode.feed_title)
-    date_str = episode.published.strftime("%d.%m.%Y")
     ext = cfg.audio.output_format.value
-    clean_path = podcast_dir / f"{date_str} - {_safe_name(episode.title)}.{ext}"
+    podcast_dir = cfg.paths.output_dir / _feed_slug(episode.feed_title)
+    clean_path = podcast_dir / _episode_filename(episode, ext)
     await anyio.Path(podcast_dir).mkdir(parents=True, exist_ok=True)
 
     # Checkpoint 1 — final file already exists
