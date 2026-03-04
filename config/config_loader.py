@@ -160,6 +160,18 @@ class SchedulerConfig(BaseModel, frozen=True):
     interval_minutes: int = 30
 
 
+class PublishingConfig(BaseModel, frozen=True):
+    """Settings for static RSS feed and file publishing."""
+
+    base_url: str | None = None
+    max_episodes_per_feed: int | None = None
+
+    @field_validator("base_url", mode="after")
+    @classmethod
+    def _strip_trailing_slash(cls, v: str | None) -> str | None:
+        return v.rstrip("/") if v else v
+
+
 class AppConfig(BaseModel, frozen=True):
     """Root configuration object parsed from ``config.yaml``."""
 
@@ -174,6 +186,7 @@ class AppConfig(BaseModel, frozen=True):
     episodes_to_keep: int = 5
     prompts: PromptsConfig = PromptsConfig()
     scheduler: SchedulerConfig = SchedulerConfig()
+    publishing: PublishingConfig = PublishingConfig()
 
 
 def load_config(config_path: Path) -> AppConfig:

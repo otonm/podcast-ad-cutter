@@ -86,3 +86,29 @@ def test_prompts_can_be_overridden(tmp_path):
     assert "JSON array" in cfg.prompts.ad_detection        # suffix was appended
     assert "Custom topic prompt" in cfg.prompts.topic_extraction
     assert "JSON object" in cfg.prompts.topic_extraction   # suffix was appended
+
+
+def test_publishing_config_defaults():
+    from config.config_loader import PublishingConfig
+    cfg = PublishingConfig()
+    assert cfg.base_url is None
+    assert cfg.max_episodes_per_feed is None
+
+
+def test_publishing_config_strips_trailing_slash():
+    from config.config_loader import PublishingConfig
+    cfg = PublishingConfig(base_url="https://example.com/")
+    assert cfg.base_url == "https://example.com"
+
+
+def test_publishing_config_strips_multiple_trailing_slashes():
+    from config.config_loader import PublishingConfig
+    cfg = PublishingConfig(base_url="https://example.com///")
+    assert cfg.base_url == "https://example.com"
+
+
+def test_app_config_publishing_optional(app_config):
+    # test_config.yaml has no publishing section — must not raise
+    from config.config_loader import PublishingConfig
+    assert isinstance(app_config.publishing, PublishingConfig)
+    assert app_config.publishing.base_url is None
