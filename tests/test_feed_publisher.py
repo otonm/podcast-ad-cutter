@@ -2,30 +2,30 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 
-def test_parse_pub_date_rfc2822():
+def test_parse_pub_date_rfc2822() -> None:
     from pipeline.feed_publisher import _parse_pub_date
     assert _parse_pub_date("Wed, 01 Jan 2025 00:00:00 GMT") == "01.01.2025"
 
 
-def test_parse_pub_date_with_timezone_offset():
+def test_parse_pub_date_with_timezone_offset() -> None:
     from pipeline.feed_publisher import _parse_pub_date
     result = _parse_pub_date("Mon, 15 Mar 2025 12:00:00 +0000")
     assert result == "15.03.2025"
 
 
-def test_parse_pub_date_none_returns_today():
+def test_parse_pub_date_none_returns_today() -> None:
     from pipeline.feed_publisher import _parse_pub_date
     today = datetime.now(tz=UTC).strftime("%d.%m.%Y")
     assert _parse_pub_date(None) == today
 
 
-def test_parse_pub_date_garbage_returns_today():
+def test_parse_pub_date_garbage_returns_today() -> None:
     from pipeline.feed_publisher import _parse_pub_date
     today = datetime.now(tz=UTC).strftime("%d.%m.%Y")
     assert _parse_pub_date("not-a-date") == today
 
 
-def test_prune_old_episodes_deletes_oldest(tmp_path):
+def test_prune_old_episodes_deletes_oldest(tmp_path: Path) -> None:
     from pipeline.feed_publisher import prune_old_episodes
 
     files = [
@@ -45,7 +45,7 @@ def test_prune_old_episodes_deletes_oldest(tmp_path):
     assert remaining[1].name == "15.03.2025-episode-newest.mp3"
 
 
-def test_prune_old_episodes_ignores_non_date_files(tmp_path):
+def test_prune_old_episodes_ignores_non_date_files(tmp_path: Path) -> None:
     from pipeline.feed_publisher import prune_old_episodes
 
     keep_file = tmp_path / "not-a-date-file.mp3"
@@ -59,7 +59,7 @@ def test_prune_old_episodes_ignores_non_date_files(tmp_path):
     assert not dated_file.exists()
 
 
-def test_prune_old_episodes_no_delete_when_under_limit(tmp_path):
+def test_prune_old_episodes_no_delete_when_under_limit(tmp_path: Path) -> None:
     from pipeline.feed_publisher import prune_old_episodes
 
     for name in ["01.01.2025-ep1.mp3", "15.03.2025-ep2.mp3"]:
@@ -70,7 +70,7 @@ def test_prune_old_episodes_no_delete_when_under_limit(tmp_path):
     assert len(list(tmp_path.glob("*.mp3"))) == 2
 
 
-def test_patch_feed_xml_replaces_enclosure(tmp_path):
+def test_patch_feed_xml_replaces_enclosure(tmp_path: Path) -> None:
     from pipeline.feed_publisher import _patch_feed_xml
 
     xml = """<?xml version="1.0" encoding="UTF-8"?>
@@ -97,7 +97,7 @@ def test_patch_feed_xml_replaces_enclosure(tmp_path):
     assert "1234" in patched  # file size updated
 
 
-def test_patch_feed_xml_keeps_original_when_no_local_file(tmp_path):
+def test_patch_feed_xml_keeps_original_when_no_local_file(tmp_path: Path) -> None:
     from pipeline.feed_publisher import _patch_feed_xml
 
     xml = """<?xml version="1.0" encoding="UTF-8"?>
@@ -119,7 +119,7 @@ def test_patch_feed_xml_keeps_original_when_no_local_file(tmp_path):
     assert "https://example.com/ep42.mp3" in patched
 
 
-async def test_generate_feed_rss_writes_file(tmp_path):
+async def test_generate_feed_rss_writes_file(tmp_path: Path) -> None:
     import httpx
     import respx
 
@@ -183,7 +183,7 @@ async def test_generate_feed_rss_writes_file(tmp_path):
     assert "https://example.com/my-podcast/" in content
 
 
-async def test_generate_feed_rss_skips_when_no_base_url(tmp_path):
+async def test_generate_feed_rss_skips_when_no_base_url(tmp_path: Path) -> None:
     import httpx
     import respx
 

@@ -1,24 +1,25 @@
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
 from models.episode import Episode
 
 
-def test_feed_slug_basic():
+def test_feed_slug_basic() -> None:
     from pipeline.runner import _feed_slug
 
     assert _feed_slug("My Favourite Podcast") == "my-favourite-podcast"
 
 
-def test_feed_slug_unicode():
+def test_feed_slug_unicode() -> None:
     from pipeline.runner import _feed_slug
 
     # python-slugify transliterates accented chars (é→e) and drops symbols like & and —
     assert _feed_slug("Café & Music — Vol. 3") == "cafe-music-vol-3"
 
 
-def test_feed_slug_truncates():
+def test_feed_slug_truncates() -> None:
     from pipeline.runner import _feed_slug
 
     long_title = "A" * 200
@@ -26,7 +27,7 @@ def test_feed_slug_truncates():
     assert len(result) <= 80
 
 
-def test_episode_filename_format():
+def test_episode_filename_format() -> None:
     from pipeline.runner import _episode_filename
 
     ep = Episode(
@@ -40,7 +41,7 @@ def test_episode_filename_format():
 
 
 @pytest.mark.asyncio
-async def test_process_feed_calls_publisher_when_base_url_set(tmp_path):
+async def test_process_feed_calls_publisher_when_base_url_set(tmp_path: Path) -> None:
     """process_feed invokes generate_feed_rss when publishing.base_url is configured."""
     from unittest.mock import AsyncMock, patch
 
@@ -82,7 +83,7 @@ async def test_process_feed_calls_publisher_when_base_url_set(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_process_feed_skips_publisher_when_no_base_url(tmp_path):
+async def test_process_feed_skips_publisher_when_no_base_url(tmp_path: Path) -> None:
     """process_feed does NOT invoke generate_feed_rss when base_url is None."""
     from unittest.mock import AsyncMock, patch
 
