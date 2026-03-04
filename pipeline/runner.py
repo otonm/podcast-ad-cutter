@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import aiosqlite
@@ -16,6 +17,7 @@ from pipeline.ad_detector import detect_ads as detect_ads_impl
 from pipeline.ad_detector import merge_segments
 from pipeline.audio_editor import cut_ads
 from pipeline.downloader import download_episode
+from pipeline.feed_publisher import generate_feed_rss, prune_old_episodes
 from pipeline.rss import fetch_episodes
 from pipeline.topic_extractor import extract_topic
 from pipeline.transcriber import transcribe_episode
@@ -53,14 +55,27 @@ async def process_feed(
     *,
     dry_run: bool = False,
 ) -> None:
-    """Process a single feed: fetch episodes, process each one not already present."""
+    """Process a single feed: fetch episodes, process each one, then publish."""
     episodes = await fetch_episodes(feed_cfg, episodes_to_keep=cfg.episodes_to_keep)
-    if not episodes:
-        return
 
     for episode in episodes:
         logger.info(f"Processing episode: {episode.title}")
         await _process_episode(episode, cfg, dry_run=dry_run)
+
+    if not cfg.publishing.base_url:
+        return
+
+    feed_slug = _feed_slug(feed_cfg.name)
+    ext = cfg.audio.output_format.value
+    podcast_dir = cfg.paths.output_dir / feed_slug
+
+    if cfg.publishing.max_episodes_per_feed is not None and podcast_dir.exists():
+        max_ep = cfg.publishing.max_episodes_per_feed
+        await asyncio.to_thread(
+            prune_old_episodes, podcast_dir, ext, max_episodes=max_ep
+        )
+
+    await generate_feed_rss(feed_cfg, cfg, feed_slug=feed_slug, podcast_dir=podcast_dir)
 
 
 async def _process_episode(
