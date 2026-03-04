@@ -23,6 +23,7 @@ dependencies = [
     "watchfiles>=1.1.1",
     "anyio>=4.12.1",
     "psutil>=5.9",
+    "python-slugify>=8.0.4",
 ]
 
 [tool.setuptools.packages.find]
@@ -38,6 +39,7 @@ dev = [
     "mypy>=1.10",
     "ruff>=0.4",
     "types-pyyaml>=6.0.12.20250915",
+    "types-python-slugify>=8.0.2.20240310",
 ]
 
 [tool.ruff]
