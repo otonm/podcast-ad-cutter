@@ -64,7 +64,6 @@ class LLMProviderConfig(BaseModel, frozen=True):
 
     provider: str
     model: str
-    api_base: str | None = None
 
     @field_validator("provider")
     @classmethod
@@ -183,7 +182,6 @@ class AppConfig(BaseModel, frozen=True):
     audio: AudioConfig
     logging: LoggingConfig
     retry: RetryConfig
-    episodes_to_keep: int = 5
     prompts: PromptsConfig = PromptsConfig()
     scheduler: SchedulerConfig = SchedulerConfig()
     publishing: PublishingConfig = PublishingConfig()

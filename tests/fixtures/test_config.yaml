@@ -11,12 +11,10 @@ transcription:
   provider: "openai"
   model: "whisper-1"
   language: "en"
-  api_base: null
 
 interpretation:
   provider: "openai"
   model: "gpt-4o"
-  api_base: null
   temperature: 0
   max_tokens: 2048
   topic_excerpt_words: 2000

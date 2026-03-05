@@ -59,14 +59,6 @@ Edit `config.yaml`: add your feed URLs under `feeds`, set the transcription and 
 | `url` | string | — | RSS feed URL |
 | `enabled` | bool | `true` | Set to `false` to skip without removing the entry |
 
-### `episodes_to_keep`
-
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `episodes_to_keep` | int | `5` | Number of most recent episodes to fetch and process per feed |
-
-This is a top-level key, not nested under `feeds`.
-
 ### `paths`
 
 | Key | Type | Default | Description |
@@ -81,7 +73,6 @@ This is a top-level key, not nested under `feeds`.
 | `provider` | string | — | `groq`, `openai`, or `openrouter` |
 | `model` | string | — | Model name for the selected provider (e.g. `whisper-1`, `whisper-large-v3`) |
 | `language` | string \| null | `"en"` | BCP-47 language code; `null` for auto-detect |
-| `api_base` | string \| null | `null` | Override API endpoint for OpenAI-compatible proxies |
 
 ### `interpretation`
 
@@ -89,7 +80,6 @@ This is a top-level key, not nested under `feeds`.
 |-----|------|---------|-------------|
 | `provider` | string | — | `groq`, `openai`, or `openrouter` |
 | `model` | string | — | Model name for the selected provider (e.g. `gpt-4o`, `llama-3.3-70b-versatile`) |
-| `api_base` | string \| null | `null` | Override API endpoint for OpenAI-compatible proxies |
 | `temperature` | float | `0` | Sampling temperature |
 | `max_tokens` | int | `2048` | Maximum tokens in the LLM response |
 | `topic_excerpt_words` | int | `2000` | Number of words from transcript start to send for topic extraction |
@@ -140,8 +130,6 @@ This is a top-level key, not nested under `feeds`.
 | `openai` | `whisper-1` | `gpt-4o`, `gpt-4o-mini` | `OPENAI_API_KEY` |
 | `groq` | `whisper-large-v3` | `llama-3.3-70b-versatile`, `mixtral-8x7b-32768` | `GROQ_API_KEY` |
 | `openrouter` | `openai/whisper-large-v3` | any model available on OpenRouter (e.g. `anthropic/claude-opus-4-6`) | `OPENROUTER_API_KEY` |
-
-`api_base` in `transcription` or `interpretation` overrides the default endpoint for that section. Use this for OpenAI-compatible local proxies or self-hosted inference.
 
 ---
 

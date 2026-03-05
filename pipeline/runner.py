@@ -56,7 +56,7 @@ async def process_feed(
     dry_run: bool = False,
 ) -> None:
     """Process a single feed: fetch episodes, process each one, then publish."""
-    episodes = await fetch_episodes(feed_cfg, episodes_to_keep=cfg.episodes_to_keep)
+    episodes = await fetch_episodes(feed_cfg, episodes_to_keep=cfg.publishing.max_episodes_per_feed)
 
     for episode in episodes:
         logger.info(f"Processing episode: {episode.title}")

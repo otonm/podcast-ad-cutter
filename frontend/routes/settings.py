@@ -48,7 +48,6 @@ async def save_settings(
     interpretation_provider: Annotated[str, Form()],
     interpretation_model: Annotated[str, Form()],
     min_confidence: Annotated[float, Form()],
-    episodes_to_keep: Annotated[int, Form()],
     verbose_log: Annotated[str | None, Form()] = None,
 ) -> HTMLResponse:
     """Validate and save settings. Returns empty on success (collapses accordion)."""
@@ -63,7 +62,6 @@ async def save_settings(
             interpretation_provider=interpretation_provider,
             interpretation_model=interpretation_model,
             min_confidence=min_confidence,
-            episodes_to_keep=episodes_to_keep,
             verbose_log=verbose_log is not None,
         )
         validated = await asyncio.to_thread(load_config, get_config_path())

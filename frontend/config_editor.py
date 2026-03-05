@@ -104,7 +104,6 @@ def update_settings(
     interpretation_provider: str,
     interpretation_model: str,
     min_confidence: float,
-    episodes_to_keep: int,
     verbose_log: bool,
 ) -> None:
     """Update model and confidence settings in config.yaml."""
@@ -126,8 +125,6 @@ def update_settings(
     ad_detection: dict[str, object] = cast("dict[str, object]", raw_a) if raw_a else {}
     ad_detection["min_confidence"] = min_confidence
     data["ad_detection"] = ad_detection
-
-    data["episodes_to_keep"] = episodes_to_keep
 
     raw_l = data.get("logging")
     logging_cfg: dict[str, object] = cast("dict[str, object]", raw_l) if raw_l else {}

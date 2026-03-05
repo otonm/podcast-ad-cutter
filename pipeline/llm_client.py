@@ -40,8 +40,6 @@ async def complete(
         "max_tokens": cfg.max_tokens,
     }
 
-    if cfg.api_base:
-        kwargs["api_base"] = cfg.api_base
     if response_format:
         kwargs["response_format"] = response_format
 
@@ -90,8 +88,6 @@ async def transcribe(audio_path: Path, cfg: TranscriptionConfig) -> tuple[dict[s
                 "response_format": "verbose_json",
                 "timestamp_granularities": ["word"],
             }
-            if cfg.api_base:
-                kwargs["api_base"] = cfg.api_base
             logger.debug(
                 f"Transcription request model={cfg.provider_model} language={cfg.language}"
             )
