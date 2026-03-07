@@ -136,8 +136,10 @@ async def _process_episode(
 
             ad_segments = await detect_ads(topic_context, transcript, cfg, db)
 
-            if not dry_run and ad_segments:
-                await cut_ads(audio_path, ad_segments, cfg, db, output_path=clean_path)
+            if not dry_run:
+                result = await cut_ads(audio_path, ad_segments, cfg, db, output_path=clean_path)
+                if result is None:
+                    logger.info(f"No ads cut for '{episode.title}'; original file unchanged")
             elif dry_run:
                 logger.info("Dry run: skipping audio cutting")
         finally:

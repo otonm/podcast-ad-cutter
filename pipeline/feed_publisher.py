@@ -83,16 +83,20 @@ def _patch_feed_xml(
         date_str = _parse_pub_date(pub_date_el.text if pub_date_el is not None else None)
 
         matches = list(podcast_dir.glob(f"{date_str}-*.{ext}"))
-        if not matches:
+        enclosure = item.find("enclosure")
+        if enclosure is None:
             continue
 
-        local_file = matches[0]
-        local_url = f"{base_url}/{feed_slug}/{local_file.name}"
-
-        enclosure = item.find("enclosure")
-        if enclosure is not None:
-            enclosure.set("url", local_url)
+        if matches:
+            # Ads were cut: reference the local clean file
+            local_file = matches[0]
+            enclosure.set("url", f"{base_url}/{feed_slug}/{local_file.name}")
             enclosure.set("length", str(local_file.stat().st_size))
+        else:
+            # No local clean file: no ads were cut for this episode.
+            # The enclosure already points to the original source URL — preserve it.
+            original_url = enclosure.get("url", "")
+            logger.debug(f"No clean file for episode on {date_str}; original URL retained: {original_url}")
 
     return ET.tostring(root, encoding="unicode", xml_declaration=False)
 

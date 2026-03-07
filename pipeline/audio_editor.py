@@ -19,11 +19,15 @@ async def cut_ads(
     db: aiosqlite.Connection,
     *,
     output_path: Path,
-) -> Path:
-    """Cut ad segments from audio and export clean file."""
+) -> Path | None:
+    """Cut ad segments from audio and export clean file.
+
+    Returns the output path when cuts were made, or None when ad_segments is
+    empty (no cuts performed, source file is unchanged).
+    """
     if not ad_segments:
         logger.info("No ad segments to cut, source file unchanged")
-        return audio_path
+        return None
 
     result = await _cut_ads_async(audio_path, ad_segments, cfg, output_path)
     await _mark_segments_cut(ad_segments, db)
