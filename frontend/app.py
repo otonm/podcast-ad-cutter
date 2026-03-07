@@ -63,6 +63,7 @@ async def _lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 def create_app() -> FastAPI:
     """Application factory — called by uvicorn when factory=True."""
     from frontend.routes.feeds import router as feeds_router
+    from frontend.routes.models import router as models_router
     from frontend.routes.pages import router as pages_router
     from frontend.routes.pipeline import router as pipeline_router
     from frontend.routes.scheduler import router as scheduler_router
@@ -82,5 +83,6 @@ def create_app() -> FastAPI:
     app.include_router(pipeline_router)
     app.include_router(settings_router)
     app.include_router(scheduler_router)
+    app.include_router(models_router)
 
     return app

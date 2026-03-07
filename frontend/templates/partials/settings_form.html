@@ -15,6 +15,10 @@
       <div>
         <label class="block text-xs font-medium text-gray-700 mb-1">Provider</label>
         <select name="transcription_provider"
+                hx-get="/settings/models/transcription"
+                hx-trigger="change, load"
+                hx-params="transcription_provider"
+                hx-target="#transcription-model-options"
                 class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
           {% for p in providers %}
           <option value="{{ p }}" {% if p == cfg.transcription.provider %}selected{% endif %}>{{ p }}</option>
@@ -26,7 +30,10 @@
         <input type="text"
                name="transcription_model"
                value="{{ cfg.transcription.model }}"
+               list="transcription-models"
+               autocomplete="off"
                class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        <span id="transcription-model-options"></span>
       </div>
     </div>
   </fieldset>
@@ -37,6 +44,10 @@
       <div>
         <label class="block text-xs font-medium text-gray-700 mb-1">Provider</label>
         <select name="interpretation_provider"
+                hx-get="/settings/models/interpretation"
+                hx-trigger="change, load"
+                hx-params="interpretation_provider"
+                hx-target="#interpretation-model-options"
                 class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
           {% for p in providers %}
           <option value="{{ p }}" {% if p == cfg.interpretation.provider %}selected{% endif %}>{{ p }}</option>
@@ -48,7 +59,10 @@
         <input type="text"
                name="interpretation_model"
                value="{{ cfg.interpretation.model }}"
+               list="interpretation-models"
+               autocomplete="off"
                class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+        <span id="interpretation-model-options"></span>
       </div>
     </div>
   </fieldset>
