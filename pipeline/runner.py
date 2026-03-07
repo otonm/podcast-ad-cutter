@@ -56,6 +56,14 @@ async def process_feed(
     dry_run: bool = False,
 ) -> None:
     """Process a single feed: fetch episodes, process each one, then publish."""
+    feed_slug = _feed_slug(feed_cfg.name)
+    ext = cfg.audio.output_format.value
+    podcast_dir = cfg.paths.output_dir / feed_slug
+
+    # Initial RSS — written before processing so the feed is always available.
+    if cfg.publishing.base_url:
+        await generate_feed_rss(feed_cfg, cfg, feed_slug=feed_slug, podcast_dir=podcast_dir)
+
     episodes = await fetch_episodes(feed_cfg, episodes_to_keep=cfg.publishing.max_episodes_per_feed)
 
     for episode in episodes:
@@ -65,16 +73,13 @@ async def process_feed(
     if not cfg.publishing.base_url:
         return
 
-    feed_slug = _feed_slug(feed_cfg.name)
-    ext = cfg.audio.output_format.value
-    podcast_dir = cfg.paths.output_dir / feed_slug
-
     if cfg.publishing.max_episodes_per_feed is not None and podcast_dir.exists():
         max_ep = cfg.publishing.max_episodes_per_feed
         await asyncio.to_thread(
             prune_old_episodes, podcast_dir, ext, max_episodes=max_ep
         )
 
+    # Updated RSS — reflects any newly created clean files.
     await generate_feed_rss(feed_cfg, cfg, feed_slug=feed_slug, podcast_dir=podcast_dir)
 
 

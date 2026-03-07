@@ -40,7 +40,7 @@ function toggleLog() {
     es.close();
     status.textContent = "✓ Pipeline complete";
     status.className = "text-green-700 font-medium";
-    htmx.trigger("#header-cost", "load");
+    htmx.trigger("#header-cost", "refreshCost");
     htmx.ajax("GET", "/pipeline/actions", {target: "#pipeline-actions", swap: "outerHTML"});
     htmx.ajax("GET", "/scheduler/partial", {target: "#scheduler-fieldset", swap: "outerHTML"});
   });

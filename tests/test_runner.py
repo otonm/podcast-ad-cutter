@@ -42,7 +42,7 @@ def test_episode_filename_format() -> None:
 
 @pytest.mark.asyncio
 async def test_process_feed_calls_publisher_when_base_url_set(tmp_path: Path) -> None:
-    """process_feed invokes generate_feed_rss when publishing.base_url is configured."""
+    """process_feed invokes generate_feed_rss twice (before and after processing) when base_url is set."""
     from unittest.mock import AsyncMock, patch
 
     from config.config_loader import (
@@ -79,7 +79,7 @@ async def test_process_feed_calls_publisher_when_base_url_set(tmp_path: Path) ->
     ):
         await process_feed(feed_cfg, cfg)
 
-    mock_generate.assert_awaited_once()
+    assert mock_generate.await_count == 2
 
 
 @pytest.mark.asyncio

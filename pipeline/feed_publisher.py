@@ -1,5 +1,6 @@
 """RSS feed publisher: patch enclosure URLs and write static .rss files."""
 
+import errno
 import logging
 import re
 from datetime import UTC, datetime
@@ -82,7 +83,7 @@ def _patch_feed_xml(
         pub_date_el = item.find("pubDate")
         date_str = _parse_pub_date(pub_date_el.text if pub_date_el is not None else None)
 
-        matches = list(podcast_dir.glob(f"{date_str}-*.{ext}"))
+        matches = list(podcast_dir.glob(f"{date_str}-*.{ext}")) if podcast_dir.is_dir() else []
         enclosure = item.find("enclosure")
         if enclosure is None:
             continue
@@ -133,7 +134,15 @@ async def generate_feed_rss(
     patched_xml = _patch_feed_xml(response.text, podcast_dir, feed_slug, base_url, ext)
 
     rss_path = cfg.paths.output_dir / f"{feed_slug}.rss"
-    rss_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        rss_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        if exc.errno != errno.ESTALE:
+            raise
+        logger.warning(
+            f"Stale NFS file handle on {rss_path.parent!r}; "
+            "directory exists, proceeding to write RSS"
+        )
     rss_path.write_text(
         f"<?xml version='1.0' encoding='utf-8'?>\n{patched_xml}",
         encoding="utf-8",

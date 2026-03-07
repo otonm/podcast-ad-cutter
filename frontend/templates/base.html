@@ -18,10 +18,10 @@
         <span class="text-xl font-bold tracking-tight">🎙 Podcast Ad Cutter</span>
       </div>
       <div class="flex items-center gap-3">
-        <!-- Cost badge — polled every 10s -->
+        <!-- Cost badge — loaded once; refreshed on pipeline completion -->
         <div id="header-cost"
              hx-get="/cost"
-             hx-trigger="load, every 10s"
+             hx-trigger="load"
              hx-swap="outerHTML">
         </div>
       </div>
