@@ -665,7 +665,6 @@ dependencies = [
     { name = "jinja2" },
     { name = "litellm" },
     { name = "openai" },
-    { name = "pozalabs-pydub" },
     { name = "psutil" },
     { name = "pydantic" },
     { name = "python-dotenv" },
@@ -701,7 +700,6 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "litellm", specifier = ">=1.40" },
     { name = "openai", specifier = ">=1.30" },
-    { name = "pozalabs-pydub", specifier = ">=0.37" },
     { name = "psutil", specifier = ">=5.9" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "python-dotenv", specifier = ">=1.0" },
@@ -724,19 +722,6 @@ dev = [
     { name = "ruff", specifier = ">=0.4" },
     { name = "types-python-slugify", specifier = ">=8.0.2.20240310" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20250915" },
-]
-
-[[package]]
-name = "pozalabs-pydub"
-version = "0.38.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/d2/97/93e542395a3f63b0fa57644db9330127067dfe7566788a74a65856defaec/pozalabs_pydub-0.38.0.tar.gz", hash = "sha256:398e395074ecab552c11e42a08d3e66aabced99466221645645b2655c328d16a", size = 27445344, upload-time = "2026-03-07T11:07:06.198Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/18/b6/9da0e8b8a010545135c4f82ca8f4b0d0e704f9c8f44703df908aa790aae5/pozalabs_pydub-0.38.0-cp311-abi3-macosx_10_12_x86_64.whl", hash = "sha256:2991568f8b63f5642b42b177c01b50809bbacc057596c161d3235977b06b39c5", size = 322465, upload-time = "2026-03-07T11:06:57.645Z" },
-    { url = "https://files.pythonhosted.org/packages/cc/da/82c3d830ca2f97a23021b2c0eec68e9f72736ee028633d874f28f959afb2/pozalabs_pydub-0.38.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:ea39b68b002df2d9a27e232cf5656ccaae7bee38ae423aa18839930123f4131e", size = 317823, upload-time = "2026-03-07T11:06:59.243Z" },
-    { url = "https://files.pythonhosted.org/packages/e6/ea/b980989ad3cbed3351f28eeccf0b5aa87480b580f0d9ba89499ebb2d16b0/pozalabs_pydub-0.38.0-cp311-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:5065cf64830338927fb01f4d0b8067289b1ce3520569bd6086d5fc0693e08823", size = 348016, upload-time = "2026-03-07T11:07:00.691Z" },
-    { url = "https://files.pythonhosted.org/packages/d2/ca/bc4ac4bfd7d5ccbe38119a761aa30c7159b7a393f26f1817c2b8c9772159/pozalabs_pydub-0.38.0-cp311-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:ade93708d81762ec02a791157191b2532add73dead1e31ed07bae12d59baf393", size = 355599, upload-time = "2026-03-07T11:07:01.904Z" },
-    { url = "https://files.pythonhosted.org/packages/34/41/50d0fc2d1734e0fb6f573576821b4fb81bcd38759e86f5a45b264df35acf/pozalabs_pydub-0.38.0-cp311-abi3-win_amd64.whl", hash = "sha256:57cfcfcc8423e884e500c430889cb34ed22e8bfaededeed406db202a0f350de2", size = 208179, upload-time = "2026-03-07T11:07:03.075Z" },
 ]
 
 [[package]]

@@ -3,7 +3,6 @@ import logging
 from pathlib import Path
 
 import aiosqlite
-from pydub import AudioSegment
 
 from config.config_loader import AppConfig
 from db.repositories import AdSegmentRepository
@@ -22,62 +21,100 @@ async def cut_ads(
     output_path: Path,
 ) -> Path:
     """Cut ad segments from audio and export clean file."""
-    result = await asyncio.to_thread(_cut_ads_sync, audio_path, ad_segments, cfg, output_path)
+    if not ad_segments:
+        logger.info("No ad segments to cut, source file unchanged")
+        return audio_path
+
+    result = await _cut_ads_async(audio_path, ad_segments, cfg, output_path)
     await _mark_segments_cut(ad_segments, db)
     return result
 
 
-def _cut_ads_sync(
+async def _get_duration_seconds(audio_path: Path) -> float:
+    """Return duration of audio file in seconds using ffprobe."""
+    proc = await asyncio.create_subprocess_exec(
+        "ffprobe",
+        "-v", "quiet",
+        "-show_entries", "format=duration",
+        "-of", "csv=p=0",
+        str(audio_path),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    stdout, _ = await proc.communicate()
+    if proc.returncode != 0:
+        raise AudioEditError(f"ffprobe failed on {audio_path.name}")
+    return float(stdout.strip())
+
+
+def _build_filtergraph(keep_spans: list[tuple[float, float | None]]) -> str:
+    """Build an ffmpeg filter_complex string that trims and concatenates keep spans."""
+    parts: list[str] = []
+    labels: list[str] = []
+    for i, (start, end) in enumerate(keep_spans):
+        label = f"s{i}"
+        if end is None:
+            parts.append(f"[0]atrim=start={start},asetpts=PTS-STARTPTS[{label}]")
+        else:
+            parts.append(f"[0]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[{label}]")
+        labels.append(f"[{label}]")
+    n = len(keep_spans)
+    concat = "".join(labels) + f"concat=n={n}:v=0:a=1[out]"
+    return ";".join(parts) + ";" + concat
+
+
+async def _cut_ads_async(
     audio_path: Path,
     ad_segments: list[AdSegment],
     cfg: AppConfig,
     output_path: Path,
 ) -> Path:
-    """Cut ad segments from audio and export the clean file (runs in a thread)."""
-    try:
-        audio = AudioSegment.from_file(audio_path)
-    except Exception as exc:
-        raise AudioEditError(f"Failed to load audio: {exc}") from exc
-
-    original_duration_ms = len(audio)
+    """Cut ad segments using ffmpeg filtergraph — no PCM decode into memory."""
     ad_segments_sorted = sorted(ad_segments, key=lambda s: s.start_ms)
 
-    keep_segments = []
-    last_end = 0
+    total_duration_sec = await _get_duration_seconds(audio_path)
+    original_duration_ms = int(total_duration_sec * 1000)
 
+    last_end_ms = 0
+    keep_spans: list[tuple[float, float | None]] = []
     for seg in ad_segments_sorted:
-        if seg.start_ms > last_end:
-            keep_segments.append(audio[last_end : seg.start_ms])
-        last_end = max(last_end, seg.end_ms)
+        if seg.start_ms > last_end_ms:
+            keep_spans.append((last_end_ms / 1000.0, seg.start_ms / 1000.0))
+        last_end_ms = max(last_end_ms, seg.end_ms)
+    if last_end_ms < original_duration_ms:
+        keep_spans.append((last_end_ms / 1000.0, None))
 
-    if last_end < original_duration_ms:
-        keep_segments.append(audio[last_end:])
-
-    if not keep_segments:
+    if not keep_spans:
         msg = "All audio would be cut; no keep segments remain"
         raise AudioEditError(msg)
 
-    try:
-        clean_audio = sum(keep_segments[1:], keep_segments[0])
-    except Exception as exc:
-        raise AudioEditError(f"Failed to concatenate audio: {exc}") from exc
+    filtergraph = _build_filtergraph(keep_spans)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    try:
-        clean_audio.export(
-            output_path,
-            format=cfg.audio.output_format.value,
-            bitrate=cfg.audio.cbr_bitrate,
-        )
-    except Exception as exc:
-        raise AudioEditError(f"Failed to export audio: {exc}") from exc
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(audio_path),
+        "-filter_complex", filtergraph,
+        "-map", "[out]",
+        "-b:a", cfg.audio.cbr_bitrate,
+        str(output_path),
+    ]
+    logger.debug(f"ffmpeg cmd: {' '.join(cmd)}")
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        err = stderr.decode(errors="replace").strip()
+        raise AudioEditError(f"ffmpeg failed: {err}")
 
     removed_ms = sum(seg.end_ms - seg.start_ms for seg in ad_segments_sorted)
     removed_sec = removed_ms / 1000
     pct = (removed_ms / original_duration_ms) * 100 if original_duration_ms > 0 else 0
-
-    logger.info(
-        f"Export complete: {output_path.name} — removed {removed_sec:.1f}s ({pct:.0f}% of episode)"
-    )
+    logger.info(f"Export complete: {output_path.name} — removed {removed_sec:.1f}s ({pct:.0f}% of episode)")
 
     return output_path
 
