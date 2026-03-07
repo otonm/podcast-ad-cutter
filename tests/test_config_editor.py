@@ -104,7 +104,7 @@ def test_update_settings_saves_prompts(minimal_config: Path) -> None:
     assert prompts["topic_extraction"] == "Custom topic prompt."
 
 
-def test_get_raw_prompts_returns_defaults_when_not_set(minimal_config: Path) -> None:
+def test_get_raw_prompts_returns_defaults_when_not_set(minimal_config: Path) -> None:  # noqa: ARG001
     from config.config_loader import DEFAULT_AD_DETECTION_PROMPT, DEFAULT_TOPIC_EXTRACTION_PROMPT
 
     raw = config_editor.get_raw_prompts()
@@ -112,7 +112,7 @@ def test_get_raw_prompts_returns_defaults_when_not_set(minimal_config: Path) -> 
     assert raw["topic_extraction"] == DEFAULT_TOPIC_EXTRACTION_PROMPT
 
 
-def test_get_raw_prompts_returns_stored_values(minimal_config: Path) -> None:
+def test_get_raw_prompts_returns_stored_values(minimal_config: Path) -> None:  # noqa: ARG001
     config_editor.update_settings(
         transcription_provider="openai",
         transcription_model="whisper-1",

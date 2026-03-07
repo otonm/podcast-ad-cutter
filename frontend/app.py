@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from watchfiles import awatch
 
@@ -17,6 +18,7 @@ from frontend import config_cache
 from frontend.config_editor import get_config_path
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
+_STATIC_DIR = Path(__file__).parent / "static"
 
 templates: Jinja2Templates = Jinja2Templates(directory=str(_TEMPLATE_DIR))
 
@@ -72,6 +74,8 @@ def create_app() -> FastAPI:
         redoc_url=None,
         lifespan=_lifespan,
     )
+
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
     app.include_router(pages_router)
     app.include_router(feeds_router)
