@@ -52,7 +52,7 @@ required_vars=(
     GITHUB_USERNAME
     SSH_PUBLIC_KEY
     TAILSCALE_AUTH_KEY
-    TAILSCALE_HOSTNAME
+    HOSTNAME
 )
 for var in "${required_vars[@]}"; do
     if [[ -z "${!var:-}" ]]; then
@@ -63,7 +63,7 @@ done
 
 echo "==> Generating ignition.json"
 echo "    GITHUB_USERNAME=${GITHUB_USERNAME}"
-echo "    TAILSCALE_HOSTNAME=${TAILSCALE_HOSTNAME}"
+echo "    HOSTNAME=${HOSTNAME}"
 echo "    NFS_SHARE=${NFS_SHARE:-<none, using named volume>}"
 
 # ── Create staging directory ──────────────────────────────────────────────────
@@ -80,8 +80,8 @@ sed "s|{{GITHUB_USERNAME}}|${GITHUB_USERNAME}|g" \
     "${SCRIPT_DIR}/podcast-ad-cutter.container.template" \
     > "${STAGING}/podcast-ad-cutter.container"
 
-# Tailscale Quadlet unit: replace {{TAILSCALE_HOSTNAME}}
-sed "s|{{TAILSCALE_HOSTNAME}}|${TAILSCALE_HOSTNAME}|g" \
+# Tailscale Quadlet unit: replace {{HOSTNAME}}
+sed "s|{{HOSTNAME}}|${HOSTNAME}|g" \
     "${SCRIPT_DIR}/tailscale.container.template" \
     > "${STAGING}/tailscale.container"
 
@@ -94,7 +94,7 @@ cp "${PROJECT_ROOT}/config.yaml" "${STAGING}/config.yaml"
 # Render butane template: substitute ${VAR} placeholders.
 # The explicit variable list prevents envsubst from corrupting other $ chars.
 BUTANE_VARS='${SSH_PUBLIC_KEY}${GITHUB_USERNAME}${GHCR_TOKEN}'\
-'${TAILSCALE_AUTH_KEY}'\
+'${TAILSCALE_AUTH_KEY}${HOSTNAME}'\
 '${ANTHROPIC_API_KEY}${OPENAI_API_KEY}${GROQ_API_KEY}'\
 '${OPENROUTER_API_KEY}${GEMINI_API_KEY}'\
 '${AWS_ACCESS_KEY_ID}${AWS_SECRET_ACCESS_KEY}${AWS_REGION_NAME}'
@@ -105,7 +105,8 @@ envsubst "$BUTANE_VARS" \
 
 # ── Render podcast-ad-cutter.container NFS placeholders ───────────────────────
 if [[ -n "${NFS_SHARE:-}" ]]; then
-    NFS_MOUNT_PATH="${NFS_MOUNT_PATH:-/mnt/podcast-output}"
+    NFS_MOUNT_FOLDER="${NFS_MOUNT_FOLDER:-podcasts}"
+    NFS_MOUNT_PATH="/var/mnt/${NFS_MOUNT_FOLDER}"
     NFS_UNIT_NAME=$(systemd-escape --path --suffix=mount "${NFS_MOUNT_PATH}")
 
     echo "    NFS_SHARE=${NFS_SHARE} → ${NFS_UNIT_NAME}"
@@ -120,9 +121,16 @@ if [[ -n "${NFS_SHARE:-}" ]]; then
     NFS_DIR_YAML="    - path: ${NFS_MOUNT_PATH}\n      mode: 0755"
     sed -i "s|    # <<<NFS_DIRECTORIES>>>|${NFS_DIR_YAML}|" "${STAGING}/butane.yaml"
 
-    # Inject NFS unit into butane.yaml (replace marker line)
-    NFS_UNIT_YAML="    - name: ${NFS_UNIT_NAME}\n      enabled: true\n      contents:\n        local: ${NFS_UNIT_NAME}"
-    sed -i "s|    # <<<NFS_UNITS>>>|${NFS_UNIT_YAML}|" "${STAGING}/butane.yaml"
+    # Inject NFS unit into butane.yaml with inline unit content
+    # (butane requires systemd.units[].contents to be a plain string, not a local: map)
+    NFS_UNIT_CHUNK="${STAGING}/.nfs-unit-chunk.yaml"
+    printf '    - name: %s\n      enabled: true\n      contents: |\n' "${NFS_UNIT_NAME}" \
+        > "${NFS_UNIT_CHUNK}"
+    sed 's/^/        /' "${STAGING}/${NFS_UNIT_NAME}" >> "${NFS_UNIT_CHUNK}"
+    awk -v chunk="${NFS_UNIT_CHUNK}" \
+        '/    # <<<NFS_UNITS>>>/ { while ((getline line < chunk) > 0) print line; next } { print }' \
+        "${STAGING}/butane.yaml" > "${STAGING}/butane.yaml.tmp"
+    mv "${STAGING}/butane.yaml.tmp" "${STAGING}/butane.yaml"
 
     # Podcast-ad-cutter container: NFS dependency and host bind mount
     OUTPUT_VOLUME_LINE="Volume=${NFS_MOUNT_PATH}:/app/output:z"
@@ -184,4 +192,4 @@ echo "  systemctl status podcast-ad-cutter-first-boot.service"
 echo "  journalctl -u podcast-ad-cutter-first-boot.service"
 echo ""
 echo "  Tailscale:  After first boot, enable SSH in your tailnet ACLs"
-echo "              Then: ssh core@${TAILSCALE_HOSTNAME}.<tailnet-name>.ts.net"
+echo "              Then: ssh core@${HOSTNAME}.<tailnet-name>.ts.net"

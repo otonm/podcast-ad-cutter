@@ -45,7 +45,7 @@ do
     if podman secret exists "$secret_name" 2>/dev/null; then
         echo "==> Secret '$secret_name' already exists — skipping"
     else
-        printf '%s' "${!var_name:-}" | podman secret create "$secret_name" -
+        printf '%s' "${!var_name:-unused}" | podman secret create "$secret_name" -
         echo "==> Created secret: $secret_name"
     fi
 done
@@ -57,10 +57,6 @@ podman pull "ghcr.io/${GITHUB_USERNAME}/podcast-ad-cutter:latest"
 # ── 4. Reload systemd so Quadlet generates podcast-ad-cutter.service ──────────
 echo "==> Running systemctl daemon-reload (Quadlet generator)"
 systemctl daemon-reload
-
-# ── 4b. Enable and start Tailscale ────────────────────────────────────────────
-echo "==> Enabling tailscale.service"
-systemctl enable --now tailscale.service
 
 # ── 5. Start the web UI service ───────────────────────────────────────────────
 # daemon-reload causes Quadlet to generate podcast-ad-cutter.service, but systemd

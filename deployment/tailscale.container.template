@@ -4,7 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Container]
-Image=tailscale/tailscale:latest
+Image=docker.io/tailscale/tailscale:latest
 ContainerName=tailscale
 AutoUpdate=registry
 # Share host network namespace so CoreOS host joins the tailnet
@@ -14,7 +14,7 @@ Volume=/var/lib/tailscale:/var/lib/tailscale:z
 # Userspace networking — no NET_ADMIN or /dev/net/tun required
 Environment=TS_USERSPACE=true
 Environment=TS_STATE_DIR=/var/lib/tailscale
-Environment=TS_HOSTNAME={{TAILSCALE_HOSTNAME}}
+Environment=TS_HOSTNAME={{HOSTNAME}}
 # --ssh: Tailscale manages SSH (enable in tailnet ACLs after first boot)
 Environment=TS_EXTRA_ARGS=--ssh
 Secret=tailscale_auth_key,type=env,target=TS_AUTHKEY

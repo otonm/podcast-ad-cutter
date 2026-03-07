@@ -43,13 +43,20 @@ storage:
           AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
           AWS_REGION_NAME=${AWS_REGION_NAME}
 
+    # System hostname — matches the Tailscale node name
+    - path: /etc/hostname
+      mode: 0644
+      contents:
+        inline: |
+          ${HOSTNAME}
+
     # Quadlet container unit ({{GITHUB_USERNAME}} already substituted by generate.sh)
     - path: /etc/containers/systemd/podcast-ad-cutter.container
       mode: 0644
       contents:
         local: podcast-ad-cutter.container
 
-    # Tailscale Quadlet container unit ({{TAILSCALE_HOSTNAME}} substituted by generate.sh)
+    # Tailscale Quadlet container unit ({{HOSTNAME}} substituted by generate.sh)
     - path: /etc/containers/systemd/tailscale.container
       mode: 0644
       contents:

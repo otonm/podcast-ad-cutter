@@ -44,7 +44,7 @@ All variables come from `deployment/env.example`:
 | `GHCR_TOKEN` | No | GitHub PAT with `read:packages`. Leave blank for public images. |
 | `SSH_PUBLIC_KEY` | Yes | Full public key string for the `core` user (e.g. `ssh-ed25519 AAAA... user@host`) |
 | `TAILSCALE_AUTH_KEY` | Yes | Auth key from the Tailscale admin console |
-| `TAILSCALE_HOSTNAME` | Yes | Hostname this node appears as in the Tailscale dashboard |
+| `HOSTNAME` | Yes | Hostname for both the CoreOS host (`/etc/hostname`) and the Tailscale node |
 | `OPENAI_API_KEY` | No | Required if using OpenAI models |
 | `GROQ_API_KEY` | No | Required if using Groq models |
 | `OPENROUTER_API_KEY` | No | Required if using OpenRouter models |
@@ -54,7 +54,7 @@ All variables come from `deployment/env.example`:
 | `AWS_SECRET_ACCESS_KEY` | No | Required for AWS Bedrock |
 | `AWS_REGION_NAME` | No | AWS region for Bedrock (default: `us-east-1`) |
 | `NFS_SHARE` | No | NFS share in `server:/export/path` format. Leave blank to use a named Podman volume. |
-| `NFS_MOUNT_PATH` | No | Mount point on the CoreOS host (default: `/mnt/podcast-output`). Only used when `NFS_SHARE` is set. |
+| `NFS_MOUNT_FOLDER` | No | Folder name under `/var/mnt/` (default: `podcasts`). Only used when `NFS_SHARE` is set. |
 
 Fill in at least the required variables and one or more LLM API keys.
 
@@ -158,7 +158,7 @@ By default, processed episodes are stored in a named Podman volume on the CoreOS
 ```bash
 # In deployment/env:
 NFS_SHARE=192.168.1.10:/exports/podcasts
-NFS_MOUNT_PATH=/mnt/podcast-output
+NFS_MOUNT_FOLDER=podcasts
 
 # Regenerate ignition.json
 ./deployment/generate.sh

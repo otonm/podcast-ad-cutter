@@ -40,7 +40,8 @@ Secret=aws_region_name,type=env,target=AWS_REGION_NAME
 Exec=--host 0.0.0.0 --config /etc/podcast-ad-cutter/config.yaml
 
 [Service]
-# exec: persistent service — restarts automatically if the process exits
-Type=exec
 Restart=on-failure
 RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
