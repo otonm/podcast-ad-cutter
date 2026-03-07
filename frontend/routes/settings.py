@@ -21,11 +21,18 @@ def _settings_context(
     cfg: AppConfig | None,
     *,
     error: str | None,
+    raw_prompts: dict[str, str] | None = None,
 ) -> dict[str, object]:
+    if raw_prompts is None:
+        try:
+            raw_prompts = config_editor.get_raw_prompts()
+        except Exception:
+            raw_prompts = {"ad_detection": "", "topic_extraction": ""}
     return {
         "cfg": cfg,
         "providers": sorted(SUPPORTED_PROVIDERS),
         "error": error,
+        "raw_prompts": raw_prompts,
     }
 
 
@@ -48,11 +55,18 @@ async def save_settings(
     interpretation_provider: Annotated[str, Form()],
     interpretation_model: Annotated[str, Form()],
     min_confidence: Annotated[float, Form()],
+    ad_detection_prompt: Annotated[str, Form()],
+    topic_extraction_prompt: Annotated[str, Form()],
     verbose_log: Annotated[str | None, Form()] = None,
+    base_url: Annotated[str, Form()] = "",
+    max_episodes_per_feed: Annotated[str, Form()] = "",
 ) -> HTMLResponse:
     """Validate and save settings. Returns empty on success (collapses accordion)."""
     cfg: AppConfig | None = None
     error: str | None = None
+
+    base_url_value: str | None = base_url.strip() or None
+    max_eps_value: int | None = int(max_episodes_per_feed.strip()) if max_episodes_per_feed.strip() else None
 
     try:
         await asyncio.to_thread(
@@ -63,13 +77,16 @@ async def save_settings(
             interpretation_model=interpretation_model,
             min_confidence=min_confidence,
             verbose_log=verbose_log is not None,
+            base_url=base_url_value,
+            max_episodes_per_feed=max_eps_value,
+            ad_detection_prompt=ad_detection_prompt,
+            topic_extraction_prompt=topic_extraction_prompt,
         )
         validated = await asyncio.to_thread(load_config, get_config_path())
         config_cache.set_config(validated)
         _debug = verbose_log is not None
         for _name in ("pipeline", "frontend", "config"):
             logging.getLogger(_name).setLevel(logging.DEBUG if _debug else logging.NOTSET)
-        # Return empty — HTMX clears #settings-accordion, collapsing the panel.
         return HTMLResponse("")
     except Exception as exc:
         logger.warning(f"Settings save failed: {exc}")
@@ -79,8 +96,9 @@ async def save_settings(
         except RuntimeError:
             cfg = None
 
+    raw_prompts = {"ad_detection": ad_detection_prompt, "topic_extraction": topic_extraction_prompt}
     return templates.TemplateResponse(
         request=request,
         name="partials/settings_form.html",
-        context=_settings_context(cfg, error=error),
+        context=_settings_context(cfg, error=error, raw_prompts=raw_prompts),
     )

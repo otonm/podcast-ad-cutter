@@ -10,7 +10,7 @@ from pipeline.exceptions import ConfigError
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_AD_DETECTION_BEHAVIOR: str = (
+DEFAULT_AD_DETECTION_PROMPT: str = (
     "Identify advertisements in this podcast transcript segment.\n"
     "An ad is any span where the host or another person or persons"
     " promote a product, service, or sponsor.\n"
@@ -24,7 +24,7 @@ _AD_DETECTION_JSON_SUFFIX: str = (
     "Return [] if no ads are found."
 )
 
-_DEFAULT_TOPIC_EXTRACTION_BEHAVIOR: str = (
+DEFAULT_TOPIC_EXTRACTION_PROMPT: str = (
     "Analyze the opening of this podcast transcript."
 )
 
@@ -138,8 +138,8 @@ class RetryConfig(BaseModel, frozen=True):
 class PromptsConfig(BaseModel, frozen=True):
     """Configurable system prompts for LLM stages."""
 
-    ad_detection: str = Field(default=_DEFAULT_AD_DETECTION_BEHAVIOR, validate_default=True)
-    topic_extraction: str = Field(default=_DEFAULT_TOPIC_EXTRACTION_BEHAVIOR, validate_default=True)
+    ad_detection: str = Field(default=DEFAULT_AD_DETECTION_PROMPT, validate_default=True)
+    topic_extraction: str = Field(default=DEFAULT_TOPIC_EXTRACTION_PROMPT, validate_default=True)
 
     @field_validator("ad_detection", mode="after")
     @classmethod

@@ -9,6 +9,8 @@ from typing import cast
 
 import yaml
 
+from config.config_loader import DEFAULT_AD_DETECTION_PROMPT, DEFAULT_TOPIC_EXTRACTION_PROMPT
+
 # Default config path — overridden by web.py at startup.
 _config_path: Path = Path("config.yaml")
 
@@ -97,6 +99,17 @@ def reorder_feeds(names: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def get_raw_prompts() -> dict[str, str]:
+    """Return the raw prompt strings from config.yaml (without auto-appended JSON suffixes)."""
+    data = _load()
+    raw_p = data.get("prompts") or {}
+    prompts = cast("dict[str, str]", raw_p)
+    return {
+        "ad_detection": prompts.get("ad_detection", DEFAULT_AD_DETECTION_PROMPT),
+        "topic_extraction": prompts.get("topic_extraction", DEFAULT_TOPIC_EXTRACTION_PROMPT),
+    }
+
+
 def update_settings(
     *,
     transcription_provider: str,
@@ -105,8 +118,12 @@ def update_settings(
     interpretation_model: str,
     min_confidence: float,
     verbose_log: bool,
+    base_url: str | None,
+    max_episodes_per_feed: int | None,
+    ad_detection_prompt: str,
+    topic_extraction_prompt: str,
 ) -> None:
-    """Update model and confidence settings in config.yaml."""
+    """Update model, confidence, publishing, and prompt settings in config.yaml."""
     data = _load()
 
     raw_t = data.get("transcription")
@@ -130,6 +147,16 @@ def update_settings(
     logging_cfg: dict[str, object] = cast("dict[str, object]", raw_l) if raw_l else {}
     logging_cfg["level"] = "DEBUG" if verbose_log else "INFO"
     data["logging"] = logging_cfg
+
+    publishing: dict[str, object] = cast("dict[str, object]", data.get("publishing") or {})
+    publishing["base_url"] = base_url
+    publishing["max_episodes_per_feed"] = max_episodes_per_feed
+    data["publishing"] = publishing
+
+    prompts: dict[str, object] = cast("dict[str, object]", data.get("prompts") or {})
+    prompts["ad_detection"] = ad_detection_prompt
+    prompts["topic_extraction"] = topic_extraction_prompt
+    data["prompts"] = prompts
 
     _save(data)
 
