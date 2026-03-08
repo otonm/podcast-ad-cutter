@@ -7,8 +7,8 @@ import asyncio
 import logging
 import time
 
-from frontend import config_cache, sse, state
-from pipeline.runner import run_pipeline as _run_pipeline
+from frontend import state
+from frontend.pipeline_executor import start_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -84,29 +84,5 @@ async def _scheduler_loop(interval_minutes: int) -> None:
 
 
 async def _fire_pipeline() -> None:
-    """Run the pipeline for all feeds (mirrors pipeline.py _run_pipeline_task)."""
-    loop = asyncio.get_running_loop()
-    sse.attach_handler(loop)
-
-    state.set_running(True)
-    task = asyncio.create_task(_run_pipeline_task())
-    state.set_task(task)
-
-
-async def _run_pipeline_task() -> None:
-    """Background task: run pipeline then signal SSE done."""
-    try:
-        cfg = config_cache.get_config()
-        await _run_pipeline(cfg, dry_run=False)
-    except asyncio.CancelledError:
-        logger.info("Scheduler-fired pipeline cancelled")
-        raise
-    except Exception:
-        logger.exception("Scheduler-fired pipeline failed")
-    finally:
-        state.set_running(False)
-        state.set_task(None)
-        queue = sse._active_queue  # noqa: SLF001
-        if queue is not None:
-            queue.put_nowait(None)
-        sse.detach_handler()
+    """Start the pipeline via the shared executor (same path as clicking Run)."""
+    await start_pipeline(dry_run=False)

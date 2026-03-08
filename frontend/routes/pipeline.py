@@ -10,14 +10,13 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from sse_starlette import EventSourceResponse
 
-from frontend import config_cache, scheduler, sse, state
+from frontend import scheduler, sse, state
 from frontend.app import templates
+from frontend.pipeline_executor import start_pipeline
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/pipeline")
-
-_active_queue: asyncio.Queue[str | None] | None = None
 
 
 @router.post("/run", response_class=HTMLResponse)
@@ -31,17 +30,12 @@ async def run_pipeline(
             '<p class="text-yellow-700 text-sm">⚠ Pipeline is already running.</p>'
         )
 
-    global _active_queue
-    loop = asyncio.get_running_loop()
-    _active_queue = sse.attach_handler(loop)
-
-    state.set_running(True)
-    task = asyncio.create_task(_run_pipeline_task(dry_run))
-    state.set_task(task)
-
     sched_running = scheduler.is_running()
     if sched_running:
         scheduler.reset()
+
+    await start_pipeline(dry_run=dry_run)
+
     return templates.TemplateResponse(
         request=request,
         name="partials/progress.html",
@@ -53,27 +47,6 @@ async def run_pipeline(
             "oob_swap": sched_running,
         },
     )
-
-
-async def _run_pipeline_task(dry_run: bool) -> None:
-    """Background task: run the pipeline then enqueue None sentinel."""
-    from pipeline.runner import run_pipeline as _run_pipeline
-
-    try:
-        cfg = config_cache.get_config()
-        await _run_pipeline(cfg, dry_run=dry_run)
-    except asyncio.CancelledError:
-        logger.info("Pipeline cancelled by user")
-        raise
-    except Exception:
-        logger.exception("Pipeline failed")
-    finally:
-        state.set_running(False)
-        state.set_task(None)
-        queue = sse._active_queue  # noqa: SLF001
-        if queue is not None:
-            queue.put_nowait(None)
-        sse.detach_handler()
 
 
 @router.post("/stop", response_class=HTMLResponse)
@@ -106,7 +79,7 @@ async def pipeline_events(request: Request) -> EventSourceResponse:
     """SSE endpoint: stream log lines from the active pipeline run."""
 
     async def _generator() -> AsyncGenerator[dict[str, str], None]:
-        queue = _active_queue
+        queue = sse.get_active_queue()
         if queue is None:
             yield {"event": "done", "data": ""}
             return
@@ -114,6 +87,40 @@ async def pipeline_events(request: Request) -> EventSourceResponse:
             if await request.is_disconnected():
                 break
             yield event
+
+    return EventSourceResponse(_generator(), send_timeout=60)
+
+
+@router.get("/progress", response_class=HTMLResponse)
+async def pipeline_progress(request: Request) -> HTMLResponse:
+    """Return the progress panel partial for browser injection on scheduler-triggered runs."""
+    return templates.TemplateResponse(
+        request=request,
+        name="partials/progress.html",
+        context={"oob_swap": False},
+    )
+
+
+@router.get("/status-events")
+async def pipeline_status_events(request: Request) -> EventSourceResponse:
+    """Stream pipeline state-change events (started/done) to the browser."""
+
+    async def _generator() -> AsyncGenerator[dict[str, str], None]:
+        q = sse.subscribe_status()
+        try:
+            if state.is_running():
+                yield {"event": "started", "data": ""}
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=15.0)
+                    if event is not None:
+                        yield {"event": event, "data": ""}
+                except TimeoutError:
+                    yield {"event": "ping", "data": ""}
+        finally:
+            sse.unsubscribe_status(q)
 
     return EventSourceResponse(_generator(), send_timeout=60)
 

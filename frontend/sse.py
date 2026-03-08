@@ -15,6 +15,7 @@ return, which closes the SSE stream. The browser then fires a 'done' event.
 """
 
 import asyncio
+import contextlib
 import logging
 import threading
 from collections.abc import AsyncGenerator
@@ -22,6 +23,37 @@ from collections.abc import AsyncGenerator
 # Module-level queue — set at run start, cleared at run end.
 _active_queue: asyncio.Queue[str | None] | None = None
 _active_handler: logging.Handler | None = None
+_status_subscribers: list[asyncio.Queue[str | None]] = []
+
+
+def get_active_queue() -> asyncio.Queue[str | None] | None:
+    """Return the active log queue, or None if no pipeline is running."""
+    return _active_queue
+
+
+def subscribe_status() -> asyncio.Queue[str | None]:
+    """Create and register a per-connection status notification queue."""
+    q: asyncio.Queue[str | None] = asyncio.Queue()
+    _status_subscribers.append(q)
+    return q
+
+
+def unsubscribe_status(q: asyncio.Queue[str | None]) -> None:
+    """Remove a status subscriber queue (called on disconnect)."""
+    with contextlib.suppress(ValueError):
+        _status_subscribers.remove(q)
+
+
+def notify_started() -> None:
+    """Broadcast 'started' to all /status-events subscribers."""
+    for q in _status_subscribers:
+        q.put_nowait("started")
+
+
+def notify_done() -> None:
+    """Broadcast 'done' to all /status-events subscribers."""
+    for q in _status_subscribers:
+        q.put_nowait("done")
 
 
 class QueueLogHandler(logging.Handler):

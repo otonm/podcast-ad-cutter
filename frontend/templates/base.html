@@ -33,5 +33,18 @@
     {% block content %}{% endblock %}
   </main>
 
+
+<script>
+(function () {
+  var es = new EventSource("/pipeline/status-events");
+  es.addEventListener("started", function () {
+    var ps = document.getElementById("progress-section");
+    if (ps && !ps.querySelector("#log-output")) {
+      htmx.ajax("GET", "/pipeline/progress", {target: "#progress-section", swap: "innerHTML"});
+    }
+  });
+  // "done" UI teardown is handled by progress.html's own /pipeline/events EventSource
+})();
+</script>
 </body>
 </html>
