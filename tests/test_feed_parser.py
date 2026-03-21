@@ -711,3 +711,98 @@ def test_episode_image_url_none_when_absent() -> None:
     ep = parser._parse_episode(item)
     assert ep is not None
     assert ep.image_url is None
+
+
+# ---------------------------------------------------------------------------
+# Model field defaults — new fields (Task 1)
+# ---------------------------------------------------------------------------
+
+
+def test_episode_new_extended_fields_default_to_none() -> None:
+    """All 11 new Episode fields must default to None / False without errors."""
+    ep = Episode(guid="g1", url="https://example.com/ep.mp3")
+    assert ep.episode_type is None
+    assert ep.itunes_author is None
+    assert ep.itunes_subtitle is None
+    assert ep.itunes_summary is None
+    assert ep.content_encoded is None
+    assert ep.link is None
+    assert ep.author is None
+    assert ep.itunes_title is None
+    assert ep.episode_number is None
+    assert ep.season_number is None
+    assert ep.itunes_block is False
+
+
+def test_episode_new_extended_fields_accept_values() -> None:
+    """New Episode fields can be set to non-default values at construction time."""
+    ep = Episode(
+        guid="g2",
+        url="https://example.com/ep.mp3",
+        episode_type="trailer",
+        itunes_author="Pod Author",
+        itunes_subtitle="A short teaser",
+        itunes_summary="A long summary.",
+        content_encoded="<p>Rich HTML</p>",
+        link="https://example.com/ep2",
+        author="author@example.com (Pod Author)",
+        itunes_title="iTunes-Specific Title",
+        episode_number=7,
+        season_number=2,
+        itunes_block=True,
+    )
+    assert ep.episode_type == "trailer"
+    assert ep.itunes_author == "Pod Author"
+    assert ep.itunes_subtitle == "A short teaser"
+    assert ep.itunes_summary == "A long summary."
+    assert ep.content_encoded == "<p>Rich HTML</p>"
+    assert ep.link == "https://example.com/ep2"
+    assert ep.author == "author@example.com (Pod Author)"
+    assert ep.itunes_title == "iTunes-Specific Title"
+    assert ep.episode_number == 7
+    assert ep.season_number == 2
+    assert ep.itunes_block is True
+
+
+def test_parsed_feed_new_channel_fields_default_correctly() -> None:
+    """All 10 new ParsedFeed channel fields must default to None / False."""
+    pf = ParsedFeed(config_title="Pod", feed_url="https://example.com/feed.rss", title="Pod")
+    assert pf.itunes_type is None
+    assert pf.itunes_subtitle is None
+    assert pf.itunes_summary is None
+    assert pf.owner_name is None
+    assert pf.owner_email is None
+    assert pf.image_title is None
+    assert pf.image_link is None
+    assert pf.content_encoded is None
+    assert pf.itunes_new_feed_url is None
+    assert pf.itunes_complete is False
+
+
+def test_parsed_feed_new_channel_fields_accept_values() -> None:
+    """New ParsedFeed channel fields can be set to non-default values."""
+    pf = ParsedFeed(
+        config_title="Pod",
+        feed_url="https://example.com/feed.rss",
+        title="Pod",
+        itunes_type="serial",
+        itunes_subtitle="Short teaser",
+        itunes_summary="Long summary.",
+        owner_name="Jane Owner",
+        owner_email="jane@example.com",
+        image_title="Pod Cover",
+        image_link="https://example.com",
+        content_encoded="<p>HTML</p>",
+        itunes_new_feed_url="https://new.example.com/feed.rss",
+        itunes_complete=True,
+    )
+    assert pf.itunes_type == "serial"
+    assert pf.itunes_subtitle == "Short teaser"
+    assert pf.itunes_summary == "Long summary."
+    assert pf.owner_name == "Jane Owner"
+    assert pf.owner_email == "jane@example.com"
+    assert pf.image_title == "Pod Cover"
+    assert pf.image_link == "https://example.com"
+    assert pf.content_encoded == "<p>HTML</p>"
+    assert pf.itunes_new_feed_url == "https://new.example.com/feed.rss"
+    assert pf.itunes_complete is True

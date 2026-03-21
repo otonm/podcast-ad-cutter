@@ -25,6 +25,18 @@ class Episode:
     # Raw string (e.g. "01:23:45"); will be typed to a duration type in a future task.
     duration: str | None = None
     image_url: str | None = None  # episode-level artwork (<itunes:image href="..."/>)
+    # Extended episode metadata
+    episode_type: str | None = None  # itunes:episodeType — "full", "trailer", or "bonus"
+    itunes_author: str | None = None
+    itunes_subtitle: str | None = None
+    itunes_summary: str | None = None
+    content_encoded: str | None = None  # rich HTML from <content:encoded>
+    link: str | None = None  # episode permalink URL
+    author: str | None = None  # standard RSS author (email format, e.g. "email@host (Name)")
+    itunes_title: str | None = None  # iTunes-specific title; may differ from title
+    episode_number: int | None = None  # itunes:episode
+    season_number: int | None = None  # itunes:season
+    itunes_block: bool = False  # itunes:block — hides episode from Apple Podcasts
 
 
 @dataclass
@@ -59,6 +71,17 @@ class PublisherInput:
     explicit: bool | None = None
     pub_date: datetime = field(default_factory=lambda: datetime.now().astimezone())
     last_build_date: datetime = field(default_factory=lambda: datetime.now().astimezone())
+    # Extended channel metadata
+    itunes_type: str | None = None  # podcast type: "episodic" or "serial"
+    itunes_subtitle: str | None = None
+    itunes_summary: str | None = None
+    owner_name: str | None = None  # from itunes:owner/itunes:name
+    owner_email: str | None = None  # from itunes:owner/itunes:email
+    image_title: str | None = None  # from standard RSS <image><title>
+    image_link: str | None = None  # from standard RSS <image><link>
+    content_encoded: str | None = None
+    itunes_new_feed_url: str | None = None
+    itunes_complete: bool = False  # signals feed has no future episodes
 
 
 @dataclass
@@ -81,3 +104,14 @@ class ParsedFeed:
     # This differs from Episode.pub_date which stays None when the date is unknown.
     pub_date: datetime = field(default_factory=lambda: datetime.now().astimezone())
     last_build_date: datetime = field(default_factory=lambda: datetime.now().astimezone())
+    # Extended channel metadata
+    itunes_type: str | None = None  # podcast type: "episodic" or "serial"
+    itunes_subtitle: str | None = None
+    itunes_summary: str | None = None
+    owner_name: str | None = None  # from itunes:owner/itunes:name
+    owner_email: str | None = None  # from itunes:owner/itunes:email
+    image_title: str | None = None  # from standard RSS <image><title>
+    image_link: str | None = None  # from standard RSS <image><link>
+    content_encoded: str | None = None
+    itunes_new_feed_url: str | None = None
+    itunes_complete: bool = False  # signals feed has no future episodes

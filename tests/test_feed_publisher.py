@@ -453,3 +453,56 @@ def test_episode_url_strips_trailing_slash_from_base() -> None:
     pub_date = datetime(2026, 3, 21, tzinfo=UTC)
     url = episode_url("https://podcasts.example.com/", "my-feed", pub_date, "Ep", "mp3")
     assert url == "https://podcasts.example.com/my-feed/21.03.2026-ep.mp3"
+
+
+# ---------------------------------------------------------------------------
+# Tests: PublisherInput new channel fields (Task 1)
+# ---------------------------------------------------------------------------
+
+
+def test_publisher_input_new_channel_fields_default_correctly() -> None:
+    """All 10 new PublisherInput channel fields must default to None / False."""
+    feed = PublisherInput(
+        base_url="https://x.com",
+        title="Pod",
+        episodes=[],
+    )
+    assert feed.itunes_type is None
+    assert feed.itunes_subtitle is None
+    assert feed.itunes_summary is None
+    assert feed.owner_name is None
+    assert feed.owner_email is None
+    assert feed.image_title is None
+    assert feed.image_link is None
+    assert feed.content_encoded is None
+    assert feed.itunes_new_feed_url is None
+    assert feed.itunes_complete is False
+
+
+def test_publisher_input_new_channel_fields_accept_values() -> None:
+    """New PublisherInput channel fields can be set to non-default values."""
+    feed = PublisherInput(
+        base_url="https://x.com",
+        title="Pod",
+        episodes=[],
+        itunes_type="episodic",
+        itunes_subtitle="Short teaser",
+        itunes_summary="Long summary.",
+        owner_name="Jane Owner",
+        owner_email="jane@example.com",
+        image_title="Pod Cover",
+        image_link="https://example.com",
+        content_encoded="<p>HTML</p>",
+        itunes_new_feed_url="https://new.example.com/feed.rss",
+        itunes_complete=True,
+    )
+    assert feed.itunes_type == "episodic"
+    assert feed.itunes_subtitle == "Short teaser"
+    assert feed.itunes_summary == "Long summary."
+    assert feed.owner_name == "Jane Owner"
+    assert feed.owner_email == "jane@example.com"
+    assert feed.image_title == "Pod Cover"
+    assert feed.image_link == "https://example.com"
+    assert feed.content_encoded == "<p>HTML</p>"
+    assert feed.itunes_new_feed_url == "https://new.example.com/feed.rss"
+    assert feed.itunes_complete is True
