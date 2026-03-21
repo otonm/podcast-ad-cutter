@@ -1,0 +1,11 @@
+"""Custom exceptions for podcast-ad-cutter."""
+
+from __future__ import annotations
+
+
+class PodcastAdCutterError(Exception):
+    """Base exception for all podcast-ad-cutter errors."""
+
+
+class ConfigError(PodcastAdCutterError):
+    """Raised when configuration loading or validation fails."""
