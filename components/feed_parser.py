@@ -198,18 +198,7 @@ class FeedParser:
         guid_text = (guid_el.text or "").strip() if guid_el is not None else ""
         guid = guid_text or url  # fall back to URL when guid is absent or blank
 
-        pub_date: datetime | None = None
-        pub_date_str = item.findtext("pubDate")
-        if pub_date_str:
-            try:
-                pub_date = parsedate_to_datetime(pub_date_str)
-            except (TypeError, ValueError):
-                # TypeError: parsedate_tz returned None (unrecognised format)
-                # ValueError: date components out of range
-                pub_date = datetime.now().astimezone()
-                logger.debug(
-                    f"Could not parse pubDate {pub_date_str!r} — falling back to current local datetime"
-                )
+        pub_date = _parse_date(item.findtext("pubDate"))
 
         description_raw = item.findtext("description") or item.findtext(f"{{{_ITUNES}}}summary")
         description = description_raw.strip() or None if description_raw else None

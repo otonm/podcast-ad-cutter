@@ -34,7 +34,7 @@ def episodes() -> list[Episode]:
             guid="guid-2",
             url="https://example.com/ep2.mp3",
             title="Episode Two",
-            pub_date=None,
+            pub_date=datetime(2024, 1, 2, tzinfo=UTC),
         ),
     ]
 
@@ -52,7 +52,7 @@ async def test_save_episodes_inserts_rows(db_path: Path, episodes: list[Episode]
 
     assert len(rows) == 2
     assert rows[0] == ("My Podcast", "Episode One", "2024-01-01T00:00:00+00:00", "guid-1")
-    assert rows[1] == ("My Podcast", "Episode Two", None, "guid-2")
+    assert rows[1] == ("My Podcast", "Episode Two", "2024-01-02T00:00:00+00:00", "guid-2")
 
 
 async def test_duplicate_guid_is_ignored(db_path: Path, episodes: list[Episode]) -> None:

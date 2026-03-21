@@ -73,16 +73,15 @@ def test_episode_model_instantiation() -> None:
         guid="ep1",
         title="Episode 1",
         url="https://example.com/ep1.mp3",
-        pub_date=None,
     )
     assert ep.guid == "ep1"
     assert ep.title == "Episode 1"
     assert ep.url == "https://example.com/ep1.mp3"
-    assert ep.pub_date is None
+    assert isinstance(ep.pub_date, datetime)
 
 
 def test_parsed_feed_model_instantiation() -> None:
-    ep = Episode(guid="ep1", url="https://example.com/ep1.mp3", pub_date=None)
+    ep = Episode(guid="ep1", url="https://example.com/ep1.mp3")
     pf = ParsedFeed(
         config_title="Test Pod",
         feed_url="https://example.com/feed.rss",
@@ -149,8 +148,8 @@ def test_pub_date_parsed_to_datetime() -> None:
     assert episode.pub_date == datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)  # noqa: UP017 — datetime.UTC is Python 3.13+
 
 
-def test_pub_date_missing_is_none() -> None:
-    """When <pubDate> is absent, pub_date is None."""
+def test_pub_date_missing_falls_back_to_now() -> None:
+    """When <pubDate> is absent, pub_date is a datetime close to now."""
     parser = FeedParser()
     item = ET.fromstring(
         "<item>"
@@ -160,7 +159,7 @@ def test_pub_date_missing_is_none() -> None:
     )
     episode = parser._parse_episode(item)
     assert episode is not None
-    assert episode.pub_date is None
+    assert isinstance(episode.pub_date, datetime)
 
 
 # ---------------------------------------------------------------------------

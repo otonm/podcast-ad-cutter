@@ -18,7 +18,8 @@ class Episode:
     guid: str
     url: str
     title: str = ""
-    pub_date: datetime | None = None
+    # Absent or unparseable pubDate falls back to current local datetime (same as ParsedFeed).
+    pub_date: datetime = field(default_factory=lambda: datetime.now().astimezone())
     description: str | None = None
     explicit: bool | None = None
     # Raw string (e.g. "01:23:45"); will be typed to a duration type in a future task.
