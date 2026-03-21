@@ -6,9 +6,10 @@ import logging
 from typing import TYPE_CHECKING
 
 from components.feed_downloader import FeedDownloader
+from components.feed_parser import FeedParser, ParsedFeed
 
 if TYPE_CHECKING:
-    from config.config_loader import Config, FeedConfig
+    from config.config_loader import Config
 
 logger = logging.getLogger(__name__)
 
@@ -34,13 +35,14 @@ class Pipeline:
         self._config = config
         self._feed_name = feed_name
         self._feed_downloader = FeedDownloader(config)
+        self._feed_parser = FeedParser()
 
-    async def run(self) -> list[tuple[FeedConfig, str]]:
+    async def run(self) -> list[ParsedFeed]:
         """Execute the pipeline for the selected feeds.
 
         Returns:
-            List of ``(feed_config, xml_text)`` for every feed that was
-            downloaded successfully, in config order.
+            List of parsed feeds for every feed that was downloaded and
+            parsed successfully, in config order.
 
         Raises:
             ValueError: If ``feed_name`` was supplied but no feed with that
@@ -69,4 +71,4 @@ class Pipeline:
 
         results = await self._feed_downloader.download_all(selected)
         logger.info(f"Feed download complete: {len(results)} feed(s) retrieved")
-        return results
+        return self._feed_parser.parse_all(results)

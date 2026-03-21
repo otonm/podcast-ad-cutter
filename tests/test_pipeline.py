@@ -63,19 +63,45 @@ async def test_run_preserves_config_order() -> None:
     mock_dl.download_all.assert_called_once_with([feed_a, feed_b, feed_c])
 
 
-async def test_run_returns_downloader_result() -> None:
-    """Pipeline.run() must return exactly what download_all returns."""
+async def test_run_returns_parser_result() -> None:
+    """Pipeline.run() returns what FeedParser.parse_all() returns."""
     feed = make_feed("test")
-    expected = [(feed, "<rss/>")]
+    downloads = [(feed, "<rss/>")]
+    parsed = [MagicMock()]  # simulated list[ParsedFeed]
     config = make_config([feed])
 
-    with patch("components.pipeline.FeedDownloader") as mock_downloader_cls:
-        mock_dl = mock_downloader_cls.return_value
-        mock_dl.download_all = AsyncMock(return_value=expected)
+    with (
+        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
+        patch("components.pipeline.FeedParser") as mock_fp_cls,
+    ):
+        mock_dl = mock_dl_cls.return_value
+        mock_dl.download_all = AsyncMock(return_value=downloads)
+        mock_fp = mock_fp_cls.return_value
+        mock_fp.parse_all = MagicMock(return_value=parsed)
         pipeline = Pipeline(config)
         result = await pipeline.run()
 
-    assert result == expected
+    assert result == parsed
+
+
+async def test_run_calls_feed_parser() -> None:
+    """Pipeline.run() passes download results to FeedParser.parse_all."""
+    feed = make_feed("test")
+    downloads = [(feed, "<xml/>")]
+    config = make_config([feed])
+
+    with (
+        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
+        patch("components.pipeline.FeedParser") as mock_fp_cls,
+    ):
+        mock_dl = mock_dl_cls.return_value
+        mock_dl.download_all = AsyncMock(return_value=downloads)
+        mock_fp = mock_fp_cls.return_value
+        mock_fp.parse_all = MagicMock(return_value=[])
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    mock_fp.parse_all.assert_called_once_with(downloads)
 
 
 async def test_run_with_no_enabled_feeds() -> None:
