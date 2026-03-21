@@ -124,15 +124,15 @@ class _EpisodeExtras(TypedDict):
 
 def _strip_or_none(raw: str | None) -> str | None:
     """Return stripped text, or None when absent or whitespace-only."""
-    return raw.strip() or None if raw else None
+    return (raw.strip() or None) if raw else None
 
 
 def _parse_int_field(raw: str | None, field_name: str, episode_title: str) -> int | None:
     """Parse a text value as an integer, returning None when absent or non-numeric.
 
-    Logs a debug message when the value is present but cannot be converted.
+    Logs a debug message when the value is non-empty but cannot be converted to int.
     """
-    if raw is None:
+    if not raw or not raw.strip():
         return None
     try:
         return int(raw.strip())
@@ -355,8 +355,12 @@ class FeedParser:
             f"Episode '{title}': guid={guid!r}, pub_date={pub_date.isoformat()}"
         )
 
-        description_raw = item.findtext("description") or item.findtext(f"{{{_ITUNES}}}summary")
-        description = description_raw.strip() or None if description_raw else None
+        # Compute extended extras first so itunes:summary can serve as the description
+        # fallback without a second XML traversal of the same element.
+        ep_extras = _parse_episode_extras(item, title)
+
+        description_raw = item.findtext("description") or ep_extras["itunes_summary"]
+        description = (description_raw.strip() or None) if description_raw else None
 
         explicit = _parse_explicit(item.findtext(f"{{{_ITUNES}}}explicit"))
 
@@ -366,9 +370,6 @@ class FeedParser:
         itunes_img = item.find(f"{{{_ITUNES}}}image")
         image_href = itunes_img.get("href") if itunes_img is not None else None
         image_url = image_href.strip() or None if image_href else None
-
-        # Extended iTunes/content episode fields (extracted to keep statement count in check)
-        ep_extras = _parse_episode_extras(item, title)
 
         logger.debug(
             f"Episode '{title}': explicit={explicit!r}, duration={duration!r}, "
