@@ -89,3 +89,53 @@ async def test_episodes_table_has_image_url_column(db_path: Path) -> None:
     async with Database(db_path):
         pass
     assert "image_url" in await _column_names(db_path)
+
+
+async def test_migration_adds_new_columns_to_existing_schema(tmp_path: Path) -> None:
+    """Verify that opening an old-schema DB migrates it with all 11 new columns.
+
+    Simulates an existing database created before the schema extension by
+    building it with only the original 10 columns, then re-opening it through
+    the real Database class so the migration logic runs.
+    """
+    db_file = tmp_path / "legacy.db"
+
+    # Build an "old" database with only the original 10 columns.
+    old_schema = """
+    CREATE TABLE IF NOT EXISTS episodes (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        podcast     TEXT    NOT NULL,
+        title       TEXT    NOT NULL,
+        pubdate     TEXT,
+        guid        TEXT    NOT NULL UNIQUE,
+        url         TEXT    NOT NULL DEFAULT '',
+        description TEXT,
+        explicit    INTEGER,
+        duration    TEXT,
+        image_url   TEXT
+    )
+    """
+    async with aiosqlite.connect(db_file) as conn:
+        await conn.execute(old_schema)
+        await conn.commit()
+
+    # Re-open using the real Database class — migration must run.
+    async with Database(db_file):
+        pass
+
+    new_columns = {
+        "episode_type",
+        "itunes_author",
+        "itunes_subtitle",
+        "itunes_summary",
+        "content_encoded",
+        "link",
+        "author",
+        "itunes_title",
+        "episode_number",
+        "season_number",
+        "itunes_block",
+    }
+    found = await _column_names(db_file)
+    for col in new_columns:
+        assert col in found, f"Expected migrated column '{col}' not found in table"
