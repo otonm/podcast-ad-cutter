@@ -11,6 +11,24 @@ from models.feed import Episode, FeedParseInput, ParsedFeed
 
 logger = logging.getLogger(__name__)
 
+_ITUNES = "http://www.itunes.com/dtds/podcast-1.0.dtd"
+
+
+def _parse_explicit(text: str | None) -> bool | None:
+    """Normalise <itunes:explicit> text to bool or None.
+
+    Returns True for "yes"/"true", False for "no"/"false"/"clean",
+    and None for absent, blank, or any unrecognised value.
+    """
+    if not text or not text.strip():
+        return None
+    normalized = text.strip().lower()
+    if normalized in ("yes", "true"):
+        return True
+    if normalized in ("no", "false", "clean"):
+        return False
+    return None
+
 
 class FeedParser:
     """Stateless RSS/Atom XML parser. No constructor args."""
@@ -57,8 +75,11 @@ class FeedParser:
 
         title = (channel.findtext("title") or feed_input.config_title).strip()
 
+        # RSS feeds are newest-first by convention; stop as soon as we have N valid episodes.
         episodes: list[Episode] = []
         for item in channel.findall("item"):
+            if len(episodes) >= feed_input.episodes_to_keep:
+                break
             episode = self._parse_episode(item)
             if episode is None:
                 logger.debug(
@@ -66,9 +87,6 @@ class FeedParser:
                 )
             else:
                 episodes.append(episode)
-
-        # RSS feeds are newest-first by convention; take the first N.
-        episodes = episodes[: feed_input.episodes_to_keep]
 
         return ParsedFeed(
             config_title=feed_input.config_title,

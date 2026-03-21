@@ -6,7 +6,7 @@ import dataclasses
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
-from components.feed_parser import FeedParser
+from components.feed_parser import FeedParser, _parse_explicit
 from models.feed import Episode, FeedParseInput, ParsedFeed
 
 # ---------------------------------------------------------------------------
@@ -269,3 +269,40 @@ def test_parsed_feed_pub_dates_default_to_datetime() -> None:
     pf = ParsedFeed(config_title="Pod", feed_url="https://example.com/feed.rss", title="Pod")
     assert isinstance(pf.pub_date, datetime)
     assert isinstance(pf.last_build_date, datetime)
+
+
+# ---------------------------------------------------------------------------
+# _parse_explicit
+# ---------------------------------------------------------------------------
+
+
+def test_parse_explicit_yes() -> None:
+    assert _parse_explicit("yes") is True
+
+
+def test_parse_explicit_true() -> None:
+    assert _parse_explicit("true") is True
+
+
+def test_parse_explicit_no() -> None:
+    assert _parse_explicit("no") is False
+
+
+def test_parse_explicit_false() -> None:
+    assert _parse_explicit("false") is False
+
+
+def test_parse_explicit_clean() -> None:
+    assert _parse_explicit("clean") is False
+
+
+def test_parse_explicit_none() -> None:
+    assert _parse_explicit(None) is None
+
+
+def test_parse_explicit_blank() -> None:
+    assert _parse_explicit("   ") is None
+
+
+def test_parse_explicit_unknown_value() -> None:
+    assert _parse_explicit("maybe") is None
