@@ -7,15 +7,11 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
-from typing import Any
+
+from config.config_loader import Config, load_config
+from utils.exceptions import ConfigError
 
 logger = logging.getLogger(__name__)
-
-
-def load_config(_config_path: Path) -> dict[str, Any]:
-    """Load configuration from YAML file."""
-    # Stub function - to be implemented
-    return {}
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,8 +53,8 @@ async def main() -> None:
     args = parse_args()
 
     try:
-        load_config(args.config)
-    except Exception as exc:  # noqa: BLE001
+        cfg: Config = load_config(args.config)  # noqa: F841
+    except ConfigError as exc:
         sys.stderr.write(f"Failed to load config: {exc}\n")
         sys.exit(1)
 
