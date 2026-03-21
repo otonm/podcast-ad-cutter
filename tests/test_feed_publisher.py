@@ -40,7 +40,6 @@ def episodes(pub_date: datetime) -> list[Episode]:
             description="First episode",
             explicit=False,
             duration="01:00:00",
-            # New fields for Task 3 coverage
             episode_type="full",
             itunes_author="Test Author",
             itunes_subtitle="Episode subtitle",
@@ -76,7 +75,6 @@ def feed_input(episodes: list[Episode]) -> PublisherInput:
         image_url="https://mypodcast.com/cover.jpg",
         categories=["Technology", "Science"],
         explicit=False,
-        # New fields for Task 3 coverage
         itunes_type="episodic",
         itunes_subtitle="A test subtitle",
         itunes_summary="A test summary",
@@ -956,3 +954,31 @@ async def test_absent_new_episode_fields_not_written(tmp_path: Path, pub_date: d
     assert item.find(f"{{{_ITUNES}}}summary") is None
     assert item.find(f"{{{_ITUNES}}}block") is None
     assert item.find(f"{{{_CONTENT}}}encoded") is None
+
+
+async def test_episode_number_zero_is_written(tmp_path: Path, pub_date: datetime) -> None:
+    """episode_number=0 must be written — zero is a valid episode number."""
+    ep = Episode(
+        guid="guid-zero",
+        url="https://origin.com/ep.mp3",
+        title="Episode Zero",
+        pub_date=pub_date,
+        episode_number=0,
+    )
+    feed = PublisherInput(base_url="https://x.com", title="Pod", episodes=[ep])
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    item = channel.findall("item")[0]
+    assert item.findtext(f"{{{_ITUNES}}}episode") == "0"
+
+
+async def test_image_block_absent_when_image_url_none(tmp_path: Path) -> None:
+    """Standard RSS <image> block must not appear when image_url is None."""
+    feed = PublisherInput(base_url="https://x.com", title="Pod", episodes=[])
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    assert channel.find("image") is None

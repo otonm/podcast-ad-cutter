@@ -187,6 +187,15 @@ class FeedPublisher:
             if value:
                 _add_text(channel, tag, value)
 
+        # Standard RSS <image> block (url/title/link) — placed early per RSS convention.
+        if feed_input.image_url:
+            img_block = ET.SubElement(channel, "image")
+            _add_text(img_block, "url", feed_input.image_url)
+            if feed_input.image_title:
+                _add_text(img_block, "title", feed_input.image_title)
+            if feed_input.image_link:
+                _add_text(img_block, "link", feed_input.image_link)
+
         if feed_input.image_url:
             img = ET.SubElement(channel, f"{{{_ITUNES}}}image")
             img.set("href", feed_input.image_url)
@@ -199,7 +208,7 @@ class FeedPublisher:
         _add_text(channel, "pubDate", format_datetime(feed_input.pub_date))
         _add_text(channel, "lastBuildDate", format_datetime(feed_input.last_build_date))
 
-        # Delegate extended channel fields to keep this method within complexity limits.
+        # Delegate remaining extended channel fields to keep this method within complexity limits.
         self._add_channel_extended_fields(channel, feed_input)
 
         for episode in feed_input.episodes:
@@ -214,15 +223,6 @@ class FeedPublisher:
         Called by ``_build_xml`` to keep that method's complexity manageable.
         Each field is written only when it carries a non-empty value.
         """
-        # Standard RSS <image> block — reconstruct from image_url + optional title/link.
-        if feed_input.image_url:
-            img_block = ET.SubElement(channel, "image")
-            _add_text(img_block, "url", feed_input.image_url)
-            if feed_input.image_title:
-                _add_text(img_block, "title", feed_input.image_title)
-            if feed_input.image_link:
-                _add_text(img_block, "link", feed_input.image_link)
-
         # Flat optional iTunes channel fields driven by a lookup table.
         for tag, value in (
             (f"{{{_ITUNES}}}type", feed_input.itunes_type),
