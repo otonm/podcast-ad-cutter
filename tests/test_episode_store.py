@@ -218,3 +218,118 @@ async def test_get_episodes_for_feed_returns_image_url(
     ep2 = next(e for e in result if e.guid == "guid-2")
     assert ep1.image_url == "https://example.com/ep1-cover.jpg"
     assert ep2.image_url is None
+
+
+# ---------------------------------------------------------------------------
+# New-field round-trip tests
+# ---------------------------------------------------------------------------
+
+
+async def test_new_fields_round_trip_all_populated(db_path: Path) -> None:
+    """All 11 new fields survive a save/retrieve cycle with non-None values."""
+    ep = Episode(
+        guid="guid-ext-1",
+        url="https://example.com/ep-ext.mp3",
+        title="Extended Episode",
+        pub_date=datetime(2025, 6, 15, tzinfo=UTC),
+        episode_type="trailer",
+        itunes_author="Jane Doe",
+        itunes_subtitle="A brief subtitle",
+        itunes_summary="A longer summary paragraph.",
+        content_encoded="<p>Rich HTML content</p>",
+        link="https://example.com/episodes/1",
+        author="jane@example.com (Jane Doe)",
+        itunes_title="iTunes-Specific Title",
+        episode_number=7,
+        season_number=3,
+        itunes_block=True,
+    )
+    async with Database(db_path) as db:
+        store = EpisodeStore(db.conn)
+        await store.save_episodes("Ext Podcast", [ep])
+        result = await store.get_episodes_for_feed("Ext Podcast", limit=10)
+
+    assert len(result) == 1
+    got = result[0]
+    assert got.episode_type == "trailer"
+    assert got.itunes_author == "Jane Doe"
+    assert got.itunes_subtitle == "A brief subtitle"
+    assert got.itunes_summary == "A longer summary paragraph."
+    assert got.content_encoded == "<p>Rich HTML content</p>"
+    assert got.link == "https://example.com/episodes/1"
+    assert got.author == "jane@example.com (Jane Doe)"
+    assert got.itunes_title == "iTunes-Specific Title"
+    assert got.episode_number == 7
+    assert got.season_number == 3
+    assert got.itunes_block is True
+
+
+async def test_itunes_block_bool_round_trip(db_path: Path) -> None:
+    """itunes_block is stored as an integer and comes back as a proper bool."""
+    ep_true = Episode(
+        guid="block-true",
+        url="https://example.com/block-true.mp3",
+        itunes_block=True,
+    )
+    ep_false = Episode(
+        guid="block-false",
+        url="https://example.com/block-false.mp3",
+        itunes_block=False,
+    )
+    async with Database(db_path) as db:
+        store = EpisodeStore(db.conn)
+        await store.save_episodes("Block Podcast", [ep_true, ep_false])
+        result = await store.get_episodes_for_feed("Block Podcast", limit=10)
+
+    result_by_guid = {e.guid: e for e in result}
+    # Verify the Python type, not just truthiness
+    assert result_by_guid["block-true"].itunes_block is True
+    assert result_by_guid["block-false"].itunes_block is False
+
+
+async def test_episode_and_season_number_int_round_trip(db_path: Path) -> None:
+    """episode_number and season_number survive as integers end-to-end."""
+    ep = Episode(
+        guid="num-ep",
+        url="https://example.com/num.mp3",
+        episode_number=5,
+        season_number=2,
+    )
+    async with Database(db_path) as db:
+        store = EpisodeStore(db.conn)
+        await store.save_episodes("Num Podcast", [ep])
+        result = await store.get_episodes_for_feed("Num Podcast", limit=10)
+
+    assert len(result) == 1
+    got = result[0]
+    assert got.episode_number == 5
+    assert isinstance(got.episode_number, int)
+    assert got.season_number == 2
+    assert isinstance(got.season_number, int)
+
+
+async def test_new_fields_default_null_round_trip(db_path: Path) -> None:
+    """An episode with all new fields at their defaults comes back with None/False."""
+    ep = Episode(
+        guid="default-ep",
+        url="https://example.com/default.mp3",
+        # All 11 new fields intentionally left at their defaults
+    )
+    async with Database(db_path) as db:
+        store = EpisodeStore(db.conn)
+        await store.save_episodes("Default Podcast", [ep])
+        result = await store.get_episodes_for_feed("Default Podcast", limit=10)
+
+    assert len(result) == 1
+    got = result[0]
+    assert got.episode_type is None
+    assert got.itunes_author is None
+    assert got.itunes_subtitle is None
+    assert got.itunes_summary is None
+    assert got.content_encoded is None
+    assert got.link is None
+    assert got.author is None
+    assert got.itunes_title is None
+    assert got.episode_number is None
+    assert got.season_number is None
+    assert got.itunes_block is False
