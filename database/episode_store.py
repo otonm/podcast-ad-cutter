@@ -11,6 +11,33 @@ from models.feed import Episode
 if TYPE_CHECKING:
     import aiosqlite
 
+# Exact shape of rows returned by the SELECT in get_episodes_for_feed.
+# Column order: guid, url, title, pubdate, description, explicit, duration,
+# image_url, episode_type, itunes_author, itunes_subtitle, itunes_summary,
+# content_encoded, link, author, itunes_title, episode_number, season_number,
+# itunes_block — 19 fields total.
+type _EpisodeRow = tuple[
+    str,        # guid
+    str,        # url
+    str,        # title
+    str | None, # pubdate
+    str | None, # description
+    int | None, # explicit_int
+    str | None, # duration
+    str | None, # image_url
+    str | None, # episode_type
+    str | None, # itunes_author
+    str | None, # itunes_subtitle
+    str | None, # itunes_summary
+    str | None, # content_encoded
+    str | None, # link
+    str | None, # author
+    str | None, # itunes_title
+    int | None, # episode_number
+    int | None, # season_number
+    int,        # itunes_block
+]
+
 logger = logging.getLogger(__name__)
 
 
@@ -80,7 +107,7 @@ class EpisodeStore:
         await self._conn.commit()
         logger.info(
             f"Saved {len(episodes)} episode(s) for podcast '{podcast}' "
-            f"(url/description/explicit/duration/image_url included; duplicates ignored)"
+            f"(all fields included; duplicates ignored)"
         )
 
     async def get_episodes_for_feed(
@@ -135,7 +162,7 @@ class EpisodeStore:
         logger.info(f"Episode '{guid}': enclosure URL updated to {new_url!r}")
 
 
-def _row_to_episode(row: tuple[object, ...]) -> Episode:
+def _row_to_episode(row: _EpisodeRow) -> Episode:
     """Convert a database row to a :class:`~models.feed.Episode`.
 
     Column order must match the SELECT in :meth:`EpisodeStore.get_episodes_for_feed`:
@@ -176,35 +203,37 @@ def _row_to_episode(row: tuple[object, ...]) -> Episode:
         link,
         author,
         itunes_title,
-        episode_number_raw,
-        season_number_raw,
+        episode_number,
+        season_number,
         itunes_block_int,
     ) = row
 
-    pub_date = datetime.fromisoformat(str(pubdate)) if pubdate else datetime.now().astimezone()
+    # pubdate is stored as an ISO-8601 string; fall back to now() if missing.
+    pub_date = datetime.fromisoformat(pubdate) if pubdate else datetime.now().astimezone()
+    # explicit is stored as 0/1 integer; SQLite returns int | None directly.
     explicit: bool | None = None if explicit_int is None else bool(explicit_int)
 
     return Episode(
-        guid=str(guid),
-        url=str(url),
-        title=str(title),
+        guid=guid,
+        url=url,
+        title=title,
         pub_date=pub_date,
-        description=str(description) if description is not None else None,
+        description=description,
         explicit=explicit,
-        duration=str(duration) if duration is not None else None,
-        image_url=str(image_url) if image_url is not None else None,
-        # Extended episode metadata
-        episode_type=str(episode_type) if episode_type is not None else None,
-        itunes_author=str(itunes_author) if itunes_author is not None else None,
-        itunes_subtitle=str(itunes_subtitle) if itunes_subtitle is not None else None,
-        itunes_summary=str(itunes_summary) if itunes_summary is not None else None,
-        content_encoded=str(content_encoded) if content_encoded is not None else None,
-        link=str(link) if link is not None else None,
-        author=str(author) if author is not None else None,
-        itunes_title=str(itunes_title) if itunes_title is not None else None,
-        # Numeric fields: preserve None when absent; cast to int when present
-        episode_number=int(episode_number_raw) if episode_number_raw is not None else None,
-        season_number=int(season_number_raw) if season_number_raw is not None else None,
-        # Bool stored as integer; always present (NOT NULL DEFAULT 0)
+        duration=duration,
+        image_url=image_url,
+        # Extended episode metadata — SQLite returns str | None directly.
+        episode_type=episode_type,
+        itunes_author=itunes_author,
+        itunes_subtitle=itunes_subtitle,
+        itunes_summary=itunes_summary,
+        content_encoded=content_encoded,
+        link=link,
+        author=author,
+        itunes_title=itunes_title,
+        # Numeric fields — SQLite INTEGER returns int | None directly.
+        episode_number=episode_number,
+        season_number=season_number,
+        # Bool stored as 0/1 integer; always present (NOT NULL DEFAULT 0).
         itunes_block=bool(itunes_block_int),
     )

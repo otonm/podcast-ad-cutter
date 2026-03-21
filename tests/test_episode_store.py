@@ -55,7 +55,7 @@ async def test_save_episodes_inserts_rows(db_path: Path, episodes: list[Episode]
         cursor = await conn.execute(
             "SELECT podcast, title, pubdate, guid FROM episodes ORDER BY id"
         )
-        rows = await cursor.fetchall()
+        rows = list(await cursor.fetchall())
 
     assert len(rows) == 2
     assert rows[0] == ("My Podcast", "Episode One", "2024-01-01T00:00:00+00:00", "guid-1")
