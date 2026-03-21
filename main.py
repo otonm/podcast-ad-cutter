@@ -9,6 +9,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from components.pipeline import Pipeline
 from config.config_loader import Config, load_config
 from utils.exceptions import ConfigError
 
@@ -111,6 +112,9 @@ async def main() -> None:
         log_to_file=effective_log_to_file,
         log_dir=cfg.app.paths.log_dir,
     )
+
+    pipeline = Pipeline(cfg)
+    await pipeline.run()
 
 
 if __name__ == "__main__":

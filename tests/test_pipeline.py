@@ -1,0 +1,91 @@
+"""Tests for Pipeline — feed orchestration."""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from components.pipeline import Pipeline
+from config.config_loader import FeedConfig
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def make_feed(title: str, *, enabled: bool = True) -> FeedConfig:
+    return FeedConfig(
+        title=title,
+        url=f"https://example.com/{title}.rss",
+        enabled=enabled,
+        episodes_to_keep=10,
+    )
+
+
+def make_config(feeds: list[FeedConfig]) -> MagicMock:
+    cfg = MagicMock()
+    cfg.app.feeds = feeds
+    return cfg
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+async def test_run_passes_only_enabled_feeds() -> None:
+    """Disabled feeds must not be forwarded to the downloader."""
+    enabled = make_feed("enabled")
+    disabled = make_feed("disabled", enabled=False)
+    config = make_config([enabled, disabled])
+
+    with patch("components.pipeline.FeedDownloader") as mock_downloader_cls:
+        mock_dl = mock_downloader_cls.return_value
+        mock_dl.download_all = AsyncMock(return_value=[(enabled, "<xml/>")])
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    mock_dl.download_all.assert_called_once_with([enabled])
+
+
+async def test_run_preserves_config_order() -> None:
+    """Enabled feeds must be forwarded in the order they appear in config."""
+    feed_a, feed_b, feed_c = make_feed("a"), make_feed("b"), make_feed("c")
+    config = make_config([feed_a, feed_b, feed_c])
+
+    with patch("components.pipeline.FeedDownloader") as mock_downloader_cls:
+        mock_dl = mock_downloader_cls.return_value
+        mock_dl.download_all = AsyncMock(return_value=[])
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    mock_dl.download_all.assert_called_once_with([feed_a, feed_b, feed_c])
+
+
+async def test_run_returns_downloader_result() -> None:
+    """Pipeline.run() must return exactly what download_all returns."""
+    feed = make_feed("test")
+    expected = [(feed, "<rss/>")]
+    config = make_config([feed])
+
+    with patch("components.pipeline.FeedDownloader") as mock_downloader_cls:
+        mock_dl = mock_downloader_cls.return_value
+        mock_dl.download_all = AsyncMock(return_value=expected)
+        pipeline = Pipeline(config)
+        result = await pipeline.run()
+
+    assert result == expected
+
+
+async def test_run_with_no_enabled_feeds() -> None:
+    """When all feeds are disabled the downloader is called with an empty list."""
+    disabled = make_feed("disabled", enabled=False)
+    config = make_config([disabled])
+
+    with patch("components.pipeline.FeedDownloader") as mock_downloader_cls:
+        mock_dl = mock_downloader_cls.return_value
+        mock_dl.download_all = AsyncMock(return_value=[])
+        pipeline = Pipeline(config)
+        result = await pipeline.run()
+
+    mock_dl.download_all.assert_called_once_with([])
+    assert result == []
