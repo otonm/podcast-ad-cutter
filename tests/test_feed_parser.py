@@ -541,3 +541,115 @@ def test_feed_last_build_date_is_datetime_when_absent() -> None:
     result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=xml))
     assert result is not None
     assert isinstance(result.last_build_date, datetime)
+
+
+# ---------------------------------------------------------------------------
+# _parse_episode — new metadata fields
+# ---------------------------------------------------------------------------
+
+
+def test_episode_description_from_description_element() -> None:
+    parser = FeedParser()
+    item = ET.fromstring(
+        "<item><guid>ep1</guid>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="0"/>'
+        "<description>Episode description.</description>"
+        "</item>"
+    )
+    ep = parser._parse_episode(item)
+    assert ep is not None
+    assert ep.description == "Episode description."
+
+
+def test_episode_description_falls_back_to_itunes_summary() -> None:
+    parser = FeedParser()
+    item = ET.fromstring(
+        '<item xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">'
+        "<guid>ep1</guid>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="0"/>'
+        "<itunes:summary>iTunes episode summary.</itunes:summary>"
+        "</item>"
+    )
+    ep = parser._parse_episode(item)
+    assert ep is not None
+    assert ep.description == "iTunes episode summary."
+
+
+def test_episode_duration_parsed() -> None:
+    parser = FeedParser()
+    item = ET.fromstring(
+        '<item xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">'
+        "<guid>ep1</guid>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="0"/>'
+        "<itunes:duration>01:23:45</itunes:duration>"
+        "</item>"
+    )
+    ep = parser._parse_episode(item)
+    assert ep is not None
+    assert ep.duration == "01:23:45"
+
+
+def test_episode_duration_none_when_absent() -> None:
+    parser = FeedParser()
+    item = ET.fromstring(
+        "<item><guid>ep1</guid>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="0"/>'
+        "</item>"
+    )
+    ep = parser._parse_episode(item)
+    assert ep is not None
+    assert ep.duration is None
+
+
+def test_episode_duration_none_when_whitespace_only() -> None:
+    parser = FeedParser()
+    item = ET.fromstring(
+        '<item xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">'
+        "<guid>ep1</guid>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="0"/>'
+        "<itunes:duration>   </itunes:duration>"
+        "</item>"
+    )
+    ep = parser._parse_episode(item)
+    assert ep is not None
+    assert ep.duration is None
+
+
+def test_episode_explicit_true() -> None:
+    parser = FeedParser()
+    item = ET.fromstring(
+        '<item xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">'
+        "<guid>ep1</guid>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="0"/>'
+        "<itunes:explicit>yes</itunes:explicit>"
+        "</item>"
+    )
+    ep = parser._parse_episode(item)
+    assert ep is not None
+    assert ep.explicit is True
+
+
+def test_episode_explicit_false() -> None:
+    parser = FeedParser()
+    item = ET.fromstring(
+        '<item xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">'
+        "<guid>ep1</guid>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="0"/>'
+        "<itunes:explicit>no</itunes:explicit>"
+        "</item>"
+    )
+    ep = parser._parse_episode(item)
+    assert ep is not None
+    assert ep.explicit is False
+
+
+def test_episode_explicit_none_when_absent() -> None:
+    parser = FeedParser()
+    item = ET.fromstring(
+        "<item><guid>ep1</guid>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="0"/>'
+        "</item>"
+    )
+    ep = parser._parse_episode(item)
+    assert ep is not None
+    assert ep.explicit is None

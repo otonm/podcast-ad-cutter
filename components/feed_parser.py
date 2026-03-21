@@ -211,4 +211,20 @@ class FeedParser:
                     f"Could not parse pubDate {pub_date_str!r} — falling back to current local datetime"
                 )
 
-        return Episode(guid=guid, title=title, url=url, pub_date=pub_date)
+        description_raw = item.findtext("description") or item.findtext(f"{{{_ITUNES}}}summary")
+        description = description_raw.strip() or None if description_raw else None
+
+        explicit = _parse_explicit(item.findtext(f"{{{_ITUNES}}}explicit"))
+
+        raw_dur = item.findtext(f"{{{_ITUNES}}}duration")
+        duration = raw_dur.strip() if raw_dur and raw_dur.strip() else None
+
+        return Episode(
+            guid=guid,
+            title=title,
+            url=url,
+            pub_date=pub_date,
+            description=description,
+            explicit=explicit,
+            duration=duration,
+        )
