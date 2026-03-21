@@ -30,6 +30,25 @@ def _parse_explicit(text: str | None) -> bool | None:
     return None
 
 
+def _parse_categories(channel: ET.Element) -> list[str]:
+    """Collect iTunes category labels from a channel element.
+
+    Includes top-level <itunes:category> labels and one level of nested
+    sub-categories, matching the iTunes podcast spec.  Only direct children of
+    ``channel`` are examined so episode-level tags are never included.
+    """
+    cats: list[str] = []
+    for top_cat in channel.findall(f"{{{_ITUNES}}}category"):
+        label = top_cat.get("label")
+        if label:
+            cats.append(label)
+        for sub in top_cat.findall(f"{{{_ITUNES}}}category"):
+            sub_label = sub.get("label")
+            if sub_label:
+                cats.append(sub_label)
+    return cats
+
+
 def _parse_date(text: str | None) -> datetime:
     """Parse an RFC 2822 date string, falling back to the current local datetime.
 
@@ -97,6 +116,40 @@ class FeedParser:
 
         title = (channel.findtext("title") or feed_input.config_title).strip()
 
+        # Standard text fields — strip and convert empty string to None
+        description_raw = channel.findtext("description") or channel.findtext(f"{{{_ITUNES}}}summary")
+        description = description_raw.strip() or None if description_raw else None
+
+        link_raw = channel.findtext("link")
+        link = link_raw.strip() or None if link_raw else None
+
+        language_raw = channel.findtext("language")
+        language = language_raw.strip() or None if language_raw else None
+
+        copyright_raw = channel.findtext("copyright")
+        copyright_ = copyright_raw.strip() or None if copyright_raw else None
+
+        # Author: iTunes author preferred, managingEditor as fallback
+        author_raw = channel.findtext(f"{{{_ITUNES}}}author") or channel.findtext("managingEditor")
+        author = author_raw.strip() or None if author_raw else None
+
+        # Cover art: <image><url> preferred; iTunes image as fallback when
+        # <image> is absent OR when <image> is present but has no <url> child.
+        image_el = channel.find("image")
+        image_url_raw = image_el.findtext("url") if image_el is not None else None
+        image_url = image_url_raw.strip() or None if image_url_raw else None
+        if not image_url:
+            itunes_img = channel.find(f"{{{_ITUNES}}}image")
+            href = itunes_img.get("href") if itunes_img is not None else None
+            image_url = href.strip() or None if href else None
+
+        # Categories: top-level channel children + one sub-level (matches iTunes spec)
+        categories = _parse_categories(channel)
+
+        explicit = _parse_explicit(channel.findtext(f"{{{_ITUNES}}}explicit"))
+        pub_date = _parse_date(channel.findtext("pubDate"))
+        last_build_date = _parse_date(channel.findtext("lastBuildDate"))
+
         # RSS feeds are newest-first by convention; stop as soon as we have N valid episodes.
         episodes: list[Episode] = []
         for item in channel.findall("item"):
@@ -115,6 +168,16 @@ class FeedParser:
             feed_url=feed_input.feed_url,
             title=title,
             episodes=episodes,
+            description=description,
+            link=link,
+            language=language,
+            copyright=copyright_,
+            author=author,
+            image_url=image_url,
+            categories=categories,
+            explicit=explicit,
+            pub_date=pub_date,
+            last_build_date=last_build_date,
         )
 
     def _parse_episode(self, item: ET.Element) -> Episode | None:

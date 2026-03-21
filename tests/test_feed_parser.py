@@ -20,17 +20,37 @@ FEED_INPUT = FeedParseInput(
     xml_text="",  # overridden per test via dataclasses.replace()
 )
 
-# Minimal valid RSS 2.0 with 3 episodes
+# Valid RSS 2.0 with iTunes namespace and one representative value per new field
 VALID_XML = """\
 <?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0">
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
   <channel>
     <title>Test Pod</title>
+    <description>A great podcast about testing.</description>
+    <link>https://testpod.example.com</link>
+    <language>en</language>
+    <copyright>&#169; 2024 Test Pod</copyright>
+    <pubDate>Mon, 01 Jan 2024 12:00:00 +0000</pubDate>
+    <lastBuildDate>Tue, 02 Jan 2024 12:00:00 +0000</lastBuildDate>
+    <image>
+      <url>https://example.com/cover.jpg</url>
+      <title>Test Pod</title>
+      <link>https://testpod.example.com</link>
+    </image>
+    <itunes:author>Test Author</itunes:author>
+    <itunes:image href="https://example.com/itunes-cover.jpg"/>
+    <itunes:explicit>yes</itunes:explicit>
+    <itunes:category label="Technology">
+      <itunes:category label="Tech News"/>
+    </itunes:category>
     <item>
       <guid>ep1</guid>
       <title>Episode 1</title>
+      <description>Episode 1 description.</description>
       <enclosure url="https://example.com/ep1.mp3" type="audio/mpeg" length="1000"/>
       <pubDate>Mon, 01 Jan 2024 00:00:00 +0000</pubDate>
+      <itunes:duration>01:23:45</itunes:duration>
+      <itunes:explicit>no</itunes:explicit>
     </item>
     <item>
       <guid>ep2</guid>
@@ -332,3 +352,192 @@ def test_parse_date_empty_string_returns_datetime() -> None:
 def test_parse_date_invalid_string_returns_datetime() -> None:
     result = _parse_date("not a date at all")
     assert isinstance(result, datetime)
+
+
+# ---------------------------------------------------------------------------
+# _parse_one — channel metadata
+# ---------------------------------------------------------------------------
+
+
+def test_feed_description_from_description_element() -> None:
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert result.description == "A great podcast about testing."
+
+
+def test_feed_description_falls_back_to_itunes_summary() -> None:
+    parser = FeedParser()
+    xml = (
+        '<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">'
+        "<channel><title>Pod</title>"
+        "<itunes:summary>iTunes summary fallback.</itunes:summary>"
+        "</channel></rss>"
+    )
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=xml))
+    assert result is not None
+    assert result.description == "iTunes summary fallback."
+
+
+def test_feed_link() -> None:
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert result.link == "https://testpod.example.com"
+
+
+def test_feed_language() -> None:
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert result.language == "en"
+
+
+def test_feed_copyright() -> None:
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert result.copyright == "\u00a9 2024 Test Pod"
+
+
+def test_feed_author_from_itunes_author() -> None:
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert result.author == "Test Author"
+
+
+def test_feed_author_falls_back_to_managing_editor() -> None:
+    parser = FeedParser()
+    xml = (
+        '<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">'
+        "<channel><title>Pod</title>"
+        "<managingEditor>editor@example.com</managingEditor>"
+        "</channel></rss>"
+    )
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=xml))
+    assert result is not None
+    assert result.author == "editor@example.com"
+
+
+def test_feed_image_url_from_image_element() -> None:
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert result.image_url == "https://example.com/cover.jpg"
+
+
+def test_feed_image_url_falls_back_to_itunes_image_when_no_image_element() -> None:
+    parser = FeedParser()
+    xml = (
+        '<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">'
+        "<channel><title>Pod</title>"
+        '<itunes:image href="https://example.com/itunes.jpg"/>'
+        "</channel></rss>"
+    )
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=xml))
+    assert result is not None
+    assert result.image_url == "https://example.com/itunes.jpg"
+
+
+def test_feed_image_url_falls_back_to_itunes_image_when_url_child_missing() -> None:
+    parser = FeedParser()
+    xml = (
+        '<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">'
+        "<channel><title>Pod</title>"
+        "<image><title>No url child here</title></image>"
+        '<itunes:image href="https://example.com/itunes.jpg"/>'
+        "</channel></rss>"
+    )
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=xml))
+    assert result is not None
+    assert result.image_url == "https://example.com/itunes.jpg"
+
+
+def test_feed_categories_top_level() -> None:
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert "Technology" in result.categories
+
+
+def test_feed_categories_includes_subcategories() -> None:
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert "Tech News" in result.categories
+
+
+def test_feed_categories_exclude_episode_level_tags() -> None:
+    parser = FeedParser()
+    xml = (
+        '<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">'
+        "<channel><title>Pod</title>"
+        '<itunes:category label="FeedCat"/>'
+        "<item>"
+        "<guid>ep1</guid>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="0"/>'
+        '<itunes:category label="EpisodeCat"/>'
+        "</item>"
+        "</channel></rss>"
+    )
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=xml))
+    assert result is not None
+    assert "FeedCat" in result.categories
+    assert "EpisodeCat" not in result.categories
+
+
+def test_feed_explicit_true() -> None:
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert result.explicit is True
+
+
+def test_feed_explicit_false() -> None:
+    parser = FeedParser()
+    xml = (
+        '<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">'
+        "<channel><title>Pod</title><itunes:explicit>no</itunes:explicit></channel></rss>"
+    )
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=xml))
+    assert result is not None
+    assert result.explicit is False
+
+
+def test_feed_explicit_none_when_absent() -> None:
+    parser = FeedParser()
+    xml = "<rss version='2.0'><channel><title>Pod</title></channel></rss>"
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=xml))
+    assert result is not None
+    assert result.explicit is None
+
+
+def test_feed_pub_date_parsed() -> None:
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert result.pub_date == datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)  # noqa: UP017
+
+
+def test_feed_pub_date_is_datetime_when_absent() -> None:
+    parser = FeedParser()
+    xml = "<rss version='2.0'><channel><title>Pod</title></channel></rss>"
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=xml))
+    assert result is not None
+    assert isinstance(result.pub_date, datetime)
+
+
+def test_feed_last_build_date_parsed() -> None:
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert result.last_build_date == datetime(2024, 1, 2, 12, 0, 0, tzinfo=timezone.utc)  # noqa: UP017
+
+
+def test_feed_last_build_date_is_datetime_when_absent() -> None:
+    parser = FeedParser()
+    xml = "<rss version='2.0'><channel><title>Pod</title></channel></rss>"
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=xml))
+    assert result is not None
+    assert isinstance(result.last_build_date, datetime)
