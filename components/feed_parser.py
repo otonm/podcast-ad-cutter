@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-import xml.etree.ElementTree as ET  # noqa: F401 — used in _parse_episode and _parse_one (Task 2+)
+import xml.etree.ElementTree as ET
 from datetime import datetime
-from email.utils import parsedate_to_datetime  # noqa: F401 — used in _parse_episode (Task 2+)
+from email.utils import parsedate_to_datetime
 
 from pydantic import BaseModel
 

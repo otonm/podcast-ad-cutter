@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET  # noqa: F401 — used by _parse_episode tests (Tasks 2-4)
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone  # noqa: F401 — used by pub_date assertions (Tasks 3-5)
 
 import pytest  # noqa: F401 — used by later tests
 
-from components.feed_parser import Episode, FeedParser, ParsedFeed  # noqa: F401 — FeedParser used in Tasks 2-5
+from components.feed_parser import Episode, FeedParser, ParsedFeed
 from config.config_loader import FeedConfig
 
 # ---------------------------------------------------------------------------
