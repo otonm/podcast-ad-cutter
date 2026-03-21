@@ -5,8 +5,6 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
-import pytest  # noqa: F401 — used by later tests
-
 from components.feed_parser import Episode, FeedParser, ParsedFeed
 from config.config_loader import FeedConfig
 

@@ -20,7 +20,7 @@ class Episode(BaseModel):
     guid: str
     title: str = ""  # default "" if <title> absent — must be explicit so Pydantic does not raise
     url: str
-    pub_date: datetime | None
+    pub_date: datetime | None = None
 
 
 class ParsedFeed(BaseModel):
@@ -64,7 +64,7 @@ class FeedParser:
         Returns ``None`` if the XML is malformed or has no ``<channel>`` element.
         """
         try:
-            root = ET.fromstring(xml_text)
+            root = ET.fromstring(xml_text)  # noqa: S314 — feed XML is from configured trusted sources
         except ET.ParseError:
             logger.warning(f"Failed to parse XML for feed '{feed_config.title}'")
             return None

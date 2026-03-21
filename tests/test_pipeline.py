@@ -40,7 +40,10 @@ async def test_run_passes_only_enabled_feeds() -> None:
     disabled = make_feed("disabled", enabled=False)
     config = make_config([enabled, disabled])
 
-    with patch("components.pipeline.FeedDownloader") as mock_downloader_cls:
+    with (
+        patch("components.pipeline.FeedDownloader") as mock_downloader_cls,
+        patch("components.pipeline.FeedParser"),
+    ):
         mock_dl = mock_downloader_cls.return_value
         mock_dl.download_all = AsyncMock(return_value=[(enabled, "<xml/>")])
         pipeline = Pipeline(config)
@@ -54,7 +57,10 @@ async def test_run_preserves_config_order() -> None:
     feed_a, feed_b, feed_c = make_feed("a"), make_feed("b"), make_feed("c")
     config = make_config([feed_a, feed_b, feed_c])
 
-    with patch("components.pipeline.FeedDownloader") as mock_downloader_cls:
+    with (
+        patch("components.pipeline.FeedDownloader") as mock_downloader_cls,
+        patch("components.pipeline.FeedParser"),
+    ):
         mock_dl = mock_downloader_cls.return_value
         mock_dl.download_all = AsyncMock(return_value=[])
         pipeline = Pipeline(config)
