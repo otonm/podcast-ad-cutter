@@ -49,6 +49,21 @@ def _parse_categories(channel: ET.Element) -> list[str]:
     return cats
 
 
+def _resolve_text(element: ET.Element, primary: str, fallback: str, fallback_note: str) -> str | None:
+    """Return stripped text from ``primary`` tag, or ``fallback`` tag with a debug log.
+
+    Returns ``None`` when both tags are absent or contain only whitespace.
+    """
+    value = element.findtext(primary)
+    if value and value.strip():
+        return value.strip()
+    value = element.findtext(fallback)
+    if value and value.strip():
+        logger.debug(fallback_note)
+        return value.strip()
+    return None
+
+
 def _parse_date(text: str | None) -> datetime:
     """Parse an RFC 2822 date string, falling back to the current local datetime.
 
@@ -64,10 +79,12 @@ def _parse_date(text: str | None) -> datetime:
 
     """
     if not text or not text.strip():
+        logger.debug("Date field absent or blank — falling back to current local datetime")
         return datetime.now().astimezone()
     try:
         return parsedate_to_datetime(text)
     except (TypeError, ValueError):
+        logger.debug(f"Could not parse date {text!r} — falling back to current local datetime")
         return datetime.now().astimezone()
 
 
@@ -103,6 +120,7 @@ class FeedParser:
 
         Returns ``None`` if the XML is malformed or has no ``<channel>`` element.
         """
+        logger.debug(f"Parsing feed '{feed_input.config_title}'")
         try:
             root = ET.fromstring(feed_input.xml_text)  # noqa: S314 — feed XML is from configured trusted sources
         except ET.ParseError:
@@ -114,11 +132,18 @@ class FeedParser:
             logger.warning(f"No <channel> element in feed '{feed_input.config_title}'")
             return None
 
-        title = (channel.findtext("title") or feed_input.config_title).strip()
+        raw_title = channel.findtext("title")
+        if not raw_title:
+            logger.debug(
+                f"Feed '{feed_input.config_title}': no <title> element, using config title as fallback"
+            )
+        title = (raw_title or feed_input.config_title).strip()
 
         # Standard text fields — strip and convert empty string to None
-        description_raw = channel.findtext("description") or channel.findtext(f"{{{_ITUNES}}}summary")
-        description = description_raw.strip() or None if description_raw else None
+        description = _resolve_text(
+            channel, "description", f"{{{_ITUNES}}}summary",
+            f"Feed '{feed_input.config_title}': using <itunes:summary> for description",
+        )
 
         link_raw = channel.findtext("link")
         link = link_raw.strip() or None if link_raw else None
@@ -130,8 +155,10 @@ class FeedParser:
         copyright_ = copyright_raw.strip() or None if copyright_raw else None
 
         # Author: iTunes author preferred, managingEditor as fallback
-        author_raw = channel.findtext(f"{{{_ITUNES}}}author") or channel.findtext("managingEditor")
-        author = author_raw.strip() or None if author_raw else None
+        author = _resolve_text(
+            channel, f"{{{_ITUNES}}}author", "managingEditor",
+            f"Feed '{feed_input.config_title}': using <managingEditor> for author",
+        )
 
         # Cover art: <image><url> preferred; iTunes image as fallback when
         # <image> is absent OR when <image> is present but has no <url> child.
@@ -142,6 +169,8 @@ class FeedParser:
             itunes_img = channel.find(f"{{{_ITUNES}}}image")
             href = itunes_img.get("href") if itunes_img is not None else None
             image_url = href.strip() or None if href else None
+            if image_url:
+                logger.debug(f"Feed '{feed_input.config_title}': using <itunes:image> for cover art")
 
         # Categories: top-level channel children + one sub-level (matches iTunes spec)
         categories = _parse_categories(channel)
@@ -163,6 +192,10 @@ class FeedParser:
             else:
                 episodes.append(episode)
 
+        logger.debug(
+            f"Feed '{feed_input.config_title}' parsed: title={title!r}, "
+            f"episodes={len(episodes)}, author={author!r}, categories={categories}"
+        )
         return ParsedFeed(
             config_title=feed_input.config_title,
             feed_url=feed_input.feed_url,
@@ -197,8 +230,11 @@ class FeedParser:
         guid_el = item.find("guid")
         guid_text = (guid_el.text or "").strip() if guid_el is not None else ""
         guid = guid_text or url  # fall back to URL when guid is absent or blank
+        if not guid_text:
+            logger.debug(f"Episode '{title}': no <guid>, falling back to enclosure URL")
 
         pub_date = _parse_date(item.findtext("pubDate"))
+        logger.debug(f"Episode '{title}': guid={guid!r}, pub_date={pub_date.isoformat()}")
 
         description_raw = item.findtext("description") or item.findtext(f"{{{_ITUNES}}}summary")
         description = description_raw.strip() or None if description_raw else None
