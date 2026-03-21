@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
@@ -12,8 +11,6 @@ from pydantic import BaseModel, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from utils.exceptions import ConfigError
-
-logger = logging.getLogger(__name__)
 
 # Maps provider name to the Credentials field that holds its API key
 PROVIDER_KEY_MAP: dict[str, str] = {
@@ -132,7 +129,6 @@ def load_config(config_path: Path) -> Config:
 
     """
     load_dotenv()
-    logger.debug(f"Loading config from {config_path}")
 
     try:
         with config_path.open() as f:
@@ -172,5 +168,4 @@ def load_config(config_path: Path) -> Config:
         msg = f"Missing required API keys for configured providers: {keys_str}"
         raise ConfigError(msg)
 
-    logger.debug(f"Config loaded and validated from {config_path}")
     return Config(app=app_config, credentials=credentials)

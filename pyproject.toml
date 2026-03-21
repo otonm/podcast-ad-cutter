@@ -32,7 +32,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # TC003: Path is used at runtime in function signatures and pydantic fields
 "config/config_loader.py" = ["TC003"]
-"tests/**/*.py" = ["S101", "ANN", "D103", "INP001", "SIM117"]  # SIM117: nested with blocks kept for pytest readability
+"tests/**/*.py" = ["S101", "ANN", "D101", "D102", "D103", "INP001", "SIM117"]  # SIM117: nested with blocks kept for pytest readability
 
 [tool.mypy]
 python_version = "3.12"

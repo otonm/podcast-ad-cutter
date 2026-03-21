@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from config.config_loader import Config, load_config
@@ -45,7 +46,50 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Force using AI-based ad detection",
     )
+    parser.add_argument(
+        "-d",
+        "--debug",
+        action="store_true",
+        help="Enable debug-level logging",
+    )
+    parser.add_argument(
+        "--log-to-file",
+        action="store_true",
+        help="Write logs to a timestamped file inside logs/",
+    )
     return parser.parse_args()
+
+
+def configure_logging(*, level: str, log_to_file: bool, log_dir: Path = Path("logs")) -> None:
+    """Configure the root logger with a stream handler and an optional file handler.
+
+    Args:
+        level: Logging level name — one of DEBUG, INFO, WARNING, ERROR, CRITICAL.
+        log_to_file: When True, write logs to a timestamped file in log_dir.
+        log_dir: Directory for log files (created if absent). Defaults to logs/.
+
+    """
+    fmt = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
+    formatter = logging.Formatter(fmt)
+
+    root = logging.getLogger()
+    root.setLevel(getattr(logging, level))
+
+    # Remove any pre-existing handlers so this function is idempotent
+    for handler in root.handlers[:]:
+        root.removeHandler(handler)
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    root.addHandler(stream_handler)
+
+    if log_to_file:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        # Use local timezone for the filename timestamp
+        timestamp = datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+        file_handler = logging.FileHandler(log_dir / f"{timestamp}.log", encoding="utf-8")
+        file_handler.setFormatter(formatter)
+        root.addHandler(file_handler)
 
 
 async def main() -> None:
@@ -53,10 +97,20 @@ async def main() -> None:
     args = parse_args()
 
     try:
-        _cfg: Config = load_config(args.config)
+        cfg: Config = load_config(args.config)
     except ConfigError as exc:
         sys.stderr.write(f"Failed to load config: {exc}\n")
         sys.exit(1)
+
+    # CLI flags supersede config file: -d forces DEBUG regardless of log.level;
+    # --log-to-file forces file output regardless of log.to_file.
+    effective_level = "DEBUG" if args.debug else cfg.app.log.level
+    effective_log_to_file = args.log_to_file or cfg.app.log.to_file
+    configure_logging(
+        level=effective_level,
+        log_to_file=effective_log_to_file,
+        log_dir=cfg.app.paths.log_dir,
+    )
 
 
 if __name__ == "__main__":
