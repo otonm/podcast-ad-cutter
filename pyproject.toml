@@ -30,7 +30,10 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101", "ANN", "D103", "INP001"]
+# TC003: Path is used at runtime in function signatures and pydantic fields
+"config/**/*.py" = ["TC003"]
+# SIM117: nested `with` blocks are pre-existing test style
+"tests/**/*.py" = ["S101", "ANN", "D103", "INP001", "SIM117"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -50,4 +53,5 @@ dev = [
     "mypy>=1.19.1",
     "pytest>=9.0.2",
     "ruff>=0.15.7",
+    "types-pyyaml>=6.0.12.20250915",
 ]
