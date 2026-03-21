@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone  # noqa: F401 — used by pub_date assertions (Tasks 3-5)
+from datetime import datetime, timezone
 
 import pytest  # noqa: F401 — used by later tests
 
@@ -87,3 +87,52 @@ def test_episode_empty_enclosure_url_skipped() -> None:
     parser = FeedParser()
     item = ET.fromstring('<item><enclosure url="" type="audio/mpeg" length="0"/></item>')
     assert parser._parse_episode(item) is None
+
+
+# ---------------------------------------------------------------------------
+# _parse_episode — guid, pub_date
+# ---------------------------------------------------------------------------
+
+
+def test_guid_falls_back_to_url() -> None:
+    """When <guid> is absent, the enclosure URL is used as guid."""
+    parser = FeedParser()
+    item = ET.fromstring(
+        "<item>"
+        "<title>Ep</title>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="100"/>'
+        "</item>"
+    )
+    episode = parser._parse_episode(item)
+    assert episode is not None
+    assert episode.guid == "https://example.com/ep.mp3"
+
+
+def test_pub_date_parsed_to_datetime() -> None:
+    """A valid RFC 2822 <pubDate> is parsed into a timezone-aware datetime."""
+    parser = FeedParser()
+    item = ET.fromstring(
+        "<item>"
+        "<guid>ep1</guid>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="100"/>'
+        "<pubDate>Mon, 01 Jan 2024 00:00:00 +0000</pubDate>"
+        "</item>"
+    )
+    episode = parser._parse_episode(item)
+    assert episode is not None
+    assert isinstance(episode.pub_date, datetime)
+    assert episode.pub_date == datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)  # noqa: UP017 — datetime.UTC is Python 3.13+
+
+
+def test_pub_date_missing_is_none() -> None:
+    """When <pubDate> is absent, pub_date is None."""
+    parser = FeedParser()
+    item = ET.fromstring(
+        "<item>"
+        "<guid>ep1</guid>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="100"/>'
+        "</item>"
+    )
+    episode = parser._parse_episode(item)
+    assert episode is not None
+    assert episode.pub_date is None
