@@ -6,12 +6,14 @@ import logging
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from email.utils import parsedate_to_datetime
+from typing import TypedDict
 
 from models.feed import Episode, FeedParseInput, ParsedFeed
 
 logger = logging.getLogger(__name__)
 
 _ITUNES = "http://www.itunes.com/dtds/podcast-1.0.dtd"
+_CONTENT = "http://purl.org/rss/1.0/modules/content/"
 
 
 def _parse_explicit(text: str | None) -> bool | None:
@@ -87,6 +89,116 @@ def _parse_date(text: str | None) -> datetime:
     except (TypeError, ValueError):
         logger.debug(f"Could not parse date {text!r} — falling back to current local datetime")
         return datetime.now().astimezone()
+
+
+class _ChannelExtras(TypedDict):
+    """Extended iTunes/content fields parsed from the RSS <channel> element."""
+
+    itunes_type: str | None
+    itunes_subtitle: str | None
+    itunes_summary: str | None
+    owner_name: str | None
+    owner_email: str | None
+    image_title: str | None
+    image_link: str | None
+    content_encoded: str | None
+    itunes_new_feed_url: str | None
+    itunes_complete: bool
+
+
+class _EpisodeExtras(TypedDict):
+    """Extended iTunes/content fields parsed from an RSS <item> element."""
+
+    episode_type: str | None
+    itunes_author: str | None
+    itunes_subtitle: str | None
+    itunes_summary: str | None
+    content_encoded: str | None
+    link: str | None
+    author: str | None
+    itunes_title: str | None
+    episode_number: int | None
+    season_number: int | None
+    itunes_block: bool
+
+
+def _strip_or_none(raw: str | None) -> str | None:
+    """Return stripped text, or None when absent or whitespace-only."""
+    return raw.strip() or None if raw else None
+
+
+def _parse_int_field(raw: str | None, field_name: str, episode_title: str) -> int | None:
+    """Parse a text value as an integer, returning None when absent or non-numeric.
+
+    Logs a debug message when the value is present but cannot be converted.
+    """
+    if raw is None:
+        return None
+    try:
+        return int(raw.strip())
+    except ValueError:
+        logger.debug(f"Episode '{episode_title}': non-numeric <{field_name}> value {raw!r}")
+        return None
+
+
+def _parse_channel_extras(channel: ET.Element, image_el: ET.Element | None) -> _ChannelExtras:
+    """Extract the extended iTunes/content channel fields into a typed dict.
+
+    Separated from ``_parse_one`` to keep that method's statement count within
+    linting limits.  ``image_el`` is passed in because ``_parse_one`` already
+    located it for the primary image URL.
+    """
+    owner_el = channel.find(f"{{{_ITUNES}}}owner")
+
+    complete_text = channel.findtext(f"{{{_ITUNES}}}complete")
+    itunes_complete = bool(complete_text and complete_text.strip().lower() == "yes")
+
+    return _ChannelExtras(
+        itunes_type=_strip_or_none(channel.findtext(f"{{{_ITUNES}}}type")),
+        itunes_subtitle=_strip_or_none(channel.findtext(f"{{{_ITUNES}}}subtitle")),
+        # itunes:summary is INDEPENDENT of description — no fallback in either direction
+        itunes_summary=_strip_or_none(channel.findtext(f"{{{_ITUNES}}}summary")),
+        owner_name=_strip_or_none(
+            owner_el.findtext(f"{{{_ITUNES}}}name") if owner_el is not None else None
+        ),
+        owner_email=_strip_or_none(
+            owner_el.findtext(f"{{{_ITUNES}}}email") if owner_el is not None else None
+        ),
+        image_title=_strip_or_none(image_el.findtext("title") if image_el is not None else None),
+        image_link=_strip_or_none(image_el.findtext("link") if image_el is not None else None),
+        content_encoded=_strip_or_none(channel.findtext(f"{{{_CONTENT}}}encoded")),
+        itunes_new_feed_url=_strip_or_none(channel.findtext(f"{{{_ITUNES}}}new-feed-url")),
+        itunes_complete=itunes_complete,
+    )
+
+
+def _parse_episode_extras(item: ET.Element, title: str) -> _EpisodeExtras:
+    """Extract the extended iTunes/content episode fields into a typed dict.
+
+    Separated from ``_parse_episode`` to keep that method's statement count
+    within linting limits.  ``title`` is passed in for debug log messages.
+    """
+    block_text = item.findtext(f"{{{_ITUNES}}}block")
+    itunes_block = bool(block_text and block_text.strip().lower() == "yes")
+
+    return _EpisodeExtras(
+        episode_type=_strip_or_none(item.findtext(f"{{{_ITUNES}}}episodeType")),
+        itunes_author=_strip_or_none(item.findtext(f"{{{_ITUNES}}}author")),
+        itunes_subtitle=_strip_or_none(item.findtext(f"{{{_ITUNES}}}subtitle")),
+        # itunes:summary is INDEPENDENT of description — no fallback in either direction
+        itunes_summary=_strip_or_none(item.findtext(f"{{{_ITUNES}}}summary")),
+        content_encoded=_strip_or_none(item.findtext(f"{{{_CONTENT}}}encoded")),
+        link=_strip_or_none(item.findtext("link")),
+        author=_strip_or_none(item.findtext("author")),
+        itunes_title=_strip_or_none(item.findtext(f"{{{_ITUNES}}}title")),
+        episode_number=_parse_int_field(
+            item.findtext(f"{{{_ITUNES}}}episode"), "itunes:episode", title
+        ),
+        season_number=_parse_int_field(
+            item.findtext(f"{{{_ITUNES}}}season"), "itunes:season", title
+        ),
+        itunes_block=itunes_block,
+    )
 
 
 class FeedParser:
@@ -173,6 +285,9 @@ class FeedParser:
             if image_url:
                 logger.debug(f"Feed '{feed_input.config_title}': using <itunes:image> for cover art")
 
+        # Extended iTunes/content channel fields (extracted to keep statement count in check)
+        extras = _parse_channel_extras(channel, image_el)
+
         # Categories: top-level channel children + one sub-level (matches iTunes spec)
         categories = _parse_categories(channel)
 
@@ -212,6 +327,7 @@ class FeedParser:
             explicit=explicit,
             pub_date=pub_date,
             last_build_date=last_build_date,
+            **extras,
         )
 
     def _parse_episode(self, item: ET.Element) -> Episode | None:
@@ -251,6 +367,9 @@ class FeedParser:
         image_href = itunes_img.get("href") if itunes_img is not None else None
         image_url = image_href.strip() or None if image_href else None
 
+        # Extended iTunes/content episode fields (extracted to keep statement count in check)
+        ep_extras = _parse_episode_extras(item, title)
+
         logger.debug(
             f"Episode '{title}': explicit={explicit!r}, duration={duration!r}, "
             f"image_url={'set' if image_url else 'absent'}"
@@ -264,4 +383,5 @@ class FeedParser:
             explicit=explicit,
             duration=duration,
             image_url=image_url,
+            **ep_extras,
         )

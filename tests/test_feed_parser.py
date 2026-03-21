@@ -23,7 +23,9 @@ FEED_INPUT = FeedParseInput(
 # Valid RSS 2.0 with iTunes namespace and one representative value per new field
 VALID_XML = """\
 <?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+<rss version="2.0"
+     xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+     xmlns:content="http://purl.org/rss/1.0/modules/content/">
   <channel>
     <title>Test Pod</title>
     <description>A great podcast about testing.</description>
@@ -34,8 +36,8 @@ VALID_XML = """\
     <lastBuildDate>Tue, 02 Jan 2024 12:00:00 +0000</lastBuildDate>
     <image>
       <url>https://example.com/cover.jpg</url>
-      <title>Test Pod</title>
-      <link>https://testpod.example.com</link>
+      <title>Test Pod Cover</title>
+      <link>https://testpod.example.com/image</link>
     </image>
     <itunes:author>Test Author</itunes:author>
     <itunes:image href="https://example.com/itunes-cover.jpg"/>
@@ -43,6 +45,16 @@ VALID_XML = """\
     <itunes:category text="Technology">
       <itunes:category text="Tech News"/>
     </itunes:category>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle>A test subtitle</itunes:subtitle>
+    <itunes:summary>A test summary</itunes:summary>
+    <itunes:owner>
+      <itunes:name>Test Owner</itunes:name>
+      <itunes:email>owner@example.com</itunes:email>
+    </itunes:owner>
+    <content:encoded><![CDATA[<p>Channel HTML content</p>]]></content:encoded>
+    <itunes:new-feed-url>https://new.example.com/feed.rss</itunes:new-feed-url>
+    <itunes:complete>yes</itunes:complete>
     <item>
       <guid>ep1</guid>
       <title>Episode 1</title>
@@ -51,6 +63,17 @@ VALID_XML = """\
       <pubDate>Mon, 01 Jan 2024 00:00:00 +0000</pubDate>
       <itunes:duration>01:23:45</itunes:duration>
       <itunes:explicit>no</itunes:explicit>
+      <itunes:episodeType>full</itunes:episodeType>
+      <itunes:author>Test Episode Author</itunes:author>
+      <itunes:subtitle>Episode subtitle</itunes:subtitle>
+      <itunes:summary>Episode summary</itunes:summary>
+      <itunes:title>iTunes Episode Title</itunes:title>
+      <itunes:episode>1</itunes:episode>
+      <itunes:season>2</itunes:season>
+      <itunes:block>no</itunes:block>
+      <link>https://example.com/ep1</link>
+      <author>author@example.com (Test Author)</author>
+      <content:encoded><![CDATA[<p>Episode HTML content</p>]]></content:encoded>
     </item>
     <item>
       <guid>ep2</guid>
@@ -806,3 +829,286 @@ def test_parsed_feed_new_channel_fields_accept_values() -> None:
     assert pf.content_encoded == "<p>HTML</p>"
     assert pf.itunes_new_feed_url == "https://new.example.com/feed.rss"
     assert pf.itunes_complete is True
+
+
+# ---------------------------------------------------------------------------
+# _parse_one — new channel-level fields (Task 2)
+# ---------------------------------------------------------------------------
+
+
+def test_parsed_feed_itunes_type() -> None:
+    """<itunes:type> is parsed from the channel element."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert result.itunes_type == "episodic"
+
+
+def test_parsed_feed_itunes_subtitle() -> None:
+    """<itunes:subtitle> is parsed from the channel element."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert result.itunes_subtitle == "A test subtitle"
+
+
+def test_parsed_feed_itunes_summary() -> None:
+    """<itunes:summary> is parsed independently — not the same as description."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    # itunes_summary is a dedicated field, not a fallback for description
+    assert result.itunes_summary == "A test summary"
+    assert result.description == "A great podcast about testing."  # unaffected
+
+
+def test_parsed_feed_owner_name() -> None:
+    """<itunes:owner><itunes:name> is parsed into owner_name."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert result.owner_name == "Test Owner"
+
+
+def test_parsed_feed_owner_email() -> None:
+    """<itunes:owner><itunes:email> is parsed into owner_email."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert result.owner_email == "owner@example.com"
+
+
+def test_parsed_feed_image_title() -> None:
+    """<image><title> is parsed into image_title."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert result.image_title == "Test Pod Cover"
+
+
+def test_parsed_feed_image_link() -> None:
+    """<image><link> is parsed into image_link."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert result.image_link == "https://testpod.example.com/image"
+
+
+def test_parsed_feed_content_encoded() -> None:
+    """Channel-level <content:encoded> is parsed and is not None."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert result.content_encoded is not None
+    assert "HTML" in result.content_encoded
+
+
+def test_parsed_feed_itunes_new_feed_url() -> None:
+    """<itunes:new-feed-url> is parsed into itunes_new_feed_url."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert result.itunes_new_feed_url == "https://new.example.com/feed.rss"
+
+
+def test_parsed_feed_itunes_complete_yes() -> None:
+    """<itunes:complete>yes</itunes:complete> sets itunes_complete to True."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    assert result.itunes_complete is True
+
+
+def test_parsed_feed_itunes_complete_no() -> None:
+    """<itunes:complete>no</itunes:complete> sets itunes_complete to False."""
+    parser = FeedParser()
+    xml = (
+        '<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">'
+        "<channel><title>Pod</title>"
+        "<itunes:complete>no</itunes:complete>"
+        "</channel></rss>"
+    )
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=xml))
+    assert result is not None
+    assert result.itunes_complete is False
+
+
+def test_parsed_feed_itunes_complete_absent() -> None:
+    """When <itunes:complete> is absent, itunes_complete defaults to False."""
+    parser = FeedParser()
+    xml = "<rss version='2.0'><channel><title>Pod</title></channel></rss>"
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=xml))
+    assert result is not None
+    assert result.itunes_complete is False
+
+
+# ---------------------------------------------------------------------------
+# _parse_episode — new episode-level fields (Task 2)
+# ---------------------------------------------------------------------------
+
+
+def test_episode_type_parsed() -> None:
+    """<itunes:episodeType> is parsed into episode_type."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    ep = result.episodes[0]
+    assert ep.episode_type == "full"
+
+
+def test_episode_itunes_author_parsed() -> None:
+    """<itunes:author> on an episode is parsed into itunes_author."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    ep = result.episodes[0]
+    assert ep.itunes_author == "Test Episode Author"
+
+
+def test_episode_itunes_subtitle_parsed() -> None:
+    """<itunes:subtitle> on an episode is parsed into itunes_subtitle."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    ep = result.episodes[0]
+    assert ep.itunes_subtitle == "Episode subtitle"
+
+
+def test_episode_itunes_summary_parsed() -> None:
+    """<itunes:summary> on an episode is parsed independently into itunes_summary."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    ep = result.episodes[0]
+    assert ep.itunes_summary == "Episode summary"
+    assert ep.description == "Episode 1 description."  # unaffected
+
+
+def test_episode_content_encoded_parsed() -> None:
+    """Episode <content:encoded> is parsed and contains HTML."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    ep = result.episodes[0]
+    assert ep.content_encoded is not None
+    assert "<p>" in ep.content_encoded
+
+
+def test_episode_link_parsed() -> None:
+    """<link> on an episode is parsed into link."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    ep = result.episodes[0]
+    assert ep.link == "https://example.com/ep1"
+
+
+def test_episode_author_parsed() -> None:
+    """Standard RSS <author> on an episode is parsed into author."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    ep = result.episodes[0]
+    assert ep.author == "author@example.com (Test Author)"
+
+
+def test_episode_itunes_title_parsed() -> None:
+    """<itunes:title> on an episode is parsed into itunes_title."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    ep = result.episodes[0]
+    assert ep.itunes_title == "iTunes Episode Title"
+
+
+def test_episode_number_parsed() -> None:
+    """<itunes:episode> is parsed as an integer into episode_number."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    ep = result.episodes[0]
+    assert ep.episode_number == 1
+
+
+def test_season_number_parsed() -> None:
+    """<itunes:season> is parsed as an integer into season_number."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    ep = result.episodes[0]
+    assert ep.season_number == 2
+
+
+def test_episode_itunes_block_no() -> None:
+    """<itunes:block>no</itunes:block> sets itunes_block to False."""
+    parser = FeedParser()
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
+    assert result is not None
+    ep = result.episodes[0]
+    assert ep.itunes_block is False
+
+
+def test_episode_number_non_numeric_returns_none() -> None:
+    """A non-numeric <itunes:episode> value returns None (not a crash)."""
+    parser = FeedParser()
+    item = ET.fromstring(
+        '<item xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">'
+        "<guid>ep1</guid>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="0"/>'
+        "<itunes:episode>abc</itunes:episode>"
+        "</item>"
+    )
+    ep = parser._parse_episode(item)
+    assert ep is not None
+    assert ep.episode_number is None
+
+
+def test_episode_season_absent_returns_none() -> None:
+    """When <itunes:season> is absent, season_number is None."""
+    parser = FeedParser()
+    item = ET.fromstring(
+        "<item><guid>ep1</guid>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="0"/>'
+        "</item>"
+    )
+    ep = parser._parse_episode(item)
+    assert ep is not None
+    assert ep.season_number is None
+
+
+def test_episode_season_non_numeric_returns_none() -> None:
+    """A non-numeric <itunes:season> value returns None (not a crash)."""
+    parser = FeedParser()
+    item = ET.fromstring(
+        '<item xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">'
+        "<guid>ep1</guid>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="0"/>'
+        "<itunes:season>spring</itunes:season>"
+        "</item>"
+    )
+    ep = parser._parse_episode(item)
+    assert ep is not None
+    assert ep.season_number is None
+
+
+def test_all_new_episode_fields_absent_return_defaults() -> None:
+    """A minimal <item> with only enclosure and guid returns all new fields as defaults."""
+    parser = FeedParser()
+    item = ET.fromstring(
+        "<item><guid>ep1</guid>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="0"/>'
+        "</item>"
+    )
+    ep = parser._parse_episode(item)
+    assert ep is not None
+    assert ep.episode_type is None
+    assert ep.itunes_author is None
+    assert ep.itunes_subtitle is None
+    assert ep.itunes_summary is None
+    assert ep.content_encoded is None
+    assert ep.link is None
+    assert ep.author is None
+    assert ep.itunes_title is None
+    assert ep.episode_number is None
+    assert ep.season_number is None
+    assert ep.itunes_block is False
