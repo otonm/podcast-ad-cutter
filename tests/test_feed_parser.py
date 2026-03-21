@@ -1048,6 +1048,21 @@ def test_episode_itunes_block_no() -> None:
     assert ep.itunes_block is False
 
 
+def test_episode_itunes_block_yes() -> None:
+    """<itunes:block>yes</itunes:block> sets itunes_block to True."""
+    parser = FeedParser()
+    item = ET.fromstring(
+        '<item xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">'
+        "<guid>ep1</guid>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="0"/>'
+        "<itunes:block>yes</itunes:block>"
+        "</item>"
+    )
+    ep = parser._parse_episode(item)
+    assert ep is not None
+    assert ep.itunes_block is True
+
+
 def test_episode_number_non_numeric_returns_none() -> None:
     """A non-numeric <itunes:episode> value returns None (not a crash)."""
     parser = FeedParser()
