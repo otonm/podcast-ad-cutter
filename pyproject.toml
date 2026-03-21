@@ -34,7 +34,6 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # TC003, TC001: Types are used at runtime in pydantic field annotations
 "config/config_loader.py" = ["TC003", "TC001"]
-"components/feed_parser.py" = ["TC003", "TC001"]
 "tests/**/*.py" = ["S101", "ANN", "D101", "D102", "D103", "INP001", "SIM117", "S314", "SLF001"]  # SIM117: nested with; S314: test XML is controlled; SLF001: direct private method testing
 
 [tool.mypy]

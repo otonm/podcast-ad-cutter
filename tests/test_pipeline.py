@@ -8,6 +8,7 @@ import pytest
 
 from components.pipeline import Pipeline
 from config.config_loader import FeedConfig
+from models.feed import FeedParseInput
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -45,11 +46,11 @@ async def test_run_passes_only_enabled_feeds() -> None:
         patch("components.pipeline.FeedParser"),
     ):
         mock_dl = mock_downloader_cls.return_value
-        mock_dl.download_all = AsyncMock(return_value=[(enabled, "<xml/>")])
+        mock_dl.download_all = AsyncMock(return_value=[("enabled", "<xml/>")])
         pipeline = Pipeline(config)
         await pipeline.run()
 
-    mock_dl.download_all.assert_called_once_with([enabled])
+    mock_dl.download_all.assert_called_once_with([("enabled", enabled.url)])
 
 
 async def test_run_preserves_config_order() -> None:
@@ -66,13 +67,14 @@ async def test_run_preserves_config_order() -> None:
         pipeline = Pipeline(config)
         await pipeline.run()
 
-    mock_dl.download_all.assert_called_once_with([feed_a, feed_b, feed_c])
+    mock_dl.download_all.assert_called_once_with(
+        [("a", feed_a.url), ("b", feed_b.url), ("c", feed_c.url)]
+    )
 
 
 async def test_run_returns_parser_result() -> None:
     """Pipeline.run() returns what FeedParser.parse_all() returns."""
     feed = make_feed("test")
-    downloads = [(feed, "<rss/>")]
     parsed = [MagicMock()]  # simulated list[ParsedFeed]
     config = make_config([feed])
 
@@ -81,7 +83,7 @@ async def test_run_returns_parser_result() -> None:
         patch("components.pipeline.FeedParser") as mock_fp_cls,
     ):
         mock_dl = mock_dl_cls.return_value
-        mock_dl.download_all = AsyncMock(return_value=downloads)
+        mock_dl.download_all = AsyncMock(return_value=[("test", "<rss/>")])
         mock_fp = mock_fp_cls.return_value
         mock_fp.parse_all = MagicMock(return_value=parsed)
         pipeline = Pipeline(config)
@@ -91,9 +93,8 @@ async def test_run_returns_parser_result() -> None:
 
 
 async def test_run_calls_feed_parser() -> None:
-    """Pipeline.run() passes download results to FeedParser.parse_all."""
+    """Pipeline.run() passes FeedParseInput objects to FeedParser.parse_all."""
     feed = make_feed("test")
-    downloads = [(feed, "<xml/>")]
     config = make_config([feed])
 
     with (
@@ -101,13 +102,19 @@ async def test_run_calls_feed_parser() -> None:
         patch("components.pipeline.FeedParser") as mock_fp_cls,
     ):
         mock_dl = mock_dl_cls.return_value
-        mock_dl.download_all = AsyncMock(return_value=downloads)
+        mock_dl.download_all = AsyncMock(return_value=[("test", "<xml/>")])
         mock_fp = mock_fp_cls.return_value
         mock_fp.parse_all = MagicMock(return_value=[])
         pipeline = Pipeline(config)
         await pipeline.run()
 
-    mock_fp.parse_all.assert_called_once_with(downloads)
+    expected_input = FeedParseInput(
+        config_title="test",
+        feed_url=feed.url,
+        episodes_to_keep=feed.episodes_to_keep,
+        xml_text="<xml/>",
+    )
+    mock_fp.parse_all.assert_called_once_with([expected_input])
 
 
 async def test_run_with_no_enabled_feeds() -> None:
@@ -133,11 +140,11 @@ async def test_run_with_feed_name_forces_disabled_feed() -> None:
 
     with patch("components.pipeline.FeedDownloader") as mock_downloader_cls:
         mock_dl = mock_downloader_cls.return_value
-        mock_dl.download_all = AsyncMock(return_value=[(disabled, "<xml/>")])
+        mock_dl.download_all = AsyncMock(return_value=[("target", "<xml/>")])
         pipeline = Pipeline(config, feed_name="target")
         await pipeline.run()
 
-    mock_dl.download_all.assert_called_once_with([disabled])
+    mock_dl.download_all.assert_called_once_with([("target", disabled.url)])
 
 
 async def test_run_with_feed_name_excludes_other_feeds() -> None:
@@ -148,11 +155,11 @@ async def test_run_with_feed_name_excludes_other_feeds() -> None:
 
     with patch("components.pipeline.FeedDownloader") as mock_downloader_cls:
         mock_dl = mock_downloader_cls.return_value
-        mock_dl.download_all = AsyncMock(return_value=[(target, "<xml/>")])
+        mock_dl.download_all = AsyncMock(return_value=[("target", "<xml/>")])
         pipeline = Pipeline(config, feed_name="target")
         await pipeline.run()
 
-    mock_dl.download_all.assert_called_once_with([target])
+    mock_dl.download_all.assert_called_once_with([("target", target.url)])
 
 
 async def test_run_with_unknown_feed_name_raises() -> None:

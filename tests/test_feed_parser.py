@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
+import dataclasses
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
-from components.feed_parser import Episode, FeedParser, ParsedFeed
-from config.config_loader import FeedConfig
+from components.feed_parser import FeedParser
+from models.feed import Episode, FeedParseInput, ParsedFeed
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
-FEED_CFG = FeedConfig(
-    title="Test Pod",
-    url="https://example.com/feed.rss",
-    enabled=True,
+FEED_INPUT = FeedParseInput(
+    config_title="Test Pod",
+    feed_url="https://example.com/feed.rss",
     episodes_to_keep=3,
+    xml_text="",  # overridden per test via dataclasses.replace()
 )
 
 # Minimal valid RSS 2.0 with 3 episodes
@@ -62,10 +63,16 @@ def test_episode_model_instantiation() -> None:
 
 def test_parsed_feed_model_instantiation() -> None:
     ep = Episode(guid="ep1", url="https://example.com/ep1.mp3", pub_date=None)
-    pf = ParsedFeed(feed_config=FEED_CFG, title="Test Pod", episodes=[ep])
+    pf = ParsedFeed(
+        config_title="Test Pod",
+        feed_url="https://example.com/feed.rss",
+        title="Test Pod",
+        episodes=[ep],
+    )
     assert pf.title == "Test Pod"
     assert len(pf.episodes) == 1
-    assert pf.feed_config is FEED_CFG
+    assert pf.config_title == "Test Pod"
+    assert pf.feed_url == "https://example.com/feed.rss"
 
 
 # ---------------------------------------------------------------------------
@@ -144,17 +151,22 @@ def test_pub_date_missing_is_none() -> None:
 def test_malformed_xml_skipped() -> None:
     """Malformed XML returns None without raising."""
     parser = FeedParser()
-    assert parser._parse_one(FEED_CFG, "<<<not xml>>>") is None
+    assert parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text="<<<not xml>>>")) is None
 
 
 def test_no_channel_element_skipped() -> None:
     """An XML document without a <channel> child returns None."""
     parser = FeedParser()
-    assert parser._parse_one(FEED_CFG, "<rss version='2.0'><notchannel/></rss>") is None
+    assert (
+        parser._parse_one(
+            dataclasses.replace(FEED_INPUT, xml_text="<rss version='2.0'><notchannel/></rss>")
+        )
+        is None
+    )
 
 
 def test_feed_title_falls_back_to_config_title() -> None:
-    """When the channel has no <title>, feed_config.title is used."""
+    """When the channel has no <title>, config_title is used."""
     parser = FeedParser()
     xml = (
         "<rss version='2.0'><channel>"
@@ -163,14 +175,14 @@ def test_feed_title_falls_back_to_config_title() -> None:
         "</item>"
         "</channel></rss>"
     )
-    result = parser._parse_one(FEED_CFG, xml)
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=xml))
     assert result is not None
-    assert result.title == FEED_CFG.title
+    assert result.title == FEED_INPUT.config_title
 
 
 def test_episodes_limited_to_keep() -> None:
-    """Episodes are sliced to feed_config.episodes_to_keep after parsing."""
-    # FEED_CFG.episodes_to_keep = 3; add 3 more items to VALID_XML (6 total)
+    """Episodes are sliced to episodes_to_keep after parsing."""
+    # FEED_INPUT.episodes_to_keep = 3; add 3 more items to VALID_XML (6 total)
     extra = "".join(
         f"<item><guid>ep{i}</guid><title>Episode {i}</title>"
         f'<enclosure url="https://example.com/ep{i}.mp3" type="audio/mpeg" length="{i}"/>'
@@ -180,9 +192,9 @@ def test_episodes_limited_to_keep() -> None:
     )
     xml_6eps = VALID_XML.replace("</channel>", extra + "</channel>")
     parser = FeedParser()
-    result = parser._parse_one(FEED_CFG, xml_6eps)
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=xml_6eps))
     assert result is not None
-    assert len(result.episodes) == FEED_CFG.episodes_to_keep
+    assert len(result.episodes) == FEED_INPUT.episodes_to_keep
     assert result.episodes[0].guid == "ep1"  # document order preserved
 
 
@@ -194,12 +206,13 @@ def test_episodes_limited_to_keep() -> None:
 def test_parse_all_success() -> None:
     """Valid XML produces a ParsedFeed with all fields populated correctly."""
     parser = FeedParser()
-    results = parser.parse_all([(FEED_CFG, VALID_XML)])
+    results = parser.parse_all([dataclasses.replace(FEED_INPUT, xml_text=VALID_XML)])
     assert len(results) == 1
     pf = results[0]
     assert pf.title == "Test Pod"
-    assert pf.feed_config is FEED_CFG
-    assert len(pf.episodes) == FEED_CFG.episodes_to_keep
+    assert pf.config_title == FEED_INPUT.config_title
+    assert pf.feed_url == FEED_INPUT.feed_url
+    assert len(pf.episodes) == FEED_INPUT.episodes_to_keep
     ep = pf.episodes[0]
     assert ep.guid == "ep1"
     assert ep.title == "Episode 1"
@@ -208,19 +221,21 @@ def test_parse_all_success() -> None:
 
 
 def test_parse_all_empty_input() -> None:
-    """An empty downloads list returns an empty results list."""
+    """An empty inputs list returns an empty results list."""
     assert FeedParser().parse_all([]) == []
 
 
 def test_parse_all_mixed_feeds() -> None:
     """One valid + one malformed feed: only the valid one appears in results."""
-    bad_feed = FeedConfig(
-        title="Bad Pod",
-        url="https://bad.example.com/feed.rss",
-        enabled=True,
+    bad_input = FeedParseInput(
+        config_title="Bad Pod",
+        feed_url="https://bad.example.com/feed.rss",
         episodes_to_keep=5,
+        xml_text="<<<not xml>>>",
     )
     parser = FeedParser()
-    results = parser.parse_all([(FEED_CFG, VALID_XML), (bad_feed, "<<<not xml>>>")])
+    results = parser.parse_all(
+        [dataclasses.replace(FEED_INPUT, xml_text=VALID_XML), bad_input]
+    )
     assert len(results) == 1
-    assert results[0].feed_config is FEED_CFG
+    assert results[0].config_title == FEED_INPUT.config_title
