@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from components.feed_downloader import FeedDownloader
 from components.feed_parser import FeedParser
+from components.feed_publisher import FeedPublisher
 from database.connection import Database
 from database.episode_store import EpisodeStore
-from models.feed import FeedParseInput, ParsedFeed
+from models.feed import FeedParseInput, ParsedFeed, PublisherInput
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -46,6 +48,7 @@ class Pipeline:
         self._db_path: Path = config.app.paths.data_dir / "data.db"
         self._feed_downloader = FeedDownloader()
         self._feed_parser = FeedParser()
+        self._feed_publisher = FeedPublisher(config.app.paths.output_dir)
 
     async def run(self) -> list[ParsedFeed]:
         """Execute the pipeline for the selected feeds.
@@ -64,10 +67,40 @@ class Pipeline:
         parse_inputs = self._build_parse_inputs(selected, download_results)
         parsed_feeds = self._feed_parser.parse_all(parse_inputs)
 
+        feed_cfg_map = {f.title: f for f in selected}
+
         async with Database(self._db_path) as db:
             store = EpisodeStore(db.conn)
             for feed in parsed_feeds:
                 await store.save_episodes(feed.config_title, feed.episodes)
+
+            for feed in parsed_feeds:
+                cfg = feed_cfg_map[feed.config_title]
+                episodes = await store.get_episodes_for_feed(
+                    feed.config_title, cfg.episodes_to_keep
+                )
+                logger.debug(
+                    f"Building publisher input for '{feed.config_title}': "
+                    f"{len(episodes)} episode(s), image_url={'set' if feed.image_url else 'absent'}, "
+                    f"categories={feed.categories}"
+                )
+                publisher_input = PublisherInput(
+                    base_url=self._config.app.base_url,
+                    title=feed.title,
+                    episodes=episodes,
+                    description=feed.description,
+                    link=feed.link,
+                    language=feed.language,
+                    copyright=feed.copyright,
+                    author=feed.author,
+                    image_url=feed.image_url,
+                    categories=feed.categories,
+                    explicit=feed.explicit,
+                    pub_date=feed.pub_date,
+                    last_build_date=datetime.now().astimezone(),
+                )
+                output_path = await self._feed_publisher.publish(publisher_input)
+                logger.info(f"Feed '{feed.config_title}' published to {output_path}")
 
         return parsed_feeds
 

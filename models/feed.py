@@ -24,6 +24,7 @@ class Episode:
     explicit: bool | None = None
     # Raw string (e.g. "01:23:45"); will be typed to a duration type in a future task.
     duration: str | None = None
+    image_url: str | None = None  # episode-level artwork (<itunes:image href="..."/>)
 
 
 @dataclass
@@ -34,6 +35,30 @@ class FeedParseInput:
     feed_url: str  # original feed URL, threaded into ParsedFeed for downstream stages
     episodes_to_keep: int
     xml_text: str  # raw RSS XML (named xml_text to avoid shadowing the stdlib xml module)
+
+
+@dataclass
+class PublisherInput:
+    """Input contract for FeedPublisher — assembled by Pipeline from DB data and ParsedFeed metadata.
+
+    Pipeline is responsible for combining the episode list (from DB) with the
+    channel-level metadata (from ParsedFeed) and passing the result here.
+    FeedPublisher receives only this object and performs no database access.
+    """
+
+    base_url: str  # server base URL; slug and self-link are derived by FeedPublisher
+    title: str
+    episodes: list[Episode]
+    description: str | None = None
+    link: str | None = None  # original podcast website URL (kept verbatim)
+    language: str | None = None
+    copyright: str | None = None
+    author: str | None = None
+    image_url: str | None = None
+    categories: list[str] = field(default_factory=list)
+    explicit: bool | None = None
+    pub_date: datetime = field(default_factory=lambda: datetime.now().astimezone())
+    last_build_date: datetime = field(default_factory=lambda: datetime.now().astimezone())
 
 
 @dataclass

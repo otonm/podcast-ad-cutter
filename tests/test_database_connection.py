@@ -52,3 +52,40 @@ async def test_connection_is_closed_after_exit(db_path: Path) -> None:
     # After __aexit__ the connection is closed — any further use must raise
     with pytest.raises(ValueError, match="no active connection"):
         await conn.execute("SELECT 1")
+
+
+async def _column_names(db_path: Path) -> set[str]:
+    async with aiosqlite.connect(db_path) as conn:
+        cursor = await conn.execute("PRAGMA table_info(episodes)")
+        rows = await cursor.fetchall()
+    return {row[1] for row in rows}
+
+
+async def test_episodes_table_has_url_column(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    assert "url" in await _column_names(db_path)
+
+
+async def test_episodes_table_has_description_column(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    assert "description" in await _column_names(db_path)
+
+
+async def test_episodes_table_has_explicit_column(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    assert "explicit" in await _column_names(db_path)
+
+
+async def test_episodes_table_has_duration_column(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    assert "duration" in await _column_names(db_path)
+
+
+async def test_episodes_table_has_image_url_column(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    assert "image_url" in await _column_names(db_path)

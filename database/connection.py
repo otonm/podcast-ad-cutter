@@ -15,12 +15,16 @@ logger = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS episodes (
-    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    podcast TEXT    NOT NULL,
-    title   TEXT    NOT NULL,
-    pubdate TEXT,
-    guid    TEXT    NOT NULL,
-    UNIQUE(guid)
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    podcast     TEXT    NOT NULL,
+    title       TEXT    NOT NULL,
+    pubdate     TEXT,
+    guid        TEXT    NOT NULL UNIQUE,
+    url         TEXT    NOT NULL DEFAULT '',
+    description TEXT,
+    explicit    INTEGER,
+    duration    TEXT,
+    image_url   TEXT
 )
 """
 

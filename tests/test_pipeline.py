@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from components.pipeline import Pipeline
 from config.config_loader import FeedConfig
-from models.feed import Episode, FeedParseInput, ParsedFeed
+from models.feed import Episode, FeedParseInput, ParsedFeed, PublisherInput
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -28,16 +29,6 @@ def make_config(feeds: list[FeedConfig]) -> MagicMock:
     cfg = MagicMock()
     cfg.app.feeds = feeds
     return cfg
-
-
-def _patch_db() -> tuple[MagicMock, MagicMock]:
-    """Return (mock_db_cls_patch, mock_db) for use with patch()."""
-    mock_db = MagicMock()
-    mock_db.conn = AsyncMock()
-    mock_db_cls = MagicMock()
-    mock_db_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
-    mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-    return mock_db_cls, mock_db
 
 
 # ---------------------------------------------------------------------------
@@ -95,22 +86,27 @@ async def test_run_preserves_config_order() -> None:
 async def test_run_returns_parser_result() -> None:
     """Pipeline.run() returns what FeedParser.parse_all() returns."""
     feed = make_feed("test")
-    parsed = [MagicMock()]  # simulated list[ParsedFeed]
+    parsed = [ParsedFeed(config_title="test", feed_url=feed.url, title="test")]
     config = make_config([feed])
 
     with (
         patch("components.pipeline.FeedDownloader") as mock_dl_cls,
         patch("components.pipeline.FeedParser") as mock_fp_cls,
         patch("components.pipeline.Database") as mock_db_cls,
+        patch("components.pipeline.EpisodeStore") as mock_store_cls,
+        patch("components.pipeline.FeedPublisher") as mock_publisher_cls,
     ):
         mock_dl = mock_dl_cls.return_value
         mock_dl.download_all = AsyncMock(return_value=[("test", "<rss/>")])
         mock_fp = mock_fp_cls.return_value
         mock_fp.parse_all = MagicMock(return_value=parsed)
         mock_db = MagicMock()
-        mock_db.conn = AsyncMock()
         mock_db_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
         mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_store = AsyncMock()
+        mock_store.get_episodes_for_feed = AsyncMock(return_value=[])
+        mock_store_cls.return_value = mock_store
+        mock_publisher_cls.return_value = AsyncMock()
         pipeline = Pipeline(config)
         result = await pipeline.run()
 
@@ -222,6 +218,43 @@ async def test_run_with_unknown_feed_name_raises() -> None:
         pipeline = Pipeline(config, feed_name="nonexistent")
         with pytest.raises(ValueError, match="nonexistent"):
             await pipeline.run()
+
+
+async def test_run_calls_feed_publisher() -> None:
+    """Pipeline.run() must call FeedPublisher.publish() once per parsed feed."""
+    feed = make_feed("My Podcast")
+    config = make_config([feed])
+    config.app.base_url = "https://podcasts.example.com"
+    config.app.paths.output_dir = Path("/output")
+    ep = Episode(guid="g1", url="http://x.com/ep.mp3", title="Ep 1")
+    parsed = [ParsedFeed(config_title="My Podcast", feed_url="http://x.com/feed", title="My Podcast", episodes=[ep])]
+
+    with (
+        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
+        patch("components.pipeline.FeedParser") as mock_fp_cls,
+        patch("components.pipeline.Database") as mock_db_cls,
+        patch("components.pipeline.EpisodeStore") as mock_store_cls,
+        patch("components.pipeline.FeedPublisher") as mock_publisher_cls,
+    ):
+        mock_dl = mock_dl_cls.return_value
+        mock_dl.download_all = AsyncMock(return_value=[("My Podcast", "<xml/>")])
+        mock_fp = mock_fp_cls.return_value
+        mock_fp.parse_all = MagicMock(return_value=parsed)
+        mock_db = MagicMock()
+        mock_db_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_store = AsyncMock()
+        mock_store.get_episodes_for_feed = AsyncMock(return_value=[])
+        mock_store_cls.return_value = mock_store
+        mock_publisher = AsyncMock()
+        mock_publisher_cls.return_value = mock_publisher
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    mock_publisher.publish.assert_awaited_once()
+    publisher_input: PublisherInput = mock_publisher.publish.call_args[0][0]
+    assert publisher_input.base_url == "https://podcasts.example.com"
+    assert publisher_input.title == "My Podcast"
 
 
 async def test_run_saves_parsed_episodes() -> None:
