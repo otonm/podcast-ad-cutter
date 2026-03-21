@@ -79,7 +79,7 @@ class PublisherInput:
     owner_email: str | None = None  # from itunes:owner/itunes:email
     image_title: str | None = None  # from standard RSS <image><title>
     image_link: str | None = None  # from standard RSS <image><link>
-    content_encoded: str | None = None
+    content_encoded: str | None = None  # from <content:encoded>
     itunes_new_feed_url: str | None = None
     itunes_complete: bool = False  # signals feed has no future episodes
 
@@ -112,6 +112,6 @@ class ParsedFeed:
     owner_email: str | None = None  # from itunes:owner/itunes:email
     image_title: str | None = None  # from standard RSS <image><title>
     image_link: str | None = None  # from standard RSS <image><link>
-    content_encoded: str | None = None
+    content_encoded: str | None = None  # from <content:encoded>
     itunes_new_feed_url: str | None = None
     itunes_complete: bool = False  # signals feed has no future episodes
