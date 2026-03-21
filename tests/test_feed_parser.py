@@ -186,3 +186,43 @@ def test_episodes_limited_to_keep() -> None:
     assert result is not None
     assert len(result.episodes) == FEED_CFG.episodes_to_keep
     assert result.episodes[0].guid == "ep1"  # document order preserved
+
+
+# ---------------------------------------------------------------------------
+# parse_all
+# ---------------------------------------------------------------------------
+
+
+def test_parse_all_success() -> None:
+    """Valid XML produces a ParsedFeed with all fields populated correctly."""
+    parser = FeedParser()
+    results = parser.parse_all([(FEED_CFG, VALID_XML)])
+    assert len(results) == 1
+    pf = results[0]
+    assert pf.title == "Test Pod"
+    assert pf.feed_config is FEED_CFG
+    assert len(pf.episodes) == FEED_CFG.episodes_to_keep
+    ep = pf.episodes[0]
+    assert ep.guid == "ep1"
+    assert ep.title == "Episode 1"
+    assert ep.url == "https://example.com/ep1.mp3"
+    assert ep.pub_date == datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)  # noqa: UP017
+
+
+def test_parse_all_empty_input() -> None:
+    """An empty downloads list returns an empty results list."""
+    assert FeedParser().parse_all([]) == []
+
+
+def test_parse_all_mixed_feeds() -> None:
+    """One valid + one malformed feed: only the valid one appears in results."""
+    bad_feed = FeedConfig(
+        title="Bad Pod",
+        url="https://bad.example.com/feed.rss",
+        enabled=True,
+        episodes_to_keep=5,
+    )
+    parser = FeedParser()
+    results = parser.parse_all([(FEED_CFG, VALID_XML), (bad_feed, "<<<not xml>>>")])
+    assert len(results) == 1
+    assert results[0].feed_config is FEED_CFG

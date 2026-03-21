@@ -34,6 +34,30 @@ class ParsedFeed(BaseModel):
 class FeedParser:
     """Stateless RSS/Atom XML parser. No constructor args."""
 
+    def parse_all(self, downloads: list[tuple[FeedConfig, str]]) -> list[ParsedFeed]:
+        """Parse all downloaded XML blobs.
+
+        Failed feeds are omitted from the result list (logged at WARNING level
+        inside ``_parse_one``).
+
+        Args:
+            downloads: List of ``(feed_config, xml_text)`` tuples, as returned
+                by ``FeedDownloader.download_all()``.
+
+        Returns:
+            List of successfully parsed feeds in input order.
+
+        """
+        results: list[ParsedFeed] = []
+        for feed_config, xml_text in downloads:
+            parsed = self._parse_one(feed_config, xml_text)
+            if parsed is not None:
+                results.append(parsed)
+        logger.info(
+            f"Feed parsing complete: {len(results)}/{len(downloads)} feed(s) parsed successfully"
+        )
+        return results
+
     def _parse_one(self, feed_config: FeedConfig, xml_text: str) -> ParsedFeed | None:
         """Parse a single XML blob into a ParsedFeed.
 
