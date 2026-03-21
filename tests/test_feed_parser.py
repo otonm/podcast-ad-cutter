@@ -40,8 +40,8 @@ VALID_XML = """\
     <itunes:author>Test Author</itunes:author>
     <itunes:image href="https://example.com/itunes-cover.jpg"/>
     <itunes:explicit>yes</itunes:explicit>
-    <itunes:category label="Technology">
-      <itunes:category label="Tech News"/>
+    <itunes:category text="Technology">
+      <itunes:category text="Tech News"/>
     </itunes:category>
     <item>
       <guid>ep1</guid>
@@ -165,6 +165,25 @@ def test_pub_date_missing_falls_back_to_now() -> None:
 # ---------------------------------------------------------------------------
 # _parse_one
 # ---------------------------------------------------------------------------
+
+
+def test_items_without_enclosure_skipped_inside_parse_one() -> None:
+    """An <item> without an enclosure is silently dropped; valid items still returned."""
+    parser = FeedParser()
+    xml = (
+        "<rss version='2.0'><channel><title>Pod</title>"
+        # no-enclosure item — must be skipped
+        "<item><guid>bad</guid><title>No enclosure</title></item>"
+        # valid item — must be returned
+        "<item><guid>good</guid><title>Good Ep</title>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="0"/>'
+        "</item>"
+        "</channel></rss>"
+    )
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=xml))
+    assert result is not None
+    assert len(result.episodes) == 1
+    assert result.episodes[0].guid == "good"
 
 
 def test_malformed_xml_skipped() -> None:
@@ -453,6 +472,20 @@ def test_feed_image_url_falls_back_to_itunes_image_when_url_child_missing() -> N
     assert result.image_url == "https://example.com/itunes.jpg"
 
 
+def test_feed_categories_use_text_attribute() -> None:
+    """<itunes:category text="..."> is the attribute per the Apple spec."""
+    parser = FeedParser()
+    xml = (
+        '<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">'
+        "<channel><title>Pod</title>"
+        '<itunes:category text="Technology"/>'
+        "</channel></rss>"
+    )
+    result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=xml))
+    assert result is not None
+    assert "Technology" in result.categories
+
+
 def test_feed_categories_top_level() -> None:
     parser = FeedParser()
     result = parser._parse_one(dataclasses.replace(FEED_INPUT, xml_text=VALID_XML))
@@ -472,11 +505,11 @@ def test_feed_categories_exclude_episode_level_tags() -> None:
     xml = (
         '<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">'
         "<channel><title>Pod</title>"
-        '<itunes:category label="FeedCat"/>'
+        '<itunes:category text="FeedCat"/>'
         "<item>"
         "<guid>ep1</guid>"
         '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="0"/>'
-        '<itunes:category label="EpisodeCat"/>'
+        '<itunes:category text="EpisodeCat"/>'
         "</item>"
         "</channel></rss>"
     )
@@ -652,3 +685,29 @@ def test_episode_explicit_none_when_absent() -> None:
     ep = parser._parse_episode(item)
     assert ep is not None
     assert ep.explicit is None
+
+
+def test_episode_image_url_from_itunes_image() -> None:
+    parser = FeedParser()
+    item = ET.fromstring(
+        '<item xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">'
+        "<guid>ep1</guid>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="0"/>'
+        '<itunes:image href="https://example.com/ep-cover.jpg"/>'
+        "</item>"
+    )
+    ep = parser._parse_episode(item)
+    assert ep is not None
+    assert ep.image_url == "https://example.com/ep-cover.jpg"
+
+
+def test_episode_image_url_none_when_absent() -> None:
+    parser = FeedParser()
+    item = ET.fromstring(
+        "<item><guid>ep1</guid>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="0"/>'
+        "</item>"
+    )
+    ep = parser._parse_episode(item)
+    assert ep is not None
+    assert ep.image_url is None

@@ -39,13 +39,14 @@ def _parse_categories(channel: ET.Element) -> list[str]:
     """
     cats: list[str] = []
     for top_cat in channel.findall(f"{{{_ITUNES}}}category"):
-        label = top_cat.get("label")
+        label = top_cat.get("text")
         if label:
             cats.append(label)
         for sub in top_cat.findall(f"{{{_ITUNES}}}category"):
-            sub_label = sub.get("label")
+            sub_label = sub.get("text")
             if sub_label:
                 cats.append(sub_label)
+    logger.debug(f"Parsed {len(cats)} category/categories: {cats}")
     return cats
 
 
@@ -234,7 +235,9 @@ class FeedParser:
             logger.debug(f"Episode '{title}': no <guid>, falling back to enclosure URL")
 
         pub_date = _parse_date(item.findtext("pubDate"))
-        logger.debug(f"Episode '{title}': guid={guid!r}, pub_date={pub_date.isoformat()}")
+        logger.debug(
+            f"Episode '{title}': guid={guid!r}, pub_date={pub_date.isoformat()}"
+        )
 
         description_raw = item.findtext("description") or item.findtext(f"{{{_ITUNES}}}summary")
         description = description_raw.strip() or None if description_raw else None
@@ -244,6 +247,14 @@ class FeedParser:
         raw_dur = item.findtext(f"{{{_ITUNES}}}duration")
         duration = raw_dur.strip() if raw_dur and raw_dur.strip() else None
 
+        itunes_img = item.find(f"{{{_ITUNES}}}image")
+        image_href = itunes_img.get("href") if itunes_img is not None else None
+        image_url = image_href.strip() or None if image_href else None
+
+        logger.debug(
+            f"Episode '{title}': explicit={explicit!r}, duration={duration!r}, "
+            f"image_url={'set' if image_url else 'absent'}"
+        )
         return Episode(
             guid=guid,
             title=title,
@@ -252,4 +263,5 @@ class FeedParser:
             description=description,
             explicit=explicit,
             duration=duration,
+            image_url=image_url,
         )
