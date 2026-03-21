@@ -98,6 +98,9 @@ def test_load_valid_config(config_file, monkeypatch):
     assert isinstance(cfg, Config)
     assert cfg.app.base_url == "http://localhost:8080"
     assert cfg.credentials.groq_api_key == "test-groq-key"
+    assert cfg.app.feeds[0].title == "Test Podcast"
+    assert isinstance(cfg.app.paths.output_dir, Path)
+    assert cfg.credentials.groq_api_key == "test-groq-key"
 
 
 def test_load_dotenv_called(tmp_path):
@@ -119,7 +122,7 @@ def test_invalid_yaml(tmp_path):
     bad = tmp_path / "config.yaml"
     bad.write_text("key: [unclosed")
     with patch("config.config_loader.load_dotenv"):
-        with pytest.raises(ConfigError):
+        with pytest.raises(ConfigError, match="Failed to parse"):
             load_config(bad)
 
 
@@ -127,7 +130,7 @@ def test_schema_validation_error(tmp_path):
     bad = tmp_path / "config.yaml"
     bad.write_text(VALID_YAML.replace("min_confidence: 0.7", "min_confidence: 2.0"))
     with patch("config.config_loader.load_dotenv"):
-        with pytest.raises(ConfigError):
+        with pytest.raises(ConfigError, match="validation"):
             load_config(bad)
 
 

@@ -92,7 +92,8 @@ class AppConfig(BaseModel):
 class Credentials(BaseSettings):
     """API credentials loaded from environment variables."""
 
-    # ClassVar annotation prevents RUF012 from flagging this pydantic field
+    # ClassVar tells ruff (RUF012) this is not a pydantic model field;
+    # pydantic-settings still reads it correctly as the settings config dict.
     model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
         env_prefix="", case_sensitive=False
     )
@@ -131,6 +132,7 @@ def load_config(config_path: Path) -> Config:
 
     """
     load_dotenv()
+    logger.debug(f"Loading config from {config_path}")
 
     try:
         with config_path.open() as f:
@@ -170,4 +172,5 @@ def load_config(config_path: Path) -> Config:
         msg = f"Missing required API keys for configured providers: {keys_str}"
         raise ConfigError(msg)
 
+    logger.debug(f"Config loaded and validated from {config_path}")
     return Config(app=app_config, credentials=credentials)
