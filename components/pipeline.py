@@ -98,6 +98,17 @@ class Pipeline:
                     explicit=feed.explicit,
                     pub_date=feed.pub_date,
                     last_build_date=datetime.now().astimezone(),
+                    # Extended channel metadata — passed through verbatim from ParsedFeed.
+                    itunes_type=feed.itunes_type,
+                    itunes_subtitle=feed.itunes_subtitle,
+                    itunes_summary=feed.itunes_summary,
+                    owner_name=feed.owner_name,
+                    owner_email=feed.owner_email,
+                    image_title=feed.image_title,
+                    image_link=feed.image_link,
+                    content_encoded=feed.content_encoded,
+                    itunes_new_feed_url=feed.itunes_new_feed_url,
+                    itunes_complete=feed.itunes_complete,
                 )
                 output_path = await self._feed_publisher.publish(publisher_input)
                 logger.info(f"Feed '{feed.config_title}' published to {output_path}")

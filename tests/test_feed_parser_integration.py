@@ -1,11 +1,14 @@
-"""Integration tests for FeedParser against a real-world RSS feed.
+"""Integration tests for FeedParser against real-world RSS feeds.
 
-Uses tests/static/example.rss — a snapshot of 'The Daily' by The New York Times.
-All expected values are derived directly from that file, so these tests act as a
-regression guard: any parser change that silently drops or mangles a real-world field
-will be caught here.
+Uses:
+  - tests/static/example.rss  — a snapshot of 'The Daily' by The New York Times.
+  - tests/static/example2.rss — a snapshot of 'Prof G Markets' by Scott Galloway.
 
-The feed is parsed once at module level (FeedParser is synchronous) and shared
+All expected values are derived directly from those files, so these tests act as
+regression guards: any parser change that silently drops or mangles a real-world
+field will be caught here.
+
+Each feed is parsed once at module level (FeedParser is synchronous) and shared
 across all tests to keep the suite fast.
 """
 
@@ -35,7 +38,25 @@ _FULL_INPUT = FeedParseInput(
 
 _FEED: ParsedFeed = FeedParser().parse_all([_FULL_INPUT])[0]
 
-# Exact values extracted from the snapshot for use as expected values.
+# ---------------------------------------------------------------------------
+# example2.rss — Prof G Markets (Scott Galloway / Vox Media)
+# ---------------------------------------------------------------------------
+
+_EXAMPLE2_XML = (Path(__file__).parent / "static" / "example2.rss").read_text(encoding="utf-8")
+
+_FULL_INPUT2 = FeedParseInput(
+    config_title="Prof G Markets",
+    feed_url="https://feeds.megaphone.fm/profgmarkets",
+    episodes_to_keep=100,
+    xml_text=_EXAMPLE2_XML,
+)
+
+_FEED2: ParsedFeed = FeedParser().parse_all([_FULL_INPUT2])[0]
+
+# ---------------------------------------------------------------------------
+# Exact values extracted from example.rss for use as expected values.
+# ---------------------------------------------------------------------------
+
 _CHANNEL_IMAGE_URL = (
     "https://image.simplecastcdn.com/images/"
     "7f2f4c05-9c2f-4deb-82b7-b538062bc22d/"
@@ -293,3 +314,168 @@ def test_real_feed_all_episodes_have_explicit_set() -> None:
     # (Mix of True and False values; use test_real_feed_first_episode_explicit_false
     # and the channel test for specific value checks.)
     assert all(ep.explicit is not None for ep in _FEED.episodes)
+
+
+# ---------------------------------------------------------------------------
+# example.rss — new extended channel fields
+# ---------------------------------------------------------------------------
+
+
+def test_real_feed_itunes_type() -> None:
+    assert _FEED.itunes_type == "episodic"
+
+
+def test_real_feed_owner_name() -> None:
+    assert _FEED.owner_name == "The New York Times"
+
+
+def test_real_feed_owner_email() -> None:
+    assert _FEED.owner_email == "thedaily@nytimes.com"
+
+
+def test_real_feed_itunes_new_feed_url() -> None:
+    assert _FEED.itunes_new_feed_url == "https://feeds.simplecast.com/Sl5CSM3S"
+
+
+def test_real_feed_itunes_summary_starts_with() -> None:
+    assert _FEED.itunes_summary is not None
+    assert _FEED.itunes_summary.startswith("This is what the news should sound like.")
+
+
+def test_real_feed_image_title() -> None:
+    assert _FEED.image_title == "The Daily"
+
+
+def test_real_feed_image_link() -> None:
+    assert _FEED.image_link == "https://www.nytimes.com/the-daily"
+
+
+# ---------------------------------------------------------------------------
+# example.rss — new extended episode fields (episode 0)
+# ---------------------------------------------------------------------------
+
+
+def test_real_feed_first_episode_type(first_episode: object) -> None:
+    assert first_episode.episode_type == "full"  # type: ignore[attr-defined]
+
+
+def test_real_feed_first_episode_itunes_author(first_episode: object) -> None:
+    assert first_episode.itunes_author == "The New York Times"  # type: ignore[attr-defined]
+
+
+def test_real_feed_first_episode_itunes_summary_set(first_episode: object) -> None:
+    assert first_episode.itunes_summary is not None  # type: ignore[attr-defined]
+    assert first_episode.itunes_summary.startswith(  # type: ignore[attr-defined]
+        "The writer and actor found unexpected success"
+    )
+
+
+def test_real_feed_first_episode_content_encoded_set(first_episode: object) -> None:
+    assert first_episode.content_encoded is not None  # type: ignore[attr-defined]
+    assert first_episode.content_encoded.startswith("<p>The writer")  # type: ignore[attr-defined]
+
+
+def test_real_feed_first_episode_link(first_episode: object) -> None:
+    assert first_episode.link == "https://www.nytimes.com/the-daily"  # type: ignore[attr-defined]
+
+
+def test_real_feed_first_episode_author(first_episode: object) -> None:
+    assert first_episode.author == "thedaily@nytimes.com (The New York Times)"  # type: ignore[attr-defined]
+
+
+# ===========================================================================
+# example2.rss — Prof G Markets (Scott Galloway / Vox Media)
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Sanity
+# ---------------------------------------------------------------------------
+
+
+def test_profg_feed_parses_successfully() -> None:
+    assert _FEED2 is not None
+
+
+# ---------------------------------------------------------------------------
+# Channel metadata — basic fields
+# ---------------------------------------------------------------------------
+
+
+def test_profg_feed_title() -> None:
+    assert _FEED2.title == "Prof G Markets"
+
+
+def test_profg_feed_link() -> None:
+    assert _FEED2.link == "https://podcasts.voxmedia.com/show/prof-g-markets"
+
+
+def test_profg_feed_language() -> None:
+    assert _FEED2.language == "en"
+
+
+# ---------------------------------------------------------------------------
+# Channel metadata — extended fields
+# ---------------------------------------------------------------------------
+
+
+def test_profg_feed_itunes_type() -> None:
+    assert _FEED2.itunes_type == "episodic"
+
+
+def test_profg_feed_owner_name() -> None:
+    # Encoded as "Prof G Media &amp; Vox Media" in XML; ElementTree decodes to "&".
+    assert _FEED2.owner_name == "Prof G Media & Vox Media"
+
+
+def test_profg_feed_owner_email() -> None:
+    assert _FEED2.owner_email == "podcasting@voxmedia.com"
+
+
+def test_profg_feed_itunes_summary_starts_with() -> None:
+    assert _FEED2.itunes_summary is not None
+    assert _FEED2.itunes_summary.startswith("Prof G Markets breaks down the news")
+
+
+def test_profg_feed_image_title() -> None:
+    assert _FEED2.image_title == "Prof G Markets"
+
+
+def test_profg_feed_image_link() -> None:
+    assert _FEED2.image_link == "https://podcasts.voxmedia.com/show/prof-g-markets"
+
+
+def test_profg_feed_content_encoded_set() -> None:
+    # The channel carries a <content:encoded> block with HTML.
+    assert _FEED2.content_encoded is not None
+    assert "<p>" in _FEED2.content_encoded
+
+
+# ---------------------------------------------------------------------------
+# Episode 0 — extended fields
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def profg_first_episode() -> object:
+    return _FEED2.episodes[0]
+
+
+def test_profg_first_episode_type(profg_first_episode: object) -> None:
+    assert profg_first_episode.episode_type == "full"  # type: ignore[attr-defined]
+
+
+def test_profg_first_episode_itunes_author(profg_first_episode: object) -> None:
+    assert profg_first_episode.itunes_author == "Vox Media Podcast Network"  # type: ignore[attr-defined]
+
+
+def test_profg_first_episode_itunes_summary_set(profg_first_episode: object) -> None:
+    assert profg_first_episode.itunes_summary is not None  # type: ignore[attr-defined]
+    assert profg_first_episode.itunes_summary.startswith(  # type: ignore[attr-defined]
+        "Ed Elson and Scott Galloway are joined by Ed Yardeni"
+    )
+
+
+def test_profg_first_episode_content_encoded_set(profg_first_episode: object) -> None:
+    assert profg_first_episode.content_encoded is not None  # type: ignore[attr-defined]
+    assert "<p>" in profg_first_episode.content_encoded  # type: ignore[attr-defined]

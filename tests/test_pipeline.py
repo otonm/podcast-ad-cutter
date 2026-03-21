@@ -257,6 +257,68 @@ async def test_run_calls_feed_publisher() -> None:
     assert publisher_input.title == "My Podcast"
 
 
+async def test_run_passes_new_channel_fields_to_publisher() -> None:
+    """The 10 new channel-level fields on ParsedFeed must reach PublisherInput unchanged."""
+    feed = make_feed("My Podcast")
+    config = make_config([feed])
+    config.app.base_url = "https://podcasts.example.com"
+    config.app.paths.output_dir = Path("/output")
+
+    # Build a ParsedFeed with all 10 new channel fields populated.
+    parsed = [
+        ParsedFeed(
+            config_title="My Podcast",
+            feed_url="http://x.com/feed",
+            title="My Podcast",
+            itunes_type="episodic",
+            itunes_subtitle="A short subtitle",
+            itunes_summary="A long summary",
+            owner_name="Test Owner",
+            owner_email="owner@test.com",
+            image_title="My Podcast Image",
+            image_link="https://example.com",
+            content_encoded="<p>Encoded content</p>",
+            itunes_new_feed_url="https://new.example.com/feed",
+            itunes_complete=True,
+        )
+    ]
+
+    with (
+        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
+        patch("components.pipeline.FeedParser") as mock_fp_cls,
+        patch("components.pipeline.Database") as mock_db_cls,
+        patch("components.pipeline.EpisodeStore") as mock_store_cls,
+        patch("components.pipeline.FeedPublisher") as mock_publisher_cls,
+    ):
+        mock_dl = mock_dl_cls.return_value
+        mock_dl.download_all = AsyncMock(return_value=[("My Podcast", "<xml/>")])
+        mock_fp = mock_fp_cls.return_value
+        mock_fp.parse_all = MagicMock(return_value=parsed)
+        mock_db = MagicMock()
+        mock_db_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_store = AsyncMock()
+        mock_store.get_episodes_for_feed = AsyncMock(return_value=[])
+        mock_store_cls.return_value = mock_store
+        mock_publisher = AsyncMock()
+        mock_publisher_cls.return_value = mock_publisher
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    mock_publisher.publish.assert_awaited_once()
+    pi: PublisherInput = mock_publisher.publish.call_args[0][0]
+    assert pi.itunes_type == "episodic"
+    assert pi.itunes_subtitle == "A short subtitle"
+    assert pi.itunes_summary == "A long summary"
+    assert pi.owner_name == "Test Owner"
+    assert pi.owner_email == "owner@test.com"
+    assert pi.image_title == "My Podcast Image"
+    assert pi.image_link == "https://example.com"
+    assert pi.content_encoded == "<p>Encoded content</p>"
+    assert pi.itunes_new_feed_url == "https://new.example.com/feed"
+    assert pi.itunes_complete is True
+
+
 async def test_run_saves_parsed_episodes() -> None:
     """Pipeline must call save_episodes once per successfully parsed feed."""
     feed = make_feed("Feed A")
