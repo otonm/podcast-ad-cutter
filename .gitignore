@@ -1,0 +1,17 @@
+.worktrees/
+worktrees/
+
+# Local environment and tooling
+.env
+config.yaml
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+
+# Runtime artifacts
+cache/
+data/
+logs/
+output/
