@@ -136,3 +136,53 @@ def test_pub_date_missing_is_none() -> None:
     episode = parser._parse_episode(item)
     assert episode is not None
     assert episode.pub_date is None
+
+
+# ---------------------------------------------------------------------------
+# _parse_one
+# ---------------------------------------------------------------------------
+
+
+def test_malformed_xml_skipped() -> None:
+    """Malformed XML returns None without raising."""
+    parser = FeedParser()
+    assert parser._parse_one(FEED_CFG, "<<<not xml>>>") is None
+
+
+def test_no_channel_element_skipped() -> None:
+    """An XML document without a <channel> child returns None."""
+    parser = FeedParser()
+    assert parser._parse_one(FEED_CFG, "<rss version='2.0'><notchannel/></rss>") is None
+
+
+def test_feed_title_falls_back_to_config_title() -> None:
+    """When the channel has no <title>, feed_config.title is used."""
+    parser = FeedParser()
+    xml = (
+        "<rss version='2.0'><channel>"
+        "<item><guid>ep1</guid>"
+        '<enclosure url="https://example.com/ep.mp3" type="audio/mpeg" length="0"/>'
+        "</item>"
+        "</channel></rss>"
+    )
+    result = parser._parse_one(FEED_CFG, xml)
+    assert result is not None
+    assert result.title == FEED_CFG.title
+
+
+def test_episodes_limited_to_keep() -> None:
+    """Episodes are sliced to feed_config.episodes_to_keep after parsing."""
+    # FEED_CFG.episodes_to_keep = 3; add 3 more items to VALID_XML (6 total)
+    extra = "".join(
+        f"<item><guid>ep{i}</guid><title>Episode {i}</title>"
+        f'<enclosure url="https://example.com/ep{i}.mp3" type="audio/mpeg" length="{i}"/>'
+        f"<pubDate>Mon, 01 Jan 2024 00:00:00 +0000</pubDate>"
+        f"</item>"
+        for i in range(4, 7)
+    )
+    xml_6eps = VALID_XML.replace("</channel>", extra + "</channel>")
+    parser = FeedParser()
+    result = parser._parse_one(FEED_CFG, xml_6eps)
+    assert result is not None
+    assert len(result.episodes) == FEED_CFG.episodes_to_keep
+    assert result.episodes[0].guid == "ep1"  # document order preserved

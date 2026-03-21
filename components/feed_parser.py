@@ -34,6 +34,39 @@ class ParsedFeed(BaseModel):
 class FeedParser:
     """Stateless RSS/Atom XML parser. No constructor args."""
 
+    def _parse_one(self, feed_config: FeedConfig, xml_text: str) -> ParsedFeed | None:
+        """Parse a single XML blob into a ParsedFeed.
+
+        Returns ``None`` if the XML is malformed or has no ``<channel>`` element.
+        """
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError:
+            logger.warning(f"Failed to parse XML for feed '{feed_config.title}'")
+            return None
+
+        channel = root.find("channel")
+        if channel is None:
+            logger.warning(f"No <channel> element in feed '{feed_config.title}'")
+            return None
+
+        title = (channel.findtext("title") or feed_config.title).strip()
+
+        episodes: list[Episode] = []
+        for item in channel.findall("item"):
+            episode = self._parse_episode(item)
+            if episode is None:
+                logger.debug(
+                    f"Skipping item without valid enclosure in feed '{feed_config.title}'"
+                )
+            else:
+                episodes.append(episode)
+
+        # RSS feeds are newest-first by convention; take the first N.
+        episodes = episodes[: feed_config.episodes_to_keep]
+
+        return ParsedFeed(feed_config=feed_config, title=title, episodes=episodes)
+
     def _parse_episode(self, item: ET.Element) -> Episode | None:
         """Parse a single <item> element.
 
