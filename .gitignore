@@ -9,6 +9,7 @@ config.yaml
 .pytest_cache/
 .ruff_cache/
 __pycache__/
+*.egg-info/
 
 # Runtime artifacts
 cache/

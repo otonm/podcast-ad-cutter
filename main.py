@@ -1,15 +1,18 @@
 """CLI entry point for the podcast ad cutter project."""
 
+from __future__ import annotations
+
 import argparse
 import asyncio
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def load_config(_config_path: Path) -> dict:
+def load_config(_config_path: Path) -> dict[str, Any]:
     """Load configuration from YAML file."""
     # Stub function - to be implemented
     return {}
