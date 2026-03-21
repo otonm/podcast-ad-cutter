@@ -8,7 +8,7 @@ import pytest
 
 from components.pipeline import Pipeline
 from config.config_loader import FeedConfig
-from models.feed import FeedParseInput
+from models.feed import Episode, FeedParseInput, ParsedFeed
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -30,6 +30,16 @@ def make_config(feeds: list[FeedConfig]) -> MagicMock:
     return cfg
 
 
+def _patch_db() -> tuple[MagicMock, MagicMock]:
+    """Return (mock_db_cls_patch, mock_db) for use with patch()."""
+    mock_db = MagicMock()
+    mock_db.conn = AsyncMock()
+    mock_db_cls = MagicMock()
+    mock_db_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+    return mock_db_cls, mock_db
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -44,9 +54,14 @@ async def test_run_passes_only_enabled_feeds() -> None:
     with (
         patch("components.pipeline.FeedDownloader") as mock_downloader_cls,
         patch("components.pipeline.FeedParser"),
+        patch("components.pipeline.Database") as mock_db_cls,
     ):
         mock_dl = mock_downloader_cls.return_value
         mock_dl.download_all = AsyncMock(return_value=[("enabled", "<xml/>")])
+        mock_db = MagicMock()
+        mock_db.conn = AsyncMock()
+        mock_db_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
         pipeline = Pipeline(config)
         await pipeline.run()
 
@@ -61,9 +76,14 @@ async def test_run_preserves_config_order() -> None:
     with (
         patch("components.pipeline.FeedDownloader") as mock_downloader_cls,
         patch("components.pipeline.FeedParser"),
+        patch("components.pipeline.Database") as mock_db_cls,
     ):
         mock_dl = mock_downloader_cls.return_value
         mock_dl.download_all = AsyncMock(return_value=[])
+        mock_db = MagicMock()
+        mock_db.conn = AsyncMock()
+        mock_db_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
         pipeline = Pipeline(config)
         await pipeline.run()
 
@@ -81,11 +101,16 @@ async def test_run_returns_parser_result() -> None:
     with (
         patch("components.pipeline.FeedDownloader") as mock_dl_cls,
         patch("components.pipeline.FeedParser") as mock_fp_cls,
+        patch("components.pipeline.Database") as mock_db_cls,
     ):
         mock_dl = mock_dl_cls.return_value
         mock_dl.download_all = AsyncMock(return_value=[("test", "<rss/>")])
         mock_fp = mock_fp_cls.return_value
         mock_fp.parse_all = MagicMock(return_value=parsed)
+        mock_db = MagicMock()
+        mock_db.conn = AsyncMock()
+        mock_db_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
         pipeline = Pipeline(config)
         result = await pipeline.run()
 
@@ -100,11 +125,16 @@ async def test_run_calls_feed_parser() -> None:
     with (
         patch("components.pipeline.FeedDownloader") as mock_dl_cls,
         patch("components.pipeline.FeedParser") as mock_fp_cls,
+        patch("components.pipeline.Database") as mock_db_cls,
     ):
         mock_dl = mock_dl_cls.return_value
         mock_dl.download_all = AsyncMock(return_value=[("test", "<xml/>")])
         mock_fp = mock_fp_cls.return_value
         mock_fp.parse_all = MagicMock(return_value=[])
+        mock_db = MagicMock()
+        mock_db.conn = AsyncMock()
+        mock_db_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
         pipeline = Pipeline(config)
         await pipeline.run()
 
@@ -122,9 +152,16 @@ async def test_run_with_no_enabled_feeds() -> None:
     disabled = make_feed("disabled", enabled=False)
     config = make_config([disabled])
 
-    with patch("components.pipeline.FeedDownloader") as mock_downloader_cls:
+    with (
+        patch("components.pipeline.FeedDownloader") as mock_downloader_cls,
+        patch("components.pipeline.Database") as mock_db_cls,
+    ):
         mock_dl = mock_downloader_cls.return_value
         mock_dl.download_all = AsyncMock(return_value=[])
+        mock_db = MagicMock()
+        mock_db.conn = AsyncMock()
+        mock_db_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
         pipeline = Pipeline(config)
         result = await pipeline.run()
 
@@ -138,9 +175,16 @@ async def test_run_with_feed_name_forces_disabled_feed() -> None:
     other = make_feed("other", enabled=True)
     config = make_config([disabled, other])
 
-    with patch("components.pipeline.FeedDownloader") as mock_downloader_cls:
+    with (
+        patch("components.pipeline.FeedDownloader") as mock_downloader_cls,
+        patch("components.pipeline.Database") as mock_db_cls,
+    ):
         mock_dl = mock_downloader_cls.return_value
         mock_dl.download_all = AsyncMock(return_value=[("target", "<xml/>")])
+        mock_db = MagicMock()
+        mock_db.conn = AsyncMock()
+        mock_db_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
         pipeline = Pipeline(config, feed_name="target")
         await pipeline.run()
 
@@ -153,9 +197,16 @@ async def test_run_with_feed_name_excludes_other_feeds() -> None:
     other = make_feed("other", enabled=True)
     config = make_config([target, other])
 
-    with patch("components.pipeline.FeedDownloader") as mock_downloader_cls:
+    with (
+        patch("components.pipeline.FeedDownloader") as mock_downloader_cls,
+        patch("components.pipeline.Database") as mock_db_cls,
+    ):
         mock_dl = mock_downloader_cls.return_value
         mock_dl.download_all = AsyncMock(return_value=[("target", "<xml/>")])
+        mock_db = MagicMock()
+        mock_db.conn = AsyncMock()
+        mock_db_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
         pipeline = Pipeline(config, feed_name="target")
         await pipeline.run()
 
@@ -171,3 +222,31 @@ async def test_run_with_unknown_feed_name_raises() -> None:
         pipeline = Pipeline(config, feed_name="nonexistent")
         with pytest.raises(ValueError, match="nonexistent"):
             await pipeline.run()
+
+
+async def test_run_saves_parsed_episodes() -> None:
+    """Pipeline must call save_episodes once per successfully parsed feed."""
+    feed = make_feed("Feed A")
+    config = make_config([feed])
+    ep = Episode(guid="g1", url="http://x.com/ep.mp3", title="Ep 1")
+    parsed = [ParsedFeed(config_title="Feed A", feed_url="http://x.com/feed", title="Feed A", episodes=[ep])]
+
+    with (
+        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
+        patch("components.pipeline.FeedParser") as mock_fp_cls,
+        patch("components.pipeline.Database") as mock_db_cls,
+        patch("components.pipeline.EpisodeStore") as mock_store_cls,
+    ):
+        mock_dl = mock_dl_cls.return_value
+        mock_dl.download_all = AsyncMock(return_value=[("Feed A", "<xml/>")])
+        mock_fp = mock_fp_cls.return_value
+        mock_fp.parse_all = MagicMock(return_value=parsed)
+        mock_db = MagicMock()
+        mock_db_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_store = AsyncMock()
+        mock_store_cls.return_value = mock_store
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    mock_store.save_episodes.assert_awaited_once_with("Feed A", [ep])

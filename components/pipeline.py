@@ -7,9 +7,13 @@ from typing import TYPE_CHECKING
 
 from components.feed_downloader import FeedDownloader
 from components.feed_parser import FeedParser
+from database.connection import Database
+from database.episode_store import EpisodeStore
 from models.feed import FeedParseInput, ParsedFeed
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from config.config_loader import Config, FeedConfig
 
 logger = logging.getLogger(__name__)
@@ -39,6 +43,7 @@ class Pipeline:
     def __init__(self, config: Config, feed_name: str | None = None) -> None:
         self._config = config
         self._feed_name = feed_name
+        self._db_path: Path = config.app.paths.data_dir / "data.db"
         self._feed_downloader = FeedDownloader()
         self._feed_parser = FeedParser()
 
@@ -57,7 +62,14 @@ class Pipeline:
         selected = self._select_feeds()
         download_results = await self._download(selected)
         parse_inputs = self._build_parse_inputs(selected, download_results)
-        return self._feed_parser.parse_all(parse_inputs)
+        parsed_feeds = self._feed_parser.parse_all(parse_inputs)
+
+        async with Database(self._db_path) as db:
+            store = EpisodeStore(db.conn)
+            for feed in parsed_feeds:
+                await store.save_episodes(feed.config_title, feed.episodes)
+
+        return parsed_feeds
 
     def _select_feeds(self) -> list[FeedConfig]:
         """Return the feeds to process for this run.
