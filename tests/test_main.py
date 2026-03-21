@@ -138,3 +138,15 @@ class TestParseArgs:
             mp.setattr(sys, "argv", ["main.py"])
             args = parse_args()
         assert args.log_to_file is False
+
+    def test_feed_flag_sets_name(self) -> None:
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr(sys, "argv", ["main.py", "--feed", "My Podcast"])
+            args = parse_args()
+        assert args.feed == "My Podcast"
+
+    def test_feed_defaults_to_none(self) -> None:
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setattr(sys, "argv", ["main.py"])
+            args = parse_args()
+        assert args.feed is None

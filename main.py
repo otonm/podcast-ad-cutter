@@ -104,7 +104,7 @@ async def main() -> None:
         sys.exit(1)
 
     # CLI flags supersede config file: -d forces DEBUG regardless of log.level;
-    # --log-to-file forces file output regardless of log.to_file.
+    # --log-to-file forces file output regardless of log.to_file config option.
     effective_level = "DEBUG" if args.debug else cfg.app.log.level
     effective_log_to_file = args.log_to_file or cfg.app.log.to_file
     configure_logging(
@@ -113,8 +113,12 @@ async def main() -> None:
         log_dir=cfg.app.paths.log_dir,
     )
 
-    pipeline = Pipeline(cfg)
-    await pipeline.run()
+    pipeline = Pipeline(cfg, feed_name=args.feed)
+    try:
+        await pipeline.run()
+    except ValueError as exc:
+        sys.stderr.write(f"Error: {exc}\n")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
