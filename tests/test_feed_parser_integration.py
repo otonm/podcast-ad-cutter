@@ -350,6 +350,16 @@ def test_real_feed_image_link() -> None:
     assert _FEED.image_link == "https://www.nytimes.com/the-daily"
 
 
+def test_real_feed_itunes_subtitle_absent() -> None:
+    # example.rss has no <itunes:subtitle> at channel level.
+    assert _FEED.itunes_subtitle is None
+
+
+def test_real_feed_itunes_complete_false() -> None:
+    # example.rss has no <itunes:complete> element; should default to False.
+    assert _FEED.itunes_complete is False
+
+
 # ---------------------------------------------------------------------------
 # example.rss — new extended episode fields (episode 0)
 # ---------------------------------------------------------------------------
@@ -449,6 +459,17 @@ def test_profg_feed_content_encoded_set() -> None:
     # The channel carries a <content:encoded> block with HTML.
     assert _FEED2.content_encoded is not None
     assert "<p>" in _FEED2.content_encoded
+
+
+def test_profg_feed_itunes_subtitle_absent() -> None:
+    # example2.rss has <itunes:subtitle></itunes:subtitle> at channel level —
+    # an empty element that should parse to None rather than an empty string.
+    assert _FEED2.itunes_subtitle is None
+
+
+def test_profg_feed_itunes_complete_false() -> None:
+    # example2.rss has no <itunes:complete> element; should default to False.
+    assert _FEED2.itunes_complete is False
 
 
 # ---------------------------------------------------------------------------
