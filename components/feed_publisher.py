@@ -59,6 +59,7 @@ logger = logging.getLogger(__name__)
 
 _ITUNES = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 _ATOM = "http://www.w3.org/2005/Atom"
+_CONTENT = "http://purl.org/rss/1.0/modules/content/"
 
 # Map common audio file extensions to MIME types for the enclosure element.
 _MIME_MAP: dict[str, str] = {
@@ -72,6 +73,7 @@ _MIME_MAP: dict[str, str] = {
 # Register namespaces globally so ElementTree serialises them with clean prefixes.
 ET.register_namespace("itunes", _ITUNES)
 ET.register_namespace("atom", _ATOM)
+ET.register_namespace("content", _CONTENT)
 
 
 class FeedPublisher:
@@ -175,31 +177,73 @@ class FeedPublisher:
         atom_link.set("href", feed_url)
         atom_link.set("type", "application/rss+xml")
 
-        if feed_input.description:
-            _add_text(channel, "description", feed_input.description)
-        if feed_input.language:
-            _add_text(channel, "language", feed_input.language)
-        if feed_input.copyright:
-            _add_text(channel, "copyright", feed_input.copyright)
-        if feed_input.author:
-            _add_text(channel, f"{{{_ITUNES}}}author", feed_input.author)
+        # Flat optional text fields — tag written only when value is truthy.
+        for tag, value in (
+            ("description", feed_input.description),
+            ("language", feed_input.language),
+            ("copyright", feed_input.copyright),
+            (f"{{{_ITUNES}}}author", feed_input.author),
+        ):
+            if value:
+                _add_text(channel, tag, value)
+
         if feed_input.image_url:
             img = ET.SubElement(channel, f"{{{_ITUNES}}}image")
             img.set("href", feed_input.image_url)
         if feed_input.explicit is not None:
             _add_text(channel, f"{{{_ITUNES}}}explicit", "yes" if feed_input.explicit else "no")
-        for category in feed_input.categories:
-            cat_el = ET.SubElement(channel, f"{{{_ITUNES}}}category")
-            cat_el.set("label", category)
+
+        # itunes:category hierarchy — delegated to module-level helper.
+        _add_channel_categories(channel, feed_input.categories)
 
         _add_text(channel, "pubDate", format_datetime(feed_input.pub_date))
         _add_text(channel, "lastBuildDate", format_datetime(feed_input.last_build_date))
+
+        # Delegate extended channel fields to keep this method within complexity limits.
+        self._add_channel_extended_fields(channel, feed_input)
 
         for episode in feed_input.episodes:
             self._add_item(channel, episode)
 
         ET.indent(rss, space="  ")
         return ET.tostring(rss, encoding="unicode", xml_declaration=True)
+
+    def _add_channel_extended_fields(self, channel: ET.Element, feed_input: PublisherInput) -> None:
+        """Write extended channel-level metadata fields to the channel element.
+
+        Called by ``_build_xml`` to keep that method's complexity manageable.
+        Each field is written only when it carries a non-empty value.
+        """
+        # Standard RSS <image> block — reconstruct from image_url + optional title/link.
+        if feed_input.image_url:
+            img_block = ET.SubElement(channel, "image")
+            _add_text(img_block, "url", feed_input.image_url)
+            if feed_input.image_title:
+                _add_text(img_block, "title", feed_input.image_title)
+            if feed_input.image_link:
+                _add_text(img_block, "link", feed_input.image_link)
+
+        # Flat optional iTunes channel fields driven by a lookup table.
+        for tag, value in (
+            (f"{{{_ITUNES}}}type", feed_input.itunes_type),
+            (f"{{{_ITUNES}}}subtitle", feed_input.itunes_subtitle),
+            (f"{{{_ITUNES}}}summary", feed_input.itunes_summary),
+            (f"{{{_CONTENT}}}encoded", feed_input.content_encoded),
+            (f"{{{_ITUNES}}}new-feed-url", feed_input.itunes_new_feed_url),
+        ):
+            if value:
+                _add_text(channel, tag, value)
+
+        # <itunes:owner> block — written when at least one of name or email is present.
+        if feed_input.owner_name or feed_input.owner_email:
+            owner_el = ET.SubElement(channel, f"{{{_ITUNES}}}owner")
+            if feed_input.owner_name:
+                _add_text(owner_el, f"{{{_ITUNES}}}name", feed_input.owner_name)
+            if feed_input.owner_email:
+                _add_text(owner_el, f"{{{_ITUNES}}}email", feed_input.owner_email)
+
+        if feed_input.itunes_complete is True:
+            _add_text(channel, f"{{{_ITUNES}}}complete", "yes")
 
     def _add_item(self, channel: ET.Element, episode: Episode) -> None:
         """Append an <item> element for a single episode to the channel."""
@@ -226,6 +270,58 @@ class FeedPublisher:
         if episode.image_url:
             ep_img = ET.SubElement(item, f"{{{_ITUNES}}}image")
             ep_img.set("href", episode.image_url)
+
+        # Delegate extended episode fields to keep this method within complexity limits.
+        self._add_item_extended_fields(item, episode)
+
+    def _add_item_extended_fields(self, item: ET.Element, episode: Episode) -> None:
+        """Write extended episode-level metadata fields to the item element.
+
+        Called by ``_add_item`` to keep that method's complexity manageable.
+        Each field is written only when it carries a non-empty / non-False value.
+        """
+        # Flat optional text fields driven by a lookup table — avoids one branch per field.
+        for tag, value in (
+            ("link", episode.link),
+            ("author", episode.author),
+            (f"{{{_ITUNES}}}title", episode.itunes_title),
+            (f"{{{_ITUNES}}}episodeType", episode.episode_type),
+            (f"{{{_ITUNES}}}author", episode.itunes_author),
+            (f"{{{_ITUNES}}}subtitle", episode.itunes_subtitle),
+            (f"{{{_ITUNES}}}summary", episode.itunes_summary),
+            (f"{{{_CONTENT}}}encoded", episode.content_encoded),
+        ):
+            if value:
+                _add_text(item, tag, value)
+
+        # Integer fields require explicit None-check because 0 is a valid episode number.
+        if episode.episode_number is not None:
+            _add_text(item, f"{{{_ITUNES}}}episode", str(episode.episode_number))
+        if episode.season_number is not None:
+            _add_text(item, f"{{{_ITUNES}}}season", str(episode.season_number))
+        if episode.itunes_block is True:
+            _add_text(item, f"{{{_ITUNES}}}block", "yes")
+
+
+def _add_channel_categories(channel: ET.Element, categories: list[str]) -> None:
+    """Write itunes:category elements to the channel using the correct hierarchy.
+
+    The first category becomes the parent element; all subsequent entries are
+    nested as child ``<itunes:category>`` elements inside it.  Nothing is written
+    when the list is empty.
+
+    Args:
+        channel: The ``<channel>`` element to append to.
+        categories: Ordered list of category strings from ``PublisherInput``.
+
+    """
+    if not categories:
+        return
+    parent_cat = ET.SubElement(channel, f"{{{_ITUNES}}}category")
+    parent_cat.set("text", categories[0])
+    for subcategory in categories[1:]:
+        child_cat = ET.SubElement(parent_cat, f"{{{_ITUNES}}}category")
+        child_cat.set("text", subcategory)
 
 
 def _add_text(parent: ET.Element, tag: str, text: str) -> ET.Element:

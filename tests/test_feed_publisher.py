@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 _ITUNES = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 _ATOM = "http://www.w3.org/2005/Atom"
+_CONTENT = "http://purl.org/rss/1.0/modules/content/"
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +40,18 @@ def episodes(pub_date: datetime) -> list[Episode]:
             description="First episode",
             explicit=False,
             duration="01:00:00",
+            # New fields for Task 3 coverage
+            episode_type="full",
+            itunes_author="Test Author",
+            itunes_subtitle="Episode subtitle",
+            itunes_summary="Episode summary",
+            content_encoded="<p>Episode HTML</p>",
+            link="https://example.com/ep1",
+            author="author@example.com (Test Author)",
+            itunes_title="iTunes Title",
+            episode_number=1,
+            season_number=2,
+            itunes_block=False,
         ),
         Episode(
             guid="guid-2",
@@ -63,6 +76,17 @@ def feed_input(episodes: list[Episode]) -> PublisherInput:
         image_url="https://mypodcast.com/cover.jpg",
         categories=["Technology", "Science"],
         explicit=False,
+        # New fields for Task 3 coverage
+        itunes_type="episodic",
+        itunes_subtitle="A test subtitle",
+        itunes_summary="A test summary",
+        owner_name="Test Owner",
+        owner_email="owner@example.com",
+        image_title="My Podcast",
+        image_link="https://mypodcast.com",
+        content_encoded="<p>HTML content</p>",
+        itunes_new_feed_url="https://new.example.com/feed.rss",
+        itunes_complete=False,
     )
 
 
@@ -171,13 +195,17 @@ async def test_published_feed_itunes_image(tmp_path: Path, feed_input: Publisher
 
 
 async def test_published_feed_itunes_categories(tmp_path: Path, feed_input: PublisherInput) -> None:
+    # feed_input has categories=["Technology", "Science"]; Technology is parent, Science is child.
     publisher = FeedPublisher(tmp_path)
     path = await publisher.publish(feed_input)
     channel = ET.parse(str(path)).getroot().find("channel")
     assert channel is not None
-    cats = [el.get("label") for el in channel.findall(f"{{{_ITUNES}}}category")]
-    assert "Technology" in cats
-    assert "Science" in cats
+    parent_cat = channel.find(f"{{{_ITUNES}}}category")
+    assert parent_cat is not None
+    assert parent_cat.get("text") == "Technology"
+    child = parent_cat.find(f"{{{_ITUNES}}}category")
+    assert child is not None
+    assert child.get("text") == "Science"
 
 
 # ---------------------------------------------------------------------------
@@ -506,3 +534,425 @@ def test_publisher_input_new_channel_fields_accept_values() -> None:
     assert feed.content_encoded == "<p>HTML</p>"
     assert feed.itunes_new_feed_url == "https://new.example.com/feed.rss"
     assert feed.itunes_complete is True
+
+
+# ---------------------------------------------------------------------------
+# Tests: itunes:category correctness (Task 3)
+# ---------------------------------------------------------------------------
+
+
+async def test_category_uses_text_attribute(tmp_path: Path) -> None:
+    """Category elements must use text= attribute, not label=."""
+    feed = PublisherInput(
+        base_url="https://x.com",
+        title="Cat Feed",
+        episodes=[],
+        categories=["Business"],
+    )
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    cat = channel.find(f"{{{_ITUNES}}}category")
+    assert cat is not None
+    assert cat.get("text") == "Business"
+    assert cat.get("label") is None  # must NOT use label=
+
+
+async def test_category_hierarchy_multiple(tmp_path: Path) -> None:
+    """First category is parent; subsequent categories are nested children."""
+    feed = PublisherInput(
+        base_url="https://x.com",
+        title="Cat Feed",
+        episodes=[],
+        categories=["Business", "Investing", "Entrepreneurship"],
+    )
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+
+    # Only one top-level itunes:category element (the parent)
+    top_cats = channel.findall(f"{{{_ITUNES}}}category")
+    assert len(top_cats) == 1
+    parent = top_cats[0]
+    assert parent.get("text") == "Business"
+
+    # Children are nested inside the parent
+    children = parent.findall(f"{{{_ITUNES}}}category")
+    assert len(children) == 2
+    assert children[0].get("text") == "Investing"
+    assert children[1].get("text") == "Entrepreneurship"
+
+
+async def test_category_hierarchy_single(tmp_path: Path) -> None:
+    """Single category has no nested children."""
+    feed = PublisherInput(
+        base_url="https://x.com",
+        title="Cat Feed",
+        episodes=[],
+        categories=["Technology"],
+    )
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+
+    top_cats = channel.findall(f"{{{_ITUNES}}}category")
+    assert len(top_cats) == 1
+    parent = top_cats[0]
+    assert parent.get("text") == "Technology"
+    assert parent.findall(f"{{{_ITUNES}}}category") == []
+
+
+async def test_category_empty_list_writes_nothing(tmp_path: Path) -> None:
+    """Empty categories list must produce no itunes:category elements."""
+    feed = PublisherInput(
+        base_url="https://x.com",
+        title="Cat Feed",
+        episodes=[],
+        categories=[],
+    )
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    assert channel.findall(f"{{{_ITUNES}}}category") == []
+
+
+# ---------------------------------------------------------------------------
+# Tests: new channel fields in output XML (Task 3)
+# ---------------------------------------------------------------------------
+
+
+async def test_image_block_written_with_url_title_link(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """<image> block must contain <url>, <title>, and <link> sub-elements."""
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    img = channel.find("image")
+    assert img is not None
+    assert img.findtext("url") == "https://mypodcast.com/cover.jpg"
+    assert img.findtext("title") == "My Podcast"
+    assert img.findtext("link") == "https://mypodcast.com"
+
+
+async def test_image_block_url_only_when_title_link_absent(tmp_path: Path) -> None:
+    """<image> block with only image_url set must only contain <url>, no <title> or <link>."""
+    feed = PublisherInput(
+        base_url="https://x.com",
+        title="Pod",
+        episodes=[],
+        image_url="https://example.com/art.jpg",
+        image_title=None,
+        image_link=None,
+    )
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    img = channel.find("image")
+    assert img is not None
+    assert img.findtext("url") == "https://example.com/art.jpg"
+    assert img.find("title") is None
+    assert img.find("link") is None
+
+
+async def test_itunes_type_written(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """<itunes:type> must appear in channel when set."""
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    assert channel.findtext(f"{{{_ITUNES}}}type") == "episodic"
+
+
+async def test_itunes_subtitle_written(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """<itunes:subtitle> must appear in channel when set."""
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    assert channel.findtext(f"{{{_ITUNES}}}subtitle") == "A test subtitle"
+
+
+async def test_itunes_summary_written(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """<itunes:summary> must appear in channel when set."""
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    assert channel.findtext(f"{{{_ITUNES}}}summary") == "A test summary"
+
+
+async def test_owner_block_written_with_name_and_email(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """<itunes:owner> must contain both <itunes:name> and <itunes:email> when both are set."""
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    owner = channel.find(f"{{{_ITUNES}}}owner")
+    assert owner is not None
+    assert owner.findtext(f"{{{_ITUNES}}}name") == "Test Owner"
+    assert owner.findtext(f"{{{_ITUNES}}}email") == "owner@example.com"
+
+
+async def test_owner_block_name_only(tmp_path: Path) -> None:
+    """<itunes:owner> with only owner_name set must omit <itunes:email>."""
+    feed = PublisherInput(
+        base_url="https://x.com",
+        title="Pod",
+        episodes=[],
+        owner_name="Only Name",
+        owner_email=None,
+    )
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    owner = channel.find(f"{{{_ITUNES}}}owner")
+    assert owner is not None
+    assert owner.findtext(f"{{{_ITUNES}}}name") == "Only Name"
+    assert owner.find(f"{{{_ITUNES}}}email") is None
+
+
+async def test_owner_block_email_only(tmp_path: Path) -> None:
+    """<itunes:owner> with only owner_email set must omit <itunes:name>."""
+    feed = PublisherInput(
+        base_url="https://x.com",
+        title="Pod",
+        episodes=[],
+        owner_name=None,
+        owner_email="only@example.com",
+    )
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    owner = channel.find(f"{{{_ITUNES}}}owner")
+    assert owner is not None
+    assert owner.find(f"{{{_ITUNES}}}name") is None
+    assert owner.findtext(f"{{{_ITUNES}}}email") == "only@example.com"
+
+
+async def test_owner_block_not_written_when_both_absent(tmp_path: Path) -> None:
+    """<itunes:owner> must be absent when both owner_name and owner_email are None."""
+    feed = PublisherInput(
+        base_url="https://x.com",
+        title="Pod",
+        episodes=[],
+        owner_name=None,
+        owner_email=None,
+    )
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    assert channel.find(f"{{{_ITUNES}}}owner") is None
+
+
+async def test_content_encoded_channel_written(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """<content:encoded> must appear in channel when set."""
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    assert channel.findtext(f"{{{_CONTENT}}}encoded") == "<p>HTML content</p>"
+
+
+async def test_itunes_new_feed_url_written(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """<itunes:new-feed-url> must appear in channel when set."""
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    assert channel.findtext(f"{{{_ITUNES}}}new-feed-url") == "https://new.example.com/feed.rss"
+
+
+async def test_itunes_complete_written_when_true(tmp_path: Path) -> None:
+    """<itunes:complete>yes</itunes:complete> must appear when itunes_complete is True."""
+    feed = PublisherInput(
+        base_url="https://x.com",
+        title="Pod",
+        episodes=[],
+        itunes_complete=True,
+    )
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    assert channel.findtext(f"{{{_ITUNES}}}complete") == "yes"
+
+
+async def test_itunes_complete_not_written_when_false(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """<itunes:complete> must be absent when itunes_complete is False."""
+    # feed_input has itunes_complete=False
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    assert channel.find(f"{{{_ITUNES}}}complete") is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: new episode fields in output XML (Task 3)
+# ---------------------------------------------------------------------------
+
+
+async def test_episode_link_written(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """Episode <link> must appear when set."""
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    item = channel.findall("item")[0]
+    assert item.findtext("link") == "https://example.com/ep1"
+
+
+async def test_episode_author_written(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """Episode <author> must appear when set."""
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    item = channel.findall("item")[0]
+    assert item.findtext("author") == "author@example.com (Test Author)"
+
+
+async def test_episode_itunes_title_written(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """Episode <itunes:title> must appear when set."""
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    item = channel.findall("item")[0]
+    assert item.findtext(f"{{{_ITUNES}}}title") == "iTunes Title"
+
+
+async def test_episode_type_written(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """Episode <itunes:episodeType> must appear when set."""
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    item = channel.findall("item")[0]
+    assert item.findtext(f"{{{_ITUNES}}}episodeType") == "full"
+
+
+async def test_episode_itunes_author_written(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """Episode <itunes:author> must appear when set."""
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    item = channel.findall("item")[0]
+    assert item.findtext(f"{{{_ITUNES}}}author") == "Test Author"
+
+
+async def test_episode_number_written(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """Episode <itunes:episode> must appear when episode_number is set."""
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    item = channel.findall("item")[0]
+    assert item.findtext(f"{{{_ITUNES}}}episode") == "1"
+
+
+async def test_episode_season_written(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """Episode <itunes:season> must appear when season_number is set."""
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    item = channel.findall("item")[0]
+    assert item.findtext(f"{{{_ITUNES}}}season") == "2"
+
+
+async def test_episode_itunes_subtitle_written(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """Episode <itunes:subtitle> must appear when set."""
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    item = channel.findall("item")[0]
+    assert item.findtext(f"{{{_ITUNES}}}subtitle") == "Episode subtitle"
+
+
+async def test_episode_itunes_summary_written(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """Episode <itunes:summary> must appear when set."""
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    item = channel.findall("item")[0]
+    assert item.findtext(f"{{{_ITUNES}}}summary") == "Episode summary"
+
+
+async def test_episode_itunes_block_written_when_true(tmp_path: Path, pub_date: datetime) -> None:
+    """<itunes:block>yes</itunes:block> must appear when itunes_block is True."""
+    ep = Episode(
+        guid="guid-blocked",
+        url="https://origin.com/ep.mp3",
+        title="Blocked Episode",
+        pub_date=pub_date,
+        itunes_block=True,
+    )
+    feed = PublisherInput(base_url="https://x.com", title="Pod", episodes=[ep])
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    item = channel.findall("item")[0]
+    assert item.findtext(f"{{{_ITUNES}}}block") == "yes"
+
+
+async def test_episode_itunes_block_not_written_when_false(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """<itunes:block> must be absent when itunes_block is False."""
+    # episodes[0] in feed_input has itunes_block=False
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    item = channel.findall("item")[0]
+    assert item.find(f"{{{_ITUNES}}}block") is None
+
+
+async def test_episode_content_encoded_written(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """Episode <content:encoded> must appear when set."""
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    item = channel.findall("item")[0]
+    assert item.findtext(f"{{{_CONTENT}}}encoded") == "<p>Episode HTML</p>"
+
+
+async def test_absent_new_episode_fields_not_written(tmp_path: Path, pub_date: datetime) -> None:
+    """A minimal Episode with no new Task-3 fields must not emit any of those tags."""
+    ep = Episode(
+        guid="guid-minimal",
+        url="https://origin.com/ep.mp3",
+        title="Minimal Episode",
+        pub_date=pub_date,
+    )
+    feed = PublisherInput(base_url="https://x.com", title="Pod", episodes=[ep])
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    item = channel.findall("item")[0]
+
+    # None of these should appear
+    assert item.find("link") is None
+    assert item.find("author") is None
+    assert item.find(f"{{{_ITUNES}}}title") is None
+    assert item.find(f"{{{_ITUNES}}}episodeType") is None
+    assert item.find(f"{{{_ITUNES}}}author") is None
+    assert item.find(f"{{{_ITUNES}}}episode") is None
+    assert item.find(f"{{{_ITUNES}}}season") is None
+    assert item.find(f"{{{_ITUNES}}}subtitle") is None
+    assert item.find(f"{{{_ITUNES}}}summary") is None
+    assert item.find(f"{{{_ITUNES}}}block") is None
+    assert item.find(f"{{{_CONTENT}}}encoded") is None
