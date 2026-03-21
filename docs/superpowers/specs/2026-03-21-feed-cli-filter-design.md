@@ -74,7 +74,7 @@ pipeline = Pipeline(cfg, feed_name=args.feed)
 | `components/pipeline.py` | Add `feed_name` param to `__init__`; update `run()` filter |
 | `main.py` | Pass `feed_name=args.feed` to `Pipeline`; catch `ValueError` |
 | `tests/test_pipeline.py` | 3 new test cases (disabled feed forced, only target processed, unknown name) |
-| `tests/test_main.py` | 2 new test cases (`--feed` parses correctly, defaults to `None`) |
+| `tests/test_main.py` | 2 new test cases: `test_feed_flag_sets_name` (`--feed myshow` → `args.feed == "myshow"`), `test_feed_defaults_to_none` (no flag → `args.feed is None`) |
 
 ## Out of scope
 
