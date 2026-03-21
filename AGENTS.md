@@ -39,6 +39,7 @@ Write tests before implementation.
 ## Linting/Code Checking
 
 - Run `uv run pytest` after every change; all tests must pass before proceeding.
+- Run `uv run pytest --cov=.` after every change; coverage must be 100% before proceeding.
 - Run `uv run ruff` after every change; all errors must be resolved before proceeding.
 
 ---
@@ -48,6 +49,7 @@ Write tests before implementation.
 ```bash
 uv run python main.py       # run app
 uv run pytest               # run tests
+uv run pytest --cov=.       # run coverage
 uv run ruff                 # run ruff
 uv run python               # run local python version
 ```

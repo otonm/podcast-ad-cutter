@@ -6,10 +6,12 @@ import logging
 import re
 import sys
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from main import configure_logging, parse_args
+from main import configure_logging, main, parse_args
+from utils.exceptions import ConfigError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -150,3 +152,62 @@ class TestParseArgs:
             mp.setattr(sys, "argv", ["main.py"])
             args = parse_args()
         assert args.feed is None
+
+
+# ---------------------------------------------------------------------------
+# main() — async entry point
+# ---------------------------------------------------------------------------
+
+
+class TestMain:
+    async def test_config_error_writes_to_stderr_and_exits(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        with (
+            patch("main.load_config", side_effect=ConfigError("bad config")),
+            patch("sys.stderr") as mock_stderr,
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                await main()
+        assert exc_info.value.code == 1
+        mock_stderr.write.assert_called_once_with("Failed to load config: bad config\n")
+
+    async def test_pipeline_value_error_writes_to_stderr_and_exits(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        mock_cfg = MagicMock()
+        mock_cfg.app.log.level = "INFO"
+        mock_cfg.app.log.to_file = False
+        mock_cfg.app.paths.log_dir = tmp_path
+        with (
+            patch("main.load_config", return_value=mock_cfg),
+            patch("main.configure_logging"),
+            patch("main.Pipeline") as mock_pipeline_cls,
+            patch("sys.stderr") as mock_stderr,
+        ):
+            mock_pipeline_cls.return_value.run = AsyncMock(
+                side_effect=ValueError("nonexistent feed")
+            )
+            with pytest.raises(SystemExit) as exc_info:
+                await main()
+        assert exc_info.value.code == 1
+        mock_stderr.write.assert_called_once_with("Error: nonexistent feed\n")
+
+    async def test_happy_path_runs_pipeline(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        mock_cfg = MagicMock()
+        mock_cfg.app.log.level = "INFO"
+        mock_cfg.app.log.to_file = False
+        mock_cfg.app.paths.log_dir = tmp_path
+        with (
+            patch("main.load_config", return_value=mock_cfg),
+            patch("main.configure_logging"),
+            patch("main.Pipeline") as mock_pipeline_cls,
+        ):
+            mock_pipeline_cls.return_value.run = AsyncMock(return_value=[])
+            await main()
+        mock_pipeline_cls.return_value.run.assert_awaited_once()

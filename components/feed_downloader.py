@@ -75,6 +75,6 @@ class FeedDownloader:
                 xml = await response.text()
                 logger.debug(f"Feed '{title}' fetched: {len(xml)} characters")
                 return xml
-        except aiohttp.ClientError:
-            logger.error(f"Failed to fetch feed '{title}'")
+        except aiohttp.ClientError as exc:
+            logger.error(f"Failed to fetch feed '{title}': {exc}")
             return None
