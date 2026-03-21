@@ -16,3 +16,4 @@ cache/
 data/
 logs/
 output/
+.coverage
