@@ -68,3 +68,22 @@ def test_parsed_feed_model_instantiation() -> None:
     assert pf.title == "Test Pod"
     assert len(pf.episodes) == 1
     assert pf.feed_config is FEED_CFG
+
+
+# ---------------------------------------------------------------------------
+# _parse_episode — enclosure / url
+# ---------------------------------------------------------------------------
+
+
+def test_episode_without_enclosure_skipped() -> None:
+    """An <item> with no <enclosure> element must return None."""
+    parser = FeedParser()
+    item = ET.fromstring("<item><guid>ep1</guid><title>Episode 1</title></item>")
+    assert parser._parse_episode(item) is None
+
+
+def test_episode_empty_enclosure_url_skipped() -> None:
+    """An <item> with <enclosure url=""> must return None."""
+    parser = FeedParser()
+    item = ET.fromstring('<item><enclosure url="" type="audio/mpeg" length="0"/></item>')
+    assert parser._parse_episode(item) is None

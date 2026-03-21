@@ -33,3 +33,31 @@ class ParsedFeed(BaseModel):
 
 class FeedParser:
     """Stateless RSS/Atom XML parser. No constructor args."""
+
+    def _parse_episode(self, item: ET.Element) -> Episode | None:
+        """Parse a single <item> element.
+
+        Returns ``None`` if the item has no valid enclosure URL.
+        """
+        enclosure = item.find("enclosure")
+        if enclosure is None:
+            return None
+        url = (enclosure.get("url") or "").strip()
+        if not url:
+            return None
+
+        title = (item.findtext("title") or "").strip()
+
+        guid_el = item.find("guid")
+        guid_text = (guid_el.text or "").strip() if guid_el is not None else ""
+        guid = guid_text or url  # fall back to URL when guid is absent or blank
+
+        pub_date: datetime | None = None
+        pub_date_str = item.findtext("pubDate")
+        if pub_date_str:
+            try:
+                pub_date = parsedate_to_datetime(pub_date_str)
+            except Exception:  # noqa: BLE001
+                logger.debug(f"Could not parse pubDate {pub_date_str!r} — setting to None")
+
+        return Episode(guid=guid, title=title, url=url, pub_date=pub_date)
