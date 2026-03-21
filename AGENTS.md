@@ -5,9 +5,25 @@
 **Before implementing any feature that uses an external library or API, look up the current documentation.**
 
 1. Use Context7 MCP first: resolve the library ID, then query the relevant docs.
-2. If Context7 has no coverage, use web search.
-3. Do not rely on training-data knowledge for these — it may be outdated.
+2. If Context7 has no coverage, use sources from the web.
+3. Never rely on training-data knowledge — it may be outdated.
 
+### Library Documentation Sources
+
+- `aiohttp`:
+  - `context7` MCP server
+  - `https://docs.aiohttp.org/en/stable/`
+  - `https://github.com/aio-libs/aiohttp`
+
+- `pydantic`:
+  - `context7` MCP server
+  - `https://docs.pydantic.dev/latest/`
+  - `https://github.com/pydantic/pydantic`
+
+- `aiosqlite`:
+  - `context7` MCP server
+  - `https://aiosqlite.omnilib.dev/en/latest/api.html`
+  - `https://github.com/omnilib/aiosqlite`
 ---
 
 ## Test-Driven Development
