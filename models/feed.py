@@ -8,10 +8,7 @@ component needs and passing them here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from datetime import datetime
+from datetime import datetime
 
 
 @dataclass
@@ -22,6 +19,10 @@ class Episode:
     url: str
     title: str = ""
     pub_date: datetime | None = None
+    description: str | None = None
+    explicit: bool | None = None
+    # Raw string (e.g. "01:23:45"); will be typed to a duration type in a future task.
+    duration: str | None = None
 
 
 @dataclass
@@ -42,3 +43,15 @@ class ParsedFeed:
     feed_url: str  # original feed URL (preserved so downstream stages don't need config)
     title: str  # parsed from RSS <channel><title>; may differ from config_title
     episodes: list[Episode] = field(default_factory=list)
+    description: str | None = None
+    link: str | None = None
+    language: str | None = None
+    copyright: str | None = None
+    author: str | None = None
+    image_url: str | None = None
+    categories: list[str] = field(default_factory=list)
+    explicit: bool | None = None
+    # Feed-level dates always resolve to a concrete datetime (absent → current local time).
+    # This differs from Episode.pub_date which stays None when the date is unknown.
+    pub_date: datetime = field(default_factory=lambda: datetime.now().astimezone())
+    last_build_date: datetime = field(default_factory=lambda: datetime.now().astimezone())

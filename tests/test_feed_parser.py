@@ -239,3 +239,33 @@ def test_parse_all_mixed_feeds() -> None:
     )
     assert len(results) == 1
     assert results[0].config_title == FEED_INPUT.config_title
+
+
+# ---------------------------------------------------------------------------
+# Model field defaults
+# ---------------------------------------------------------------------------
+
+
+def test_episode_new_fields_default_to_none() -> None:
+    ep = Episode(guid="g1", url="https://example.com/ep.mp3")
+    assert ep.description is None
+    assert ep.explicit is None
+    assert ep.duration is None
+
+
+def test_parsed_feed_new_optional_fields_default_to_none() -> None:
+    pf = ParsedFeed(config_title="Pod", feed_url="https://example.com/feed.rss", title="Pod")
+    assert pf.description is None
+    assert pf.link is None
+    assert pf.language is None
+    assert pf.copyright is None
+    assert pf.author is None
+    assert pf.image_url is None
+    assert pf.categories == []
+    assert pf.explicit is None
+
+
+def test_parsed_feed_pub_dates_default_to_datetime() -> None:
+    pf = ParsedFeed(config_title="Pod", feed_url="https://example.com/feed.rss", title="Pod")
+    assert isinstance(pf.pub_date, datetime)
+    assert isinstance(pf.last_build_date, datetime)
