@@ -30,6 +30,28 @@ def _parse_explicit(text: str | None) -> bool | None:
     return None
 
 
+def _parse_date(text: str | None) -> datetime:
+    """Parse an RFC 2822 date string, falling back to the current local datetime.
+
+    Used for feed-level dates only. Episode dates use a separate path that
+    returns None on failure (see _parse_episode).
+
+    Args:
+        text: Raw date string from XML, or None if the element was absent.
+
+    Returns:
+        Parsed datetime, or datetime.now().astimezone() if text is absent,
+        empty, blank, or unparseable.
+
+    """
+    if not text or not text.strip():
+        return datetime.now().astimezone()
+    try:
+        return parsedate_to_datetime(text)
+    except (TypeError, ValueError):
+        return datetime.now().astimezone()
+
+
 class FeedParser:
     """Stateless RSS/Atom XML parser. No constructor args."""
 
