@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from components.pipeline import Pipeline
 from config.config_loader import FeedConfig
 
@@ -89,3 +91,44 @@ async def test_run_with_no_enabled_feeds() -> None:
 
     mock_dl.download_all.assert_called_once_with([])
     assert result == []
+
+
+async def test_run_with_feed_name_forces_disabled_feed() -> None:
+    """--feed must process a disabled feed, ignoring enabled=False."""
+    disabled = make_feed("target", enabled=False)
+    other = make_feed("other", enabled=True)
+    config = make_config([disabled, other])
+
+    with patch("components.pipeline.FeedDownloader") as mock_downloader_cls:
+        mock_dl = mock_downloader_cls.return_value
+        mock_dl.download_all = AsyncMock(return_value=[(disabled, "<xml/>")])
+        pipeline = Pipeline(config, feed_name="target")
+        await pipeline.run()
+
+    mock_dl.download_all.assert_called_once_with([disabled])
+
+
+async def test_run_with_feed_name_excludes_other_feeds() -> None:
+    """--feed must pass only the named feed, even when others are enabled."""
+    target = make_feed("target", enabled=True)
+    other = make_feed("other", enabled=True)
+    config = make_config([target, other])
+
+    with patch("components.pipeline.FeedDownloader") as mock_downloader_cls:
+        mock_dl = mock_downloader_cls.return_value
+        mock_dl.download_all = AsyncMock(return_value=[(target, "<xml/>")])
+        pipeline = Pipeline(config, feed_name="target")
+        await pipeline.run()
+
+    mock_dl.download_all.assert_called_once_with([target])
+
+
+async def test_run_with_unknown_feed_name_raises() -> None:
+    """--feed with a title that matches no feed must raise ValueError."""
+    feed = make_feed("existing")
+    config = make_config([feed])
+
+    with patch("components.pipeline.FeedDownloader"):
+        pipeline = Pipeline(config, feed_name="nonexistent")
+        with pytest.raises(ValueError, match="nonexistent"):
+            await pipeline.run()
