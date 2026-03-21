@@ -53,7 +53,7 @@ async def main() -> None:
     args = parse_args()
 
     try:
-        cfg: Config = load_config(args.config)  # noqa: F841
+        _cfg: Config = load_config(args.config)
     except ConfigError as exc:
         sys.stderr.write(f"Failed to load config: {exc}\n")
         sys.exit(1)
