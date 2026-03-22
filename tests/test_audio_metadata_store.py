@@ -93,3 +93,36 @@ async def test_save_all_raises_on_fk_violation(db_path: Path) -> None:
         store = AudioMetadataStore(db.conn)
         with pytest.raises(aiosqlite.IntegrityError):
             await store.save_all([_meta("ghost-guid")])
+
+
+async def test_get_all_for_guids_returns_matching_rows(db_path: Path) -> None:
+    async with Database(db_path) as db:
+        ep_store = EpisodeStore(db.conn)
+        await ep_store.save_episodes("pod", [_ep("ep-1"), _ep("ep-2"), _ep("ep-3")])
+        meta_store = AudioMetadataStore(db.conn)
+        await meta_store.save_all([_meta("ep-1"), _meta("ep-2")])
+        result = await meta_store.get_all_for_guids(["ep-1", "ep-2", "ep-3"])
+    guids = {m.guid for m in result}
+    assert guids == {"ep-1", "ep-2"}
+
+
+async def test_get_all_for_guids_empty_input(db_path: Path) -> None:
+    async with Database(db_path) as db:
+        store = AudioMetadataStore(db.conn)
+        result = await store.get_all_for_guids([])
+    assert result == []
+
+
+async def test_get_all_for_guids_returns_correct_metadata(db_path: Path) -> None:
+    async with Database(db_path) as db:
+        ep_store = EpisodeStore(db.conn)
+        await ep_store.save_episodes("pod", [_ep("ep-1")])
+        meta_store = AudioMetadataStore(db.conn)
+        await meta_store.save_all([
+            AudioMetadata(guid="ep-1", duration=999.5, codec="mp3", channels=1, bitrate=64000)
+        ])
+        result = await meta_store.get_all_for_guids(["ep-1"])
+    assert len(result) == 1
+    assert result[0].guid == "ep-1"
+    assert result[0].duration == 999.5
+    assert result[0].codec == "mp3"

@@ -13,6 +13,7 @@ from utils.exceptions import FfmpegError
 
 GUID = "ep-abc123"
 INPUT_PATH = Path("/cache/ep-abc123.mp3")
+DURATION = 120.0
 
 
 @pytest.fixture
@@ -46,7 +47,7 @@ async def test_preprocess_all_returns_output_path(
     """Returns (guid, cache_dir/{guid}.mono.m4a) on success."""
     with patch("components.audio_preprocessor.Ffmpeg") as mock_cls:
         mock_cls.return_value.run = AsyncMock(return_value=None)
-        result = await preprocessor.preprocess_all([(GUID, INPUT_PATH)])
+        result = await preprocessor.preprocess_all([(GUID, INPUT_PATH, DURATION)])
 
     assert len(result) == 1
     guid, path = result[0]
@@ -61,7 +62,7 @@ async def test_preprocess_all_creates_cache_dir(
     assert not cache_dir.exists()  # noqa: ASYNC240
     with patch("components.audio_preprocessor.Ffmpeg") as mock_cls:
         mock_cls.return_value.run = AsyncMock(return_value=None)
-        await preprocessor.preprocess_all([(GUID, INPUT_PATH)])
+        await preprocessor.preprocess_all([(GUID, INPUT_PATH, DURATION)])
 
     assert cache_dir.is_dir()  # noqa: ASYNC240
 
@@ -70,7 +71,7 @@ async def test_preprocess_all_preserves_order(
     preprocessor: AudioPreprocessor, cache_dir: Path
 ) -> None:
     """Output list preserves the input order."""
-    pairs = [(f"ep-{i}", Path(f"/cache/ep-{i}.mp3")) for i in range(3)]
+    pairs = [(f"ep-{i}", Path(f"/cache/ep-{i}.mp3"), DURATION) for i in range(3)]
     with patch("components.audio_preprocessor.Ffmpeg") as mock_cls:
         mock_cls.return_value.run = AsyncMock(return_value=None)
         result = await preprocessor.preprocess_all(pairs)
@@ -81,12 +82,12 @@ async def test_preprocess_all_preserves_order(
 async def test_preprocess_all_correct_ffmpeg_args(
     preprocessor: AudioPreprocessor, cache_dir: Path
 ) -> None:
-    """Ffmpeg.run() is called with the exact mono-AAC conversion arguments."""
+    """Ffmpeg.run() is called with the exact mono-AAC conversion arguments and duration."""
     expected_output = cache_dir / f"{GUID}.mono.m4a"
     with patch("components.audio_preprocessor.Ffmpeg") as mock_cls:
         mock_run = AsyncMock(return_value=None)
         mock_cls.return_value.run = mock_run
-        await preprocessor.preprocess_all([(GUID, INPUT_PATH)])
+        await preprocessor.preprocess_all([(GUID, INPUT_PATH, DURATION)])
 
     call_args = mock_run.call_args
     assert call_args[0][0] == [
@@ -98,6 +99,7 @@ async def test_preprocess_all_correct_ffmpeg_args(
         "-y",
         str(expected_output),
     ]
+    assert call_args[1]["duration"] == DURATION
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +111,7 @@ async def test_preprocess_all_no_progress_callback(preprocessor: AudioPreprocess
     """on_progress=None works without error; Ffmpeg.run is still called."""
     with patch("components.audio_preprocessor.Ffmpeg") as mock_cls:
         mock_cls.return_value.run = AsyncMock(return_value=None)
-        result = await preprocessor.preprocess_all([(GUID, INPUT_PATH)], on_progress=None)
+        result = await preprocessor.preprocess_all([(GUID, INPUT_PATH, DURATION)], on_progress=None)
 
     assert len(result) == 1
 
@@ -135,7 +137,7 @@ async def test_preprocess_all_progress_start_and_end(
                 await on_progress(1.0)  # type: ignore[operator]
 
         mock_cls.return_value.run = fake_run
-        await preprocessor.preprocess_all([(GUID, INPUT_PATH)], on_progress=cb)
+        await preprocessor.preprocess_all([(GUID, INPUT_PATH, DURATION)], on_progress=cb)
 
     assert (GUID, 0.0) in calls
     assert (GUID, 1.0) in calls
@@ -162,7 +164,7 @@ async def test_preprocess_all_progress_intermediate_forwarded(
                 captured_wrapper.append(on_progress)
 
         mock_cls.return_value.run = fake_run
-        await preprocessor.preprocess_all([(GUID, INPUT_PATH)], on_progress=cb)
+        await preprocessor.preprocess_all([(GUID, INPUT_PATH, DURATION)], on_progress=cb)
 
     # Call the captured wrapper with an intermediate value
     assert len(captured_wrapper) == 1
@@ -171,17 +173,17 @@ async def test_preprocess_all_progress_intermediate_forwarded(
     assert (GUID, 0.5) in calls
 
 
-async def test_preprocess_all_no_progress_passed_to_ffmpeg_when_callback_none(
+async def test_preprocess_all_always_passes_callable_to_ffmpeg(
     preprocessor: AudioPreprocessor,
 ) -> None:
-    """When on_progress is None, Ffmpeg.run() receives on_progress=None."""
+    """Ffmpeg.run() always receives a callable on_progress, even when preprocess_all gets None."""
     with patch("components.audio_preprocessor.Ffmpeg") as mock_cls:
         mock_run = AsyncMock(return_value=None)
         mock_cls.return_value.run = mock_run
-        await preprocessor.preprocess_all([(GUID, INPUT_PATH)], on_progress=None)
+        await preprocessor.preprocess_all([(GUID, INPUT_PATH, DURATION)], on_progress=None)
 
     call_kwargs = mock_run.call_args[1]
-    assert call_kwargs.get("on_progress") is None
+    assert callable(call_kwargs.get("on_progress"))
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +197,7 @@ async def test_preprocess_all_ffmpeg_error_is_skipped(
     """FfmpegError causes the episode to be omitted; no exception propagates."""
     with patch("components.audio_preprocessor.Ffmpeg") as mock_cls:
         mock_cls.return_value.run = AsyncMock(side_effect=FfmpegError("boom"))
-        result = await preprocessor.preprocess_all([(GUID, INPUT_PATH)])
+        result = await preprocessor.preprocess_all([(GUID, INPUT_PATH, DURATION)])
 
     assert result == []
 
@@ -218,8 +220,8 @@ async def test_preprocess_all_partial_success(
             raise FfmpegError(msg)
 
     pairs = [
-        ("ep-ok", Path("/cache/ep-ok.mp3")),
-        ("ep-fail", Path("/cache/ep-fail.mp3")),
+        ("ep-ok", Path("/cache/ep-ok.mp3"), DURATION),
+        ("ep-fail", Path("/cache/ep-fail.mp3"), DURATION),
     ]
     with patch("components.audio_preprocessor.Ffmpeg") as mock_cls:
         mock_cls.return_value.run = fake_run
@@ -237,7 +239,7 @@ async def test_preprocess_all_ffmpeg_error_does_not_call_final_progress(
 
     with patch("components.audio_preprocessor.Ffmpeg") as mock_cls:
         mock_cls.return_value.run = AsyncMock(side_effect=FfmpegError("boom"))
-        await preprocessor.preprocess_all([(GUID, INPUT_PATH)], on_progress=cb)
+        await preprocessor.preprocess_all([(GUID, INPUT_PATH, DURATION)], on_progress=cb)
 
     cb.assert_not_awaited()
 
@@ -246,13 +248,33 @@ async def test_preprocess_all_logs_error_on_ffmpeg_failure(
     preprocessor: AudioPreprocessor,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """An error log containing the guid is emitted when FfmpegError is caught."""
+    """ERROR log contains the guid and base message; ffmpeg stderr is NOT in the ERROR log."""
     with patch("components.audio_preprocessor.Ffmpeg") as mock_cls:
-        mock_cls.return_value.run = AsyncMock(side_effect=FfmpegError("codec error"))
+        mock_cls.return_value.run = AsyncMock(
+            side_effect=FfmpegError("ffmpeg exited with code 1", stderr="Conversion failed!")
+        )
         with caplog.at_level(logging.ERROR, logger="components.audio_preprocessor"):
-            await preprocessor.preprocess_all([(GUID, INPUT_PATH)])
+            await preprocessor.preprocess_all([(GUID, INPUT_PATH, DURATION)])
 
-    assert any(GUID in r.message for r in caplog.records)
+    error_records = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert any(GUID in r.message for r in error_records)
+    assert all("Conversion failed!" not in r.message for r in error_records)
+
+
+async def test_preprocess_all_logs_stderr_at_debug_on_ffmpeg_failure(
+    preprocessor: AudioPreprocessor,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When FfmpegError carries stderr, the stderr text is logged at DEBUG."""
+    with patch("components.audio_preprocessor.Ffmpeg") as mock_cls:
+        mock_cls.return_value.run = AsyncMock(
+            side_effect=FfmpegError("ffmpeg exited with code 1", stderr="Conversion failed!")
+        )
+        with caplog.at_level(logging.DEBUG, logger="components.audio_preprocessor"):
+            await preprocessor.preprocess_all([(GUID, INPUT_PATH, DURATION)])
+
+    debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert any("Conversion failed!" in r.message for r in debug_records)
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +290,6 @@ async def test_preprocess_all_logs_debug_on_success(
     with patch("components.audio_preprocessor.Ffmpeg") as mock_cls:
         mock_cls.return_value.run = AsyncMock(return_value=None)
         with caplog.at_level(logging.DEBUG, logger="components.audio_preprocessor"):
-            await preprocessor.preprocess_all([(GUID, INPUT_PATH)])
+            await preprocessor.preprocess_all([(GUID, INPUT_PATH, DURATION)])
 
     assert any(GUID in r.message for r in caplog.records)

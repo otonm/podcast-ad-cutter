@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from models.feed import AudioMetadata
+
 if TYPE_CHECKING:
     import aiosqlite
-
-    from models.feed import AudioMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -61,3 +61,27 @@ class AudioMetadataStore:
         )
         await self._conn.commit()
         logger.info(f"Saved {len(records)} audio metadata record(s)")
+
+    async def get_all_for_guids(self, guids: list[str]) -> list[AudioMetadata]:
+        """Return AudioMetadata for every guid that has a row in the DB.
+
+        Args:
+            guids: GUIDs to look up.  Empty list returns an empty list.
+
+        Returns:
+            One AudioMetadata per matching row; unknown guids are silently omitted.
+
+        """
+        if not guids:
+            return []
+        placeholders = ",".join("?" * len(guids))
+        query = (
+            f"SELECT guid, duration, codec, channels, bitrate "  # noqa: S608
+            f"FROM episode_audio_metadata WHERE guid IN ({placeholders})"
+        )
+        async with self._conn.execute(query, guids) as cursor:
+            rows = await cursor.fetchall()
+        return [
+            AudioMetadata(guid=row[0], duration=row[1], codec=row[2], channels=row[3], bitrate=row[4])
+            for row in rows
+        ]

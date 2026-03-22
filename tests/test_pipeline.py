@@ -513,6 +513,7 @@ async def test_pipeline_probe_all_called_with_downloaded_pairs() -> None:
         )
         mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value=set())
         mock_ams_cls.return_value.save_all = AsyncMock()
+        mock_ams_cls.return_value.get_all_for_guids = AsyncMock(return_value=[])
         mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[])
         mock_prep_cls.return_value.preprocess_all = AsyncMock(return_value=[])
 
@@ -548,6 +549,7 @@ async def test_pipeline_filters_already_probed_guids() -> None:
         mock_store_cls.return_value.get_episodes_for_feed = AsyncMock(return_value=[ep1, ep2])
         mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value={"ep-done"})
         mock_ams_cls.return_value.save_all = AsyncMock()
+        mock_ams_cls.return_value.get_all_for_guids = AsyncMock(return_value=[])
         mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[])
         mock_prep_cls.return_value.preprocess_all = AsyncMock(return_value=[])
 
@@ -582,6 +584,7 @@ async def test_pipeline_saves_probe_results() -> None:
         mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value=set())
         mock_ams = mock_ams_cls.return_value
         mock_ams.save_all = AsyncMock()
+        mock_ams.get_all_for_guids = AsyncMock(return_value=[probe_result])
         mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[probe_result])
         mock_prep_cls.return_value.preprocess_all = AsyncMock(return_value=[])
 
@@ -618,6 +621,7 @@ async def test_pipeline_logs_probe_start_and_completion(caplog: pytest.LogCaptur
         mock_store_cls.return_value.get_episodes_for_feed = AsyncMock(return_value=[ep1, ep2])
         mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value={"ep-done"})
         mock_ams_cls.return_value.save_all = AsyncMock()
+        mock_ams_cls.return_value.get_all_for_guids = AsyncMock(return_value=[probe_result])
         mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[probe_result])
         mock_prep_cls.return_value.preprocess_all = AsyncMock(return_value=[])
 
@@ -657,10 +661,11 @@ async def test_on_download_progress_intermediate() -> None:
 
 
 async def test_pipeline_calls_audio_preprocessor() -> None:
-    """preprocess_all is awaited with the downloaded pairs and a progress callback."""
+    """preprocess_all is awaited with (guid, path, duration) triples and a progress callback."""
     ep = Episode(guid="ep-prep", url="https://example.com/ep.mp3", title="Prep Ep")
     config, parsed = _prober_config([ep])
     downloaded_pair = ("ep-prep", Path("/cache/ep-prep.mp3"))
+    meta = AudioMetadata(guid="ep-prep", duration=60.0, codec="aac", channels=1, bitrate=32000)
 
     with (
         patch("components.pipeline.FeedDownloader") as mock_dl_cls,
@@ -679,7 +684,8 @@ async def test_pipeline_calls_audio_preprocessor() -> None:
         )
         mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value=set())
         mock_ams_cls.return_value.save_all = AsyncMock()
-        mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[])
+        mock_ams_cls.return_value.get_all_for_guids = AsyncMock(return_value=[meta])
+        mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[meta])
         mock_prep_cls.return_value.preprocess_all = AsyncMock(return_value=[])
 
         pipeline = Pipeline(config)
@@ -687,8 +693,48 @@ async def test_pipeline_calls_audio_preprocessor() -> None:
 
     mock_prep_cls.return_value.preprocess_all.assert_awaited_once()
     call_args = mock_prep_cls.return_value.preprocess_all.call_args
-    assert call_args[0][0] == [downloaded_pair]
+    assert call_args[0][0] == [("ep-prep", Path("/cache/ep-prep.mp3"), 60.0)]
     assert call_args[1]["on_progress"] is not None
+
+
+async def test_pipeline_excludes_unprobed_from_preprocessing() -> None:
+    """Episodes with no metadata in the DB are excluded from preprocess_all."""
+    ep_probed = Episode(guid="ep-good", url="https://example.com/good.mp3", title="Good")
+    ep_unprobed = Episode(guid="ep-bad", url="https://example.com/bad.mp3", title="Bad")
+    config, parsed = _prober_config([ep_probed, ep_unprobed])
+    downloaded = [("ep-good", Path("/cache/good.mp3")), ("ep-bad", Path("/cache/bad.mp3"))]
+    meta = AudioMetadata(guid="ep-good", duration=90.0, codec="aac", channels=1, bitrate=32000)
+
+    with (
+        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
+        patch("components.pipeline.FeedParser") as mock_fp_cls,
+        patch("components.pipeline.FeedPublisher") as mock_pub_cls,
+        patch("components.pipeline.EpisodeDownloader") as mock_ep_dl_cls,
+        patch("components.pipeline.Database") as mock_db_cls,
+        patch("components.pipeline.EpisodeStore") as mock_store_cls,
+        patch("components.pipeline.AudioMetadataStore") as mock_ams_cls,
+        patch("components.pipeline.AudioProber") as mock_prober_cls,
+        patch("components.pipeline.AudioPreprocessor") as mock_prep_cls,
+    ):
+        mock_store_cls.return_value.get_episodes_for_feed = AsyncMock(return_value=[ep_probed, ep_unprobed])
+        _prober_test_setup(
+            mock_dl_cls, mock_fp_cls, mock_pub_cls, mock_ep_dl_cls,
+            mock_db_cls, mock_store_cls, ep_probed, parsed, downloaded,
+        )
+        mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value=set())
+        mock_ams_cls.return_value.save_all = AsyncMock()
+        mock_ams_cls.return_value.get_all_for_guids = AsyncMock(return_value=[meta])
+        mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[meta])
+        mock_prep_cls.return_value.preprocess_all = AsyncMock(return_value=[])
+
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    call_args = mock_prep_cls.return_value.preprocess_all.call_args
+    triples = call_args[0][0]
+    assert len(triples) == 1
+    assert triples[0][0] == "ep-good"
+    assert triples[0][2] == 90.0
 
 
 async def test_pipeline_preprocessor_skipped_when_no_downloads() -> None:

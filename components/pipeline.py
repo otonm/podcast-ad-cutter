@@ -141,8 +141,17 @@ class Pipeline:
                         f"{len(unprobed) - len(probe_results)} failed"
                     )
                     await audio_metadata_store.save_all(probe_results)
+                    all_meta = await audio_metadata_store.get_all_for_guids(
+                        [g for g, _ in downloaded]
+                    )
+                    duration_map = {m.guid: m.duration for m in all_meta}
+                    triples = [
+                        (g, p, duration_map[g])
+                        for g, p in downloaded
+                        if g in duration_map
+                    ]
                     await self._audio_preprocessor.preprocess_all(
-                        downloaded,
+                        triples,
                         on_progress=self._on_preprocess_progress,
                     )
 

@@ -17,3 +17,9 @@ class AudioProbeError(PodcastAdCutterError):
 
 class FfmpegError(PodcastAdCutterError):
     """Raised when ffmpeg exits with a non-zero return code."""
+
+    def __init__(self, message: str, stderr: str = "") -> None:
+        detail = f"{message}\n{stderr.strip()}" if stderr.strip() else message
+        super().__init__(detail)
+        self.message = message
+        self.stderr = stderr
