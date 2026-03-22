@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import asyncio as _asyncio
+from typing import TYPE_CHECKING, Self
 
 import aiohttp as _aiohttp
 import pytest
@@ -292,3 +293,61 @@ async def test_multiple_episodes_one_fails(
         )
 
     assert [g for g, _ in results] == [guid_a]
+
+
+# ---------------------------------------------------------------------------
+# Task 5: Partial file cleanup — exhausted retries and CancelledError
+# ---------------------------------------------------------------------------
+
+
+async def test_partial_file_deleted_on_exhausted_retries(
+    downloader: EpisodeDownloader,
+    cache_dir: Path,
+) -> None:
+    """No stale partial file remains after all retries are exhausted."""
+    with aioresponses() as m:
+        m.get(URL, status=503)
+        m.get(URL, status=503)
+        m.get(URL, status=503)
+        await downloader.download_all([(GUID, URL)])
+
+    assert list(cache_dir.iterdir()) == []  # noqa: ASYNC240
+
+
+async def test_cancelled_error_deletes_partial_file_and_propagates(
+    downloader: EpisodeDownloader,
+    cache_dir: Path,
+) -> None:
+    """CancelledError propagates out of download_all and the partial file is deleted."""
+    # Build a fake aiohttp response that writes one chunk then raises CancelledError.
+    class _FakeContent:
+        async def iter_chunked(self, _size: int):
+            yield b"partial data"
+            raise _asyncio.CancelledError
+
+    class _FakeResponse:
+        status = 200
+        content_type = "audio/mpeg"
+        content_length = 10_000
+        content = _FakeContent()
+        request_info = None  # not needed; error is raised before ClientResponseError
+        history = ()
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            pass
+
+    class _FakeSession:
+        def get(self, _url: str, **_kwargs: object) -> _FakeResponse:
+            return _FakeResponse()
+
+    cache_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
+
+    with pytest.raises(_asyncio.CancelledError):
+        await downloader._download_one(_FakeSession(), GUID, URL, None)  # type: ignore[arg-type]
+
+    # No partial file should survive the cancellation
+    partial = cache_dir / f"{GUID}.mp3"
+    assert not partial.exists()
