@@ -381,11 +381,14 @@ async def test_pipeline_calls_episode_downloader() -> None:
         patch("components.pipeline.FeedParser") as mock_fp_cls,
         patch("components.pipeline.FeedPublisher") as mock_pub_cls,
         patch("components.pipeline.EpisodeDownloader") as mock_ep_dl_cls,
-        patch("components.pipeline.Database"),
+        patch("components.pipeline.Database") as mock_db_cls,
         patch("components.pipeline.EpisodeStore") as mock_store_cls,
     ):
         mock_dl_cls.return_value.download_all = AsyncMock(return_value=[("My Podcast", "<rss/>")])
         mock_fp_cls.return_value.parse_all.return_value = [parsed]
+        mock_db = MagicMock()
+        mock_db_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_store_cls.return_value.save_episodes = AsyncMock()
         mock_store_cls.return_value.get_episodes_for_feed = AsyncMock(return_value=[ep])
         mock_pub_cls.return_value.publish = AsyncMock(return_value=Path("/output/my-podcast.rss"))
@@ -395,10 +398,11 @@ async def test_pipeline_calls_episode_downloader() -> None:
         pipeline = Pipeline(config)
         await pipeline.run()
 
-    # EpisodeDownloader.download_all must be called once with (guid, url) pairs
+    # EpisodeDownloader.download_all must be called once with (guid, url) pairs and a progress callback
     mock_ep_dl.download_all.assert_awaited_once()
-    episodes_arg = mock_ep_dl.download_all.call_args[0][0]
-    assert episodes_arg == [("ep-001", "https://example.com/ep.mp3")]
+    call_args = mock_ep_dl.download_all.call_args
+    assert call_args[0][0] == [("ep-001", "https://example.com/ep.mp3")]
+    assert call_args[1]["on_progress"] is not None
 
 
 # ---------------------------------------------------------------------------
