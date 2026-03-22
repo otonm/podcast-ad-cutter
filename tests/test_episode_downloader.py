@@ -137,3 +137,76 @@ async def test_parameterised_content_type_stripped_correctly(
 
     _, path = results[0]
     assert path.suffix == ".m4a"
+
+
+# ---------------------------------------------------------------------------
+# Task 3: Progress callback
+# ---------------------------------------------------------------------------
+
+
+async def test_progress_callback_with_content_length(
+    downloader: EpisodeDownloader,
+    cache_dir: Path,
+) -> None:
+    """Progress callback receives 0.0 (start), intermediate values, and 1.0 (done)."""
+    calls: list[tuple[str, float]] = []
+
+    async def on_progress(guid: str, pct: float) -> None:
+        calls.append((guid, pct))
+
+    # Use chunk_size smaller than data to force multiple intermediate calls.
+    small_chunk_downloader = EpisodeDownloader(
+        cache_dir=cache_dir,
+        max_retries=0,
+        retry_delay=0.0,
+        chunk_size=64,  # force many chunks
+    )
+    data = b"x" * 256  # 256 bytes — produces 4 chunks of 64
+    with aioresponses() as m:
+        m.get(
+            URL,
+            status=200,
+            body=data,
+            headers={"Content-Type": "audio/mpeg", "Content-Length": str(len(data))},
+        )
+        await small_chunk_downloader.download_all([(GUID, URL)], on_progress=on_progress)
+
+    guids, percents = zip(*calls, strict=True)
+    assert set(guids) == {GUID}
+    assert percents[0] == 0.0   # start sentinel
+    assert percents[-1] == 1.0  # completion
+    # Intermediate values strictly between 0 and 1
+    intermediate = [p for p in percents if 0.0 < p < 1.0]
+    assert len(intermediate) > 0
+    assert all(0.0 < p < 1.0 for p in intermediate)
+
+
+async def test_progress_callback_without_content_length(
+    downloader: EpisodeDownloader,
+    cache_dir: Path,
+) -> None:
+    """Without Content-Length only 0.0 (start) and 1.0 (end) are emitted."""
+    calls: list[tuple[str, float]] = []
+
+    async def on_progress(guid: str, pct: float) -> None:
+        calls.append((guid, pct))
+
+    with aioresponses() as m:
+        # Omit Content-Length header entirely
+        m.get(URL, status=200, body=AUDIO_DATA, headers={"Content-Type": "audio/mpeg"})
+        await downloader.download_all([(GUID, URL)], on_progress=on_progress)
+
+    percents = [p for _, p in calls]
+    assert percents == [0.0, 1.0]
+
+
+async def test_no_progress_callback_does_not_raise(
+    downloader: EpisodeDownloader,
+    cache_dir: Path,
+) -> None:
+    """Passing on_progress=None works without error."""
+    with aioresponses() as m:
+        m.get(URL, status=200, body=AUDIO_DATA, headers={"Content-Type": "audio/mpeg"})
+        results = await downloader.download_all([(GUID, URL)], on_progress=None)
+
+    assert len(results) == 1
