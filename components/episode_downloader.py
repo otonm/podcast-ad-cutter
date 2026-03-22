@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import http
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from pathlib import Path  # noqa: TC003
 
 import aiohttp
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -93,11 +91,7 @@ class EpisodeDownloader:
         """
         self._cache_dir.mkdir(parents=True, exist_ok=True)
 
-        client_timeout = (
-            aiohttp.ClientTimeout(total=self._timeout)
-            if self._timeout is not None
-            else aiohttp.ClientTimeout()
-        )
+        client_timeout = aiohttp.ClientTimeout(total=self._timeout)
         results: list[tuple[str, Path]] = []
         async with aiohttp.ClientSession(timeout=client_timeout) as session:
             for guid, url in episodes:
@@ -162,7 +156,7 @@ class EpisodeDownloader:
         """
         logger.debug(f"Downloading '{guid}' from {url}")
         async with session.get(url) as response:
-            if response.status != 200:  # noqa: PLR2004
+            if response.status != http.HTTPStatus.OK:
                 raise aiohttp.ClientResponseError(
                     response.request_info,
                     response.history,
@@ -195,8 +189,8 @@ class EpisodeDownloader:
                             await on_progress(guid, downloaded / total)
                 success = True
             finally:
-                if not success and output_path.exists():
-                    output_path.unlink()
+                if not success:
+                    output_path.unlink(missing_ok=True)
                     logger.debug(f"Deleted partial file for '{guid}' after failure.")
 
         if on_progress:
