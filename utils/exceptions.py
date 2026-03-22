@@ -9,3 +9,7 @@ class PodcastAdCutterError(Exception):
 
 class ConfigError(PodcastAdCutterError):
     """Raised when configuration loading or validation fails."""
+
+
+class AudioProbeError(PodcastAdCutterError):
+    """Raised when ffprobe fails to extract audio metadata from a file."""
