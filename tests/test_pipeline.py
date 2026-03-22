@@ -448,8 +448,8 @@ async def test_on_download_progress_complete(caplog: pytest.LogCaptureFixture) -
     assert "Episode 'ep-001' downloaded." in caplog.text
 
 
-async def test_on_download_progress_intermediate(caplog: pytest.LogCaptureFixture) -> None:
-    """Progress callback at an intermediate value logs a percentage."""
+async def test_on_download_progress_intermediate() -> None:
+    """Progress callback at an intermediate value writes percentage in-place to stderr."""
     config = MagicMock()
     config.app.paths.data_dir = MagicMock()
     config.app.paths.output_dir = MagicMock()
@@ -461,7 +461,8 @@ async def test_on_download_progress_intermediate(caplog: pytest.LogCaptureFixtur
     ):
         pipeline = Pipeline(config)
 
-    with caplog.at_level(logging.DEBUG, logger="components.pipeline"):
+    with patch("sys.stderr") as mock_stderr:
         await pipeline._on_download_progress("ep-001", 0.5)
 
-    assert "50%" in caplog.text
+    mock_stderr.write.assert_called_once_with("\r  Episode 'ep-001': 50%")
+    mock_stderr.flush.assert_called_once()

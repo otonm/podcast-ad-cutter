@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -207,6 +208,11 @@ class Pipeline:
         if percent == 0.0:
             logger.debug(f"Downloading episode '{guid}' \u2026")
         elif percent == 1.0:
+            # End the in-place progress line before logging the completion event.
+            sys.stderr.write("\n")
+            sys.stderr.flush()
             logger.debug(f"Episode '{guid}' downloaded.")
         else:
-            logger.debug(f"Episode '{guid}': {percent:.0%}")
+            # Overwrite the current terminal line with updated progress — no newline.
+            sys.stderr.write(f"\r  Episode '{guid}': {percent:.0%}")
+            sys.stderr.flush()
