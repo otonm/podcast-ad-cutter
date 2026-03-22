@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA = """
+_EPISODES_SCHEMA = """
 CREATE TABLE IF NOT EXISTS episodes (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     podcast         TEXT    NOT NULL,
@@ -37,6 +37,17 @@ CREATE TABLE IF NOT EXISTS episodes (
     episode_number  INTEGER,
     season_number   INTEGER,
     itunes_block    INTEGER NOT NULL DEFAULT 0
+)
+"""
+
+_AUDIO_METADATA_SCHEMA = """
+CREATE TABLE IF NOT EXISTS episode_audio_metadata (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    guid     TEXT    NOT NULL UNIQUE REFERENCES episodes(guid),
+    duration REAL    NOT NULL,
+    codec    TEXT    NOT NULL,
+    channels INTEGER NOT NULL,
+    bitrate  INTEGER NOT NULL
 )
 """
 
@@ -85,7 +96,9 @@ class Database:
         """Open the database connection, apply the schema, and run migrations."""
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = await aiosqlite.connect(self._db_path)
-        await self.conn.execute(_SCHEMA)
+        await self.conn.execute("PRAGMA foreign_keys = ON")
+        await self.conn.execute(_EPISODES_SCHEMA)
+        await self.conn.execute(_AUDIO_METADATA_SCHEMA)
         await self.conn.commit()
 
         # Migration: add any columns that did not exist in the original schema.

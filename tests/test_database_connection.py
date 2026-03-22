@@ -139,3 +139,44 @@ async def test_migration_adds_new_columns_to_existing_schema(tmp_path: Path) -> 
     found = await _column_names(db_file)
     for col in new_columns:
         assert col in found, f"Expected migrated column '{col}' not found in table"
+
+
+async def test_foreign_keys_pragma_is_enforced(db_path: Path) -> None:
+    """PRAGMA foreign_keys = ON must be active.
+
+    Inserting into a child table without a matching parent row must raise
+    IntegrityError.
+    """
+    async with Database(db_path) as db:
+        # episodes table exists; episode_audio_metadata references it.
+        # Inserting a metadata row with a non-existent guid must fail.
+        with pytest.raises(aiosqlite.IntegrityError):
+            await db.conn.execute(
+                "INSERT INTO episode_audio_metadata (guid, duration, codec, channels, bitrate) "
+                "VALUES ('ghost-guid', 60.0, 'aac', 2, 128000)"
+            )
+
+
+async def test_episode_audio_metadata_table_exists(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    async with aiosqlite.connect(db_path) as conn:
+        cursor = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='episode_audio_metadata'"
+        )
+        row = await cursor.fetchone()
+    assert row is not None
+
+
+async def _audio_metadata_column_names(db_path: Path) -> set[str]:
+    async with aiosqlite.connect(db_path) as conn:
+        cursor = await conn.execute("PRAGMA table_info(episode_audio_metadata)")
+        rows = await cursor.fetchall()
+    return {row[1] for row in rows}
+
+
+async def test_episode_audio_metadata_has_expected_columns(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    cols = await _audio_metadata_column_names(db_path)
+    assert {"id", "guid", "duration", "codec", "channels", "bitrate"} <= cols
