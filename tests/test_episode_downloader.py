@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio as _asyncio  # noqa: F401 — used in Task 5 tests
 from typing import TYPE_CHECKING
 
-import aiohttp as _aiohttp  # noqa: F401 — used in Task 4 tests
+import aiohttp as _aiohttp
 import pytest
 from aioresponses import aioresponses
 
@@ -210,3 +209,86 @@ async def test_no_progress_callback_does_not_raise(
         results = await downloader.download_all([(GUID, URL)], on_progress=None)
 
     assert len(results) == 1
+
+
+# ---------------------------------------------------------------------------
+# Task 4: Retry with exponential backoff
+# ---------------------------------------------------------------------------
+
+
+async def test_retries_on_http_error_then_succeeds(
+    downloader: EpisodeDownloader,
+    cache_dir: Path,
+) -> None:
+    """Non-200 responses are retried; succeeds on the final attempt."""
+    with aioresponses() as m:
+        m.get(URL, status=503)  # attempt 0: fail
+        m.get(URL, status=503)  # attempt 1: fail
+        m.get(URL, status=200, body=AUDIO_DATA, headers={"Content-Type": "audio/mpeg"})  # attempt 2: ok
+        results = await downloader.download_all([(GUID, URL)])
+
+    assert len(results) == 1
+
+
+async def test_all_retries_exhausted_episode_omitted(
+    downloader: EpisodeDownloader,
+    cache_dir: Path,
+) -> None:
+    """After max_retries+1 failures the episode is omitted and no file remains."""
+    with aioresponses() as m:
+        # max_retries=2 -> 3 total attempts, all fail
+        m.get(URL, status=503)
+        m.get(URL, status=503)
+        m.get(URL, status=503)
+        results = await downloader.download_all([(GUID, URL)])
+
+    assert results == []
+    # No partial file should remain in cache
+    assert list(cache_dir.iterdir()) == []  # noqa: ASYNC240
+
+
+async def test_client_error_triggers_retry(
+    downloader: EpisodeDownloader,
+    cache_dir: Path,
+) -> None:
+    """aiohttp.ClientError on the first attempt triggers a retry."""
+    with aioresponses() as m:
+        m.get(URL, exception=_aiohttp.ClientConnectionError("connection refused"))
+        m.get(URL, status=200, body=AUDIO_DATA, headers={"Content-Type": "audio/mpeg"})
+        results = await downloader.download_all([(GUID, URL)])
+
+    assert len(results) == 1
+
+
+async def test_timeout_error_triggers_retry(
+    downloader: EpisodeDownloader,
+    cache_dir: Path,
+) -> None:
+    """asyncio.TimeoutError on the first attempt triggers a retry."""
+    with aioresponses() as m:
+        m.get(URL, exception=TimeoutError())
+        m.get(URL, status=200, body=AUDIO_DATA, headers={"Content-Type": "audio/mpeg"})
+        results = await downloader.download_all([(GUID, URL)])
+
+    assert len(results) == 1
+
+
+async def test_multiple_episodes_one_fails(
+    downloader: EpisodeDownloader,
+    cache_dir: Path,
+) -> None:
+    """Failed episode is skipped; successful ones are returned in input order."""
+    guid_a, url_a = "ep-ok", "https://example.com/ok.mp3"
+    guid_b, url_b = "ep-fail", "https://example.com/fail.mp3"
+
+    with aioresponses() as m:
+        m.get(url_a, status=200, body=b"audio-a", headers={"Content-Type": "audio/mpeg"})
+        # ep-fail exhausts all retries
+        m.get(url_b, status=500)
+        m.get(url_b, status=500)
+        m.get(url_b, status=500)
+        results = await downloader.download_all(
+            [(guid_a, url_a), (guid_b, url_b)]
+        )
+
+    assert [g for g, _ in results] == [guid_a]
