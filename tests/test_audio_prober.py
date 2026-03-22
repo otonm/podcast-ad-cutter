@@ -14,9 +14,12 @@ from utils.exceptions import AudioProbeError
 
 
 def _make_proc(stdout: bytes, returncode: int = 0) -> MagicMock:
+    async def fake_communicate() -> tuple[bytes, bytes]:
+        return (stdout, b"")
+
     proc = MagicMock()
     proc.returncode = returncode
-    proc.communicate = AsyncMock(return_value=(stdout, b""))
+    proc.communicate = AsyncMock(wraps=fake_communicate)
     return proc
 
 
@@ -38,6 +41,13 @@ def _ffprobe_json(
     return json.dumps({"streams": [stream], "format": {"bit_rate": format_bitrate}}).encode()
 
 
+def _make_async_create(proc: MagicMock) -> object:
+    """Create an async function that returns a given process mock."""
+    async def fake_create(*args: object, **kwargs: object) -> MagicMock:
+        return proc
+    return fake_create
+
+
 GUID = "ep-abc"
 PATH = Path("/cache/ep-abc.mp3")
 
@@ -55,7 +65,7 @@ def prober() -> AudioProber:
 async def test_probe_one_returns_metadata(prober: AudioProber) -> None:
     stdout = _ffprobe_json()
     mock_proc = _make_proc(stdout)
-    with patch("components.audio_prober.asyncio.create_subprocess_exec", new=AsyncMock(return_value=mock_proc)):
+    with patch("components.audio_prober.asyncio.create_subprocess_exec", new=_make_async_create(mock_proc)):
         result = await prober._probe_one(GUID, PATH)
 
     assert isinstance(result, AudioMetadata)
@@ -70,7 +80,7 @@ async def test_probe_one_bitrate_fallback_to_stream(prober: AudioProber) -> None
     """When format bit_rate is '0', falls back to stream bit_rate."""
     stdout = _ffprobe_json(format_bitrate="0", stream_bitrate="64000")
     mock_proc = _make_proc(stdout)
-    with patch("components.audio_prober.asyncio.create_subprocess_exec", new=AsyncMock(return_value=mock_proc)):
+    with patch("components.audio_prober.asyncio.create_subprocess_exec", new=_make_async_create(mock_proc)):
         result = await prober._probe_one(GUID, PATH)
     assert result.bitrate == 64000
 
@@ -82,7 +92,7 @@ async def test_probe_one_bitrate_fallback_to_stream(prober: AudioProber) -> None
 
 async def test_probe_one_raises_on_nonzero_exit(prober: AudioProber) -> None:
     mock_proc = _make_proc(b"", returncode=1)
-    with patch("components.audio_prober.asyncio.create_subprocess_exec", new=AsyncMock(return_value=mock_proc)):
+    with patch("components.audio_prober.asyncio.create_subprocess_exec", new=_make_async_create(mock_proc)):
         with pytest.raises(AudioProbeError, match="exited with code 1"):
             await prober._probe_one(GUID, PATH)
 
@@ -90,13 +100,13 @@ async def test_probe_one_raises_on_nonzero_exit(prober: AudioProber) -> None:
 async def test_probe_one_raises_on_no_audio_stream(prober: AudioProber) -> None:
     stdout = json.dumps({"streams": [{"codec_type": "video"}], "format": {}}).encode()
     mock_proc = _make_proc(stdout)
-    with patch("components.audio_prober.asyncio.create_subprocess_exec", new=AsyncMock(return_value=mock_proc)):
+    with patch("components.audio_prober.asyncio.create_subprocess_exec", new=_make_async_create(mock_proc)):
         with pytest.raises(AudioProbeError, match="No audio stream"):
             await prober._probe_one(GUID, PATH)
 
 
 async def test_probe_one_raises_on_timeout(prober: AudioProber) -> None:
-    with patch("components.audio_prober.asyncio.create_subprocess_exec", new=AsyncMock(return_value=_make_proc(b""))):
+    with patch("components.audio_prober.asyncio.create_subprocess_exec", new=_make_async_create(_make_proc(b""))):
         with patch("components.audio_prober.asyncio.wait_for", side_effect=TimeoutError):
             with pytest.raises(AudioProbeError, match="timed out"):
                 await prober._probe_one(GUID, PATH)
@@ -104,7 +114,7 @@ async def test_probe_one_raises_on_timeout(prober: AudioProber) -> None:
 
 async def test_probe_one_raises_on_invalid_json(prober: AudioProber) -> None:
     mock_proc = _make_proc(b"not valid json")
-    with patch("components.audio_prober.asyncio.create_subprocess_exec", new=AsyncMock(return_value=mock_proc)):
+    with patch("components.audio_prober.asyncio.create_subprocess_exec", new=_make_async_create(mock_proc)):
         with pytest.raises(AudioProbeError, match="invalid JSON"):
             await prober._probe_one(GUID, PATH)
 
@@ -115,7 +125,7 @@ async def test_probe_one_raises_on_missing_duration_field(prober: AudioProber) -
         "format": {"bit_rate": "128000"},
     }).encode()
     mock_proc = _make_proc(stdout)
-    with patch("components.audio_prober.asyncio.create_subprocess_exec", new=AsyncMock(return_value=mock_proc)):
+    with patch("components.audio_prober.asyncio.create_subprocess_exec", new=_make_async_create(mock_proc)):
         with pytest.raises(AudioProbeError):
             await prober._probe_one(GUID, PATH)
 
@@ -134,7 +144,7 @@ async def test_probe_all_returns_all_successes(prober: AudioProber) -> None:
     pairs = [(f"ep-{i}", Path(f"/cache/ep-{i}.mp3")) for i in range(3)]
     stdout = _ffprobe_json()
     mock_proc = _make_proc(stdout)
-    with patch("components.audio_prober.asyncio.create_subprocess_exec", new=AsyncMock(return_value=mock_proc)):
+    with patch("components.audio_prober.asyncio.create_subprocess_exec", new=_make_async_create(mock_proc)):
         results = await prober.probe_all(pairs)
     assert len(results) == 3
     assert [r.guid for r in results] == ["ep-0", "ep-1", "ep-2"]
@@ -154,7 +164,7 @@ async def test_probe_all_skips_failed_episodes(prober: AudioProber) -> None:
         call_count += 1
         return ok_proc if call_count == 1 else fail_proc
 
-    with patch("components.audio_prober.asyncio.create_subprocess_exec", side_effect=fake_create):
+    with patch("components.audio_prober.asyncio.create_subprocess_exec", new=fake_create):
         results = await prober.probe_all(pairs)
 
     assert len(results) == 1
