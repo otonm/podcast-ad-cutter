@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from components.feed_publisher import FeedPublisher, episode_filename, episode_url
+from components.feed_publisher import FeedPublisher
 from models.feed import Episode, PublisherInput
 
 if TYPE_CHECKING:
@@ -455,30 +455,40 @@ async def test_update_episode_url_creates_enclosure_when_missing(tmp_path: Path)
 
 def test_episode_filename_basic() -> None:
     pub_date = datetime(2026, 3, 21, tzinfo=UTC)
-    assert episode_filename(pub_date, "Hello World", "mp3") == "21.03.2026-hello-world.mp3"
+    assert FeedPublisher.episode_filename(pub_date, "Hello World", "mp3") == "21.03.2026-hello-world.mp3"
 
 
 def test_episode_filename_slugifies_title() -> None:
     pub_date = datetime(2026, 3, 21, tzinfo=UTC)
-    assert episode_filename(pub_date, "The Café & Müller Show!", "mp3") == "21.03.2026-the-cafe-muller-show.mp3"
+    result = FeedPublisher.episode_filename(pub_date, "The Café & Müller Show!", "mp3")
+    assert result == "21.03.2026-the-cafe-muller-show.mp3"
 
 
 def test_episode_filename_uses_episode_date() -> None:
     pub_date = datetime(2024, 1, 5, tzinfo=UTC)
-    name = episode_filename(pub_date, "Ep", "mp3")
+    name = FeedPublisher.episode_filename(pub_date, "Ep", "mp3")
     assert name.startswith("05.01.2024-")
 
 
 def test_episode_url_includes_feed_slug() -> None:
     pub_date = datetime(2026, 3, 21, tzinfo=UTC)
-    url = episode_url("https://podcasts.example.com", "my-feed", pub_date, "My Episode", "mp3")
+    url = FeedPublisher.episode_url("https://podcasts.example.com", "my-feed", pub_date, "My Episode", "mp3")
     assert url == "https://podcasts.example.com/my-feed/21.03.2026-my-episode.mp3"
 
 
 def test_episode_url_strips_trailing_slash_from_base() -> None:
     pub_date = datetime(2026, 3, 21, tzinfo=UTC)
-    url = episode_url("https://podcasts.example.com/", "my-feed", pub_date, "Ep", "mp3")
+    url = FeedPublisher.episode_url("https://podcasts.example.com/", "my-feed", pub_date, "Ep", "mp3")
     assert url == "https://podcasts.example.com/my-feed/21.03.2026-ep.mp3"
+
+
+def test_mime_type_unknown_extension_falls_back_to_audio_mpeg() -> None:
+    assert FeedPublisher._mime_type("https://example.com/episode.xyz") == "audio/mpeg"
+
+
+def test_mime_type_ignores_query_string() -> None:
+    # Tracker-redirect URLs append query params after the extension.
+    assert FeedPublisher._mime_type("https://redirect.example.com/episode.mp3?updated=1773970977") == "audio/mpeg"
 
 
 # ---------------------------------------------------------------------------

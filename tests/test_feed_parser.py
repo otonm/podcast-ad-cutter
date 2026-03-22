@@ -6,7 +6,7 @@ import dataclasses
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
-from components.feed_parser import FeedParser, _parse_date, _parse_explicit
+from components.feed_parser import FeedParser
 from models.feed import Episode, FeedParseInput, ParsedFeed
 
 # ---------------------------------------------------------------------------
@@ -338,35 +338,35 @@ def test_parsed_feed_pub_dates_default_to_datetime() -> None:
 
 
 def test_parse_explicit_yes() -> None:
-    assert _parse_explicit("yes") is True
+    assert FeedParser._parse_explicit("yes") is True
 
 
 def test_parse_explicit_true() -> None:
-    assert _parse_explicit("true") is True
+    assert FeedParser._parse_explicit("true") is True
 
 
 def test_parse_explicit_no() -> None:
-    assert _parse_explicit("no") is False
+    assert FeedParser._parse_explicit("no") is False
 
 
 def test_parse_explicit_false() -> None:
-    assert _parse_explicit("false") is False
+    assert FeedParser._parse_explicit("false") is False
 
 
 def test_parse_explicit_clean() -> None:
-    assert _parse_explicit("clean") is False
+    assert FeedParser._parse_explicit("clean") is False
 
 
 def test_parse_explicit_none() -> None:
-    assert _parse_explicit(None) is None
+    assert FeedParser._parse_explicit(None) is None
 
 
 def test_parse_explicit_blank() -> None:
-    assert _parse_explicit("   ") is None
+    assert FeedParser._parse_explicit("   ") is None
 
 
 def test_parse_explicit_unknown_value() -> None:
-    assert _parse_explicit("maybe") is None
+    assert FeedParser._parse_explicit("maybe") is None
 
 
 # ---------------------------------------------------------------------------
@@ -375,23 +375,23 @@ def test_parse_explicit_unknown_value() -> None:
 
 
 def test_parse_date_valid_rfc2822() -> None:
-    result = _parse_date("Mon, 01 Jan 2024 12:00:00 +0000")
+    result = FeedParser._parse_date("Mon, 01 Jan 2024 12:00:00 +0000")
     assert result == datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)  # noqa: UP017
 
 
 def test_parse_date_none_returns_datetime() -> None:
-    result = _parse_date(None)
+    result = FeedParser._parse_date(None)
     assert isinstance(result, datetime)
 
 
 def test_parse_date_empty_string_returns_datetime() -> None:
     # xml.etree.ElementTree.findtext() returns "" for <pubDate></pubDate>
-    result = _parse_date("")
+    result = FeedParser._parse_date("")
     assert isinstance(result, datetime)
 
 
 def test_parse_date_invalid_string_returns_datetime() -> None:
-    result = _parse_date("not a date at all")
+    result = FeedParser._parse_date("not a date at all")
     assert isinstance(result, datetime)
 
 
