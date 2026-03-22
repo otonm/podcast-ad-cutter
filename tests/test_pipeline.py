@@ -11,7 +11,7 @@ import pytest
 
 from components.pipeline import Pipeline
 from config.config_loader import FeedConfig
-from models.feed import Episode, FeedParseInput, ParsedFeed, PublisherInput
+from models.feed import AudioMetadata, Episode, FeedParseInput, ParsedFeed, PublisherInput
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -446,6 +446,181 @@ async def test_on_download_progress_complete(caplog: pytest.LogCaptureFixture) -
         await pipeline._on_download_progress("ep-001", 1.0)
 
     assert "Episode 'ep-001' downloaded." in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# AudioProber integration
+# ---------------------------------------------------------------------------
+
+
+def _prober_test_setup(
+    mock_dl_cls: MagicMock,
+    mock_fp_cls: MagicMock,
+    mock_pub_cls: MagicMock,
+    mock_ep_dl_cls: MagicMock,
+    mock_db_cls: MagicMock,
+    mock_store_cls: MagicMock,
+    ep: Episode,
+    parsed: ParsedFeed,
+    downloaded: list[tuple[str, Path]],
+) -> None:
+    """Wire common mocks for prober integration tests."""
+    mock_dl_cls.return_value.download_all = AsyncMock(return_value=[("Probe Podcast", "<rss/>")])
+    mock_fp_cls.return_value.parse_all.return_value = [parsed]
+    mock_db = MagicMock()
+    mock_db_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+    mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+    mock_store_cls.return_value.save_episodes = AsyncMock()
+    mock_store_cls.return_value.get_episodes_for_feed = AsyncMock(return_value=[ep])
+    mock_pub_cls.return_value.publish = AsyncMock(return_value=Path("/output/probe.rss"))
+    mock_ep_dl_cls.return_value.download_all = AsyncMock(return_value=downloaded)
+
+
+def _prober_config(episodes: list[Episode] | None = None) -> tuple[MagicMock, ParsedFeed]:
+    ep = Episode(guid="ep-probe", url="https://example.com/ep.mp3", title="Probe Ep")
+    eps = episodes if episodes is not None else [ep]
+    feed_cfg = FeedConfig(title="Probe Podcast", url="http://x.com/feed", enabled=True, episodes_to_keep=5)
+    config = MagicMock()
+    config.app.feeds = [feed_cfg]
+    config.app.paths.data_dir = MagicMock()
+    config.app.paths.output_dir = MagicMock()
+    config.app.paths.cache_dir = MagicMock()
+    config.app.base_url = "http://localhost"
+    parsed = ParsedFeed(config_title="Probe Podcast", feed_url="http://x.com/feed", title="Probe Podcast", episodes=eps)
+    return config, parsed
+
+
+async def test_pipeline_probe_all_called_with_downloaded_pairs() -> None:
+    """probe_all receives the (guid, path) pairs returned by EpisodeDownloader."""
+    ep = Episode(guid="ep-probe", url="https://example.com/ep.mp3", title="Probe Ep")
+    config, parsed = _prober_config([ep])
+    downloaded_pair = ("ep-probe", Path("/cache/ep-probe.mp3"))
+
+    with (
+        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
+        patch("components.pipeline.FeedParser") as mock_fp_cls,
+        patch("components.pipeline.FeedPublisher") as mock_pub_cls,
+        patch("components.pipeline.EpisodeDownloader") as mock_ep_dl_cls,
+        patch("components.pipeline.Database") as mock_db_cls,
+        patch("components.pipeline.EpisodeStore") as mock_store_cls,
+        patch("components.pipeline.AudioMetadataStore") as mock_ams_cls,
+        patch("components.pipeline.AudioProber") as mock_prober_cls,
+    ):
+        _prober_test_setup(
+            mock_dl_cls, mock_fp_cls, mock_pub_cls, mock_ep_dl_cls,
+            mock_db_cls, mock_store_cls, ep, parsed, [downloaded_pair],
+        )
+        mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value=set())
+        mock_ams_cls.return_value.save_all = AsyncMock()
+        mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[])
+
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    mock_prober_cls.return_value.probe_all.assert_awaited_once_with([downloaded_pair])
+
+
+async def test_pipeline_filters_already_probed_guids() -> None:
+    """GUIDs already in audio_metadata are excluded from probe_all input."""
+    ep1 = Episode(guid="ep-done", url="https://example.com/ep1.mp3", title="Done Ep")
+    ep2 = Episode(guid="ep-new", url="https://example.com/ep2.mp3", title="New Ep")
+    config, parsed = _prober_config([ep1, ep2])
+    done_pair = ("ep-done", Path("/cache/ep-done.mp3"))
+    new_pair = ("ep-new", Path("/cache/ep-new.mp3"))
+
+    with (
+        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
+        patch("components.pipeline.FeedParser") as mock_fp_cls,
+        patch("components.pipeline.FeedPublisher") as mock_pub_cls,
+        patch("components.pipeline.EpisodeDownloader") as mock_ep_dl_cls,
+        patch("components.pipeline.Database") as mock_db_cls,
+        patch("components.pipeline.EpisodeStore") as mock_store_cls,
+        patch("components.pipeline.AudioMetadataStore") as mock_ams_cls,
+        patch("components.pipeline.AudioProber") as mock_prober_cls,
+    ):
+        _prober_test_setup(
+            mock_dl_cls, mock_fp_cls, mock_pub_cls, mock_ep_dl_cls,
+            mock_db_cls, mock_store_cls, ep1, parsed, [done_pair, new_pair],
+        )
+        mock_store_cls.return_value.get_episodes_for_feed = AsyncMock(return_value=[ep1, ep2])
+        mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value={"ep-done"})
+        mock_ams_cls.return_value.save_all = AsyncMock()
+        mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[])
+
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    mock_prober_cls.return_value.probe_all.assert_awaited_once_with([new_pair])
+
+
+async def test_pipeline_saves_probe_results() -> None:
+    """AudioMetadataStore.save_all is called with the results from probe_all."""
+    ep = Episode(guid="ep-probe", url="https://example.com/ep.mp3", title="Probe Ep")
+    config, parsed = _prober_config([ep])
+    downloaded_pair = ("ep-probe", Path("/cache/ep-probe.mp3"))
+    probe_result = AudioMetadata(guid="ep-probe", duration=3600.0, codec="aac", channels=2, bitrate=128000)
+
+    with (
+        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
+        patch("components.pipeline.FeedParser") as mock_fp_cls,
+        patch("components.pipeline.FeedPublisher") as mock_pub_cls,
+        patch("components.pipeline.EpisodeDownloader") as mock_ep_dl_cls,
+        patch("components.pipeline.Database") as mock_db_cls,
+        patch("components.pipeline.EpisodeStore") as mock_store_cls,
+        patch("components.pipeline.AudioMetadataStore") as mock_ams_cls,
+        patch("components.pipeline.AudioProber") as mock_prober_cls,
+    ):
+        _prober_test_setup(
+            mock_dl_cls, mock_fp_cls, mock_pub_cls, mock_ep_dl_cls,
+            mock_db_cls, mock_store_cls, ep, parsed, [downloaded_pair],
+        )
+        mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value=set())
+        mock_ams = mock_ams_cls.return_value
+        mock_ams.save_all = AsyncMock()
+        mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[probe_result])
+
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    mock_ams.save_all.assert_awaited_once_with([probe_result])
+
+
+async def test_pipeline_logs_probe_start_and_completion(caplog: pytest.LogCaptureFixture) -> None:
+    """Pipeline emits debug logs before and after probe_all, showing counts."""
+    ep1 = Episode(guid="ep-done", url="https://example.com/ep1.mp3", title="Done Ep")
+    ep2 = Episode(guid="ep-new", url="https://example.com/ep2.mp3", title="New Ep")
+    config, parsed = _prober_config([ep1, ep2])
+    done_pair = ("ep-done", Path("/cache/ep-done.mp3"))
+    new_pair = ("ep-new", Path("/cache/ep-new.mp3"))
+    probe_result = AudioMetadata(guid="ep-new", duration=120.0, codec="mp3", channels=2, bitrate=64000)
+
+    with (
+        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
+        patch("components.pipeline.FeedParser") as mock_fp_cls,
+        patch("components.pipeline.FeedPublisher") as mock_pub_cls,
+        patch("components.pipeline.EpisodeDownloader") as mock_ep_dl_cls,
+        patch("components.pipeline.Database") as mock_db_cls,
+        patch("components.pipeline.EpisodeStore") as mock_store_cls,
+        patch("components.pipeline.AudioMetadataStore") as mock_ams_cls,
+        patch("components.pipeline.AudioProber") as mock_prober_cls,
+    ):
+        _prober_test_setup(
+            mock_dl_cls, mock_fp_cls, mock_pub_cls, mock_ep_dl_cls,
+            mock_db_cls, mock_store_cls, ep1, parsed, [done_pair, new_pair],
+        )
+        mock_store_cls.return_value.get_episodes_for_feed = AsyncMock(return_value=[ep1, ep2])
+        mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value={"ep-done"})
+        mock_ams_cls.return_value.save_all = AsyncMock()
+        mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[probe_result])
+
+        pipeline = Pipeline(config)
+        with caplog.at_level(logging.DEBUG, logger="components.pipeline"):
+            await pipeline.run()
+
+    # Start message: 1 to probe, 1 already done
+    assert any("Probing 1 episode(s)" in r.message and "1 already probed" in r.message for r in caplog.records)
+    # Completion message: 1 succeeded, 0 failed
+    assert any("1 succeeded" in r.message and "0 failed" in r.message for r in caplog.records)
 
 
 async def test_on_download_progress_intermediate() -> None:

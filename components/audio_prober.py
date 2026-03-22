@@ -54,6 +54,12 @@ class AudioProber:
             try:
                 metadata = await self._probe_one(guid, path)
                 results.append(metadata)
+                logger.debug(
+                    f"Probed '{guid}': codec={metadata.codec}, "
+                    f"duration={metadata.duration:.2f}s, "
+                    f"channels={metadata.channels}, "
+                    f"bitrate={metadata.bitrate}bps"
+                )
             except AudioProbeError as exc:
                 logger.error(f"Skipping probe for '{guid}': {exc}")
         return results

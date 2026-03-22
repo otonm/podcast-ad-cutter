@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from unittest.mock import patch
 
@@ -161,6 +162,17 @@ async def test_probe_all_returns_all_successes(prober: AudioProber) -> None:
         results = await prober.probe_all(pairs)
     assert len(results) == 3
     assert [r.guid for r in results] == ["ep-0", "ep-1", "ep-2"]
+
+
+async def test_probe_all_logs_debug_on_success(prober: AudioProber, caplog: pytest.LogCaptureFixture) -> None:
+    """Successful probe emits a debug log with codec/duration/channels/bitrate."""
+    stdout = _ffprobe_json(codec="aac", channels=2, duration="3661.234", format_bitrate="128000")
+    mock_proc = _make_proc(stdout)
+    with caplog.at_level(logging.DEBUG, logger="components.audio_prober"):
+        with patch("components.audio_prober.asyncio.create_subprocess_exec", new=_make_async_create(mock_proc)):
+            await prober.probe_all([(GUID, PATH)])
+
+    assert any("ep-abc" in r.message and "aac" in r.message for r in caplog.records)
 
 
 async def test_probe_all_skips_failed_episodes(prober: AudioProber) -> None:

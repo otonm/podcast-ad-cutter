@@ -7,10 +7,12 @@ import sys
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from components.audio_prober import AudioProber
 from components.episode_downloader import EpisodeDownloader
 from components.feed_downloader import FeedDownloader
 from components.feed_parser import FeedParser
 from components.feed_publisher import FeedPublisher
+from database.audio_metadata_store import AudioMetadataStore
 from database.connection import Database
 from database.episode_store import EpisodeStore
 from models.feed import FeedParseInput, ParsedFeed, PublisherInput
@@ -52,6 +54,7 @@ class Pipeline:
         self._feed_parser = FeedParser()
         self._feed_publisher = FeedPublisher(config.app.paths.output_dir)
         self._episode_downloader = EpisodeDownloader(config.app.paths.cache_dir)
+        self._audio_prober = AudioProber()
 
     async def run(self) -> list[ParsedFeed]:
         """Execute the pipeline for the selected feeds.
@@ -116,10 +119,26 @@ class Pipeline:
                 output_path = await self._feed_publisher.publish(publisher_input)
                 logger.info(f"Feed '{feed.config_title}' published to {output_path}")
                 episode_pairs = [(ep.guid, ep.url) for ep in episodes]
-                await self._episode_downloader.download_all(
+                downloaded = await self._episode_downloader.download_all(
                     episode_pairs,
                     on_progress=self._on_download_progress,
                 )
+                if downloaded:
+                    audio_metadata_store = AudioMetadataStore(db.conn)
+                    probed_guids = await audio_metadata_store.get_probed_guids()
+                    unprobed = [(g, p) for g, p in downloaded if g not in probed_guids]
+                    skipped = len(downloaded) - len(unprobed)
+                    logger.debug(
+                        f"Probing {len(unprobed)} episode(s) for '{feed.config_title}' "
+                        f"({skipped} already probed)"
+                    )
+                    probe_results = await self._audio_prober.probe_all(unprobed)
+                    logger.debug(
+                        f"Probe complete for '{feed.config_title}': "
+                        f"{len(probe_results)} succeeded, "
+                        f"{len(unprobed) - len(probe_results)} failed"
+                    )
+                    await audio_metadata_store.save_all(probe_results)
 
         return parsed_feeds
 

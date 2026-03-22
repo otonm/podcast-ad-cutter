@@ -4,26 +4,36 @@
 
 **Before implementing any feature that uses an external library or API, look up the current documentation.**
 
-1. Use Context7 MCP first: resolve the library ID, then query the relevant docs.
+1. Always use Context7 when I need library/API documentation, code generation, setup or configuration steps without me having to explicitly ask.
 2. If Context7 has no coverage, use sources from the web.
 3. Never rely on training-data knowledge — it may be outdated.
 
 ### Library Documentation Sources
 
 - `aiohttp`:
-  - `context7` MCP server
-  - `https://docs.aiohttp.org/en/stable/`
+  - Example: _use context7 to show me how to open a http connection_
+  - Documentation:`https://docs.aiohttp.org/en/stable/`
   - `https://github.com/aio-libs/aiohttp`
 
 - `pydantic`:
-  - `context7` MCP server
-  - `https://docs.pydantic.dev/latest/`
-  - `https://github.com/pydantic/pydantic`
+  - Example: _use context7 to show me how to create a model_
+  - Documentation:`https://docs.pydantic.dev/latest/`
+  - Source: `https://github.com/pydantic/pydantic`
 
 - `aiosqlite`:
-  - `context7` MCP server
-  - `https://aiosqlite.omnilib.dev/en/latest/api.html`
-  - `https://github.com/omnilib/aiosqlite`
+  - Example: _use context7 to show me how to create a table_
+  - Documentation: `https://aiosqlite.omnilib.dev/en/latest/api.html`
+  - Source: `https://github.com/omnilib/aiosqlite`
+
+- `litellm`:
+  - Example: _use context7 to show me how to connect to openai_
+  - Documentation: `https://docs.litellm.ai/docs/#litellm-python-sdk`
+  - Source: `https://github.com/BerriAI/litellm`
+
+  - `ffmpeg` and `ffprobe`:
+  - Example: _use context7 for ffmpeg syntax on how to export an audio file to aac_
+  - Documentation: `https://ffmpeg.org/ffmpeg.html`
+
 ---
 
 ## Test-Driven Development
@@ -70,7 +80,7 @@ All other files live in subfolders. `pyproject.toml` is the single source of tru
 - Python 3.12 target.
 - Async throughout.
 - Context managers for every resource (`with`/`async with`).
-- Modular design, each feature in a separate class with a public API.
+- Modular, decoupled architecture, each feature in a separate class with a public API.
 
 ---
 
