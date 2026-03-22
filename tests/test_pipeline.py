@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -345,3 +347,113 @@ async def test_run_saves_parsed_episodes() -> None:
         await pipeline.run()
 
     mock_store.save_episodes.assert_awaited_once_with("Feed A", [ep])
+
+
+async def test_pipeline_calls_episode_downloader() -> None:
+    """Pipeline calls EpisodeDownloader.download_all once per feed after publishing."""
+    feed_cfg = FeedConfig(title="My Podcast", url="http://x.com/feed", enabled=True, episodes_to_keep=5)
+    config = MagicMock()
+    config.app.feeds = [feed_cfg]
+    config.app.paths.data_dir = MagicMock()
+    config.app.paths.output_dir = MagicMock()
+    config.app.paths.cache_dir = MagicMock()
+    config.app.base_url = "http://localhost"
+
+    ep = Episode(
+        guid="ep-001",
+        url="https://example.com/ep.mp3",
+        title="Ep 1",
+        pub_date=datetime(2026, 3, 22, tzinfo=UTC),
+    )
+    parsed = ParsedFeed(
+        config_title="My Podcast",
+        feed_url="http://x.com/feed",
+        title="My Podcast",
+        episodes=[ep],
+    )
+
+    with (
+        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
+        patch("components.pipeline.FeedParser") as mock_fp_cls,
+        patch("components.pipeline.FeedPublisher") as mock_pub_cls,
+        patch("components.pipeline.EpisodeDownloader") as mock_ep_dl_cls,
+        patch("components.pipeline.Database"),
+        patch("components.pipeline.EpisodeStore") as mock_store_cls,
+    ):
+        mock_dl_cls.return_value.download_all = AsyncMock(return_value=[("My Podcast", "<rss/>")])
+        mock_fp_cls.return_value.parse_all.return_value = [parsed]
+        mock_store_cls.return_value.save_episodes = AsyncMock()
+        mock_store_cls.return_value.get_episodes_for_feed = AsyncMock(return_value=[ep])
+        mock_pub_cls.return_value.publish = AsyncMock(return_value=Path("/output/my-podcast.rss"))
+        mock_ep_dl = mock_ep_dl_cls.return_value
+        mock_ep_dl.download_all = AsyncMock(return_value=[])
+
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    # EpisodeDownloader.download_all must be called once with (guid, url) pairs
+    mock_ep_dl.download_all.assert_awaited_once()
+    episodes_arg = mock_ep_dl.download_all.call_args[0][0]
+    assert episodes_arg == [("ep-001", "https://example.com/ep.mp3")]
+
+
+# ---------------------------------------------------------------------------
+# _on_download_progress branch coverage
+# ---------------------------------------------------------------------------
+
+
+async def test_on_download_progress_starting(caplog: pytest.LogCaptureFixture) -> None:
+    """Progress callback at 0.0 logs a 'Downloading' message."""
+    config = MagicMock()
+    config.app.paths.data_dir = MagicMock()
+    config.app.paths.output_dir = MagicMock()
+    config.app.paths.cache_dir = MagicMock()
+
+    with (
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.EpisodeDownloader"),
+    ):
+        pipeline = Pipeline(config)
+
+    with caplog.at_level(logging.DEBUG, logger="components.pipeline"):
+        await pipeline._on_download_progress("ep-001", 0.0)
+
+    assert "Downloading episode 'ep-001'" in caplog.text
+
+
+async def test_on_download_progress_complete(caplog: pytest.LogCaptureFixture) -> None:
+    """Progress callback at 1.0 logs a 'downloaded' message."""
+    config = MagicMock()
+    config.app.paths.data_dir = MagicMock()
+    config.app.paths.output_dir = MagicMock()
+    config.app.paths.cache_dir = MagicMock()
+
+    with (
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.EpisodeDownloader"),
+    ):
+        pipeline = Pipeline(config)
+
+    with caplog.at_level(logging.DEBUG, logger="components.pipeline"):
+        await pipeline._on_download_progress("ep-001", 1.0)
+
+    assert "Episode 'ep-001' downloaded." in caplog.text
+
+
+async def test_on_download_progress_intermediate(caplog: pytest.LogCaptureFixture) -> None:
+    """Progress callback at an intermediate value logs a percentage."""
+    config = MagicMock()
+    config.app.paths.data_dir = MagicMock()
+    config.app.paths.output_dir = MagicMock()
+    config.app.paths.cache_dir = MagicMock()
+
+    with (
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.EpisodeDownloader"),
+    ):
+        pipeline = Pipeline(config)
+
+    with caplog.at_level(logging.DEBUG, logger="components.pipeline"):
+        await pipeline._on_download_progress("ep-001", 0.5)
+
+    assert "50%" in caplog.text

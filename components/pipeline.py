@@ -6,6 +6,7 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from components.episode_downloader import EpisodeDownloader
 from components.feed_downloader import FeedDownloader
 from components.feed_parser import FeedParser
 from components.feed_publisher import FeedPublisher
@@ -49,6 +50,7 @@ class Pipeline:
         self._feed_downloader = FeedDownloader()
         self._feed_parser = FeedParser()
         self._feed_publisher = FeedPublisher(config.app.paths.output_dir)
+        self._episode_downloader = EpisodeDownloader(config.app.paths.cache_dir)
 
     async def run(self) -> list[ParsedFeed]:
         """Execute the pipeline for the selected feeds.
@@ -112,6 +114,11 @@ class Pipeline:
                 )
                 output_path = await self._feed_publisher.publish(publisher_input)
                 logger.info(f"Feed '{feed.config_title}' published to {output_path}")
+                episode_pairs = [(ep.guid, ep.url) for ep in episodes]
+                await self._episode_downloader.download_all(
+                    episode_pairs,
+                    on_progress=self._on_download_progress,
+                )
 
         return parsed_feeds
 
@@ -187,3 +194,19 @@ class Pipeline:
             )
             for title, xml_text in download_results
         ]
+
+    async def _on_download_progress(self, guid: str, percent: float) -> None:
+        """Log episode download progress.
+
+        Args:
+            guid: Episode GUID being downloaded.
+            percent: Progress in ``[0.0, 1.0]``.  ``0.0`` means starting;
+                ``1.0`` means complete.
+
+        """
+        if percent == 0.0:
+            logger.debug(f"Downloading episode '{guid}' \u2026")
+        elif percent == 1.0:
+            logger.debug(f"Episode '{guid}' downloaded.")
+        else:
+            logger.debug(f"Episode '{guid}': {percent:.0%}")
