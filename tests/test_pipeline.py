@@ -333,6 +333,8 @@ async def test_run_saves_parsed_episodes() -> None:
         patch("components.pipeline.FeedParser") as mock_fp_cls,
         patch("components.pipeline.Database") as mock_db_cls,
         patch("components.pipeline.EpisodeStore") as mock_store_cls,
+        patch("components.pipeline.EpisodeDownloader") as mock_ep_dl_cls,
+        patch("components.pipeline.FeedPublisher") as mock_pub_cls,
     ):
         mock_dl = mock_dl_cls.return_value
         mock_dl.download_all = AsyncMock(return_value=[("Feed A", "<xml/>")])
@@ -343,6 +345,8 @@ async def test_run_saves_parsed_episodes() -> None:
         mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_store = AsyncMock()
         mock_store_cls.return_value = mock_store
+        mock_ep_dl_cls.return_value.download_all = AsyncMock(return_value=[])
+        mock_pub_cls.return_value.publish = AsyncMock(return_value=MagicMock())
         pipeline = Pipeline(config)
         await pipeline.run()
 
