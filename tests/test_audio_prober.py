@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -13,14 +13,17 @@ from models.feed import AudioMetadata
 from utils.exceptions import AudioProbeError
 
 
-def _make_proc(stdout: bytes, returncode: int = 0) -> MagicMock:
-    async def fake_communicate() -> tuple[bytes, bytes]:
-        return (stdout, b"")
+def _make_proc(stdout: bytes, returncode: int = 0) -> object:
+    class MockProcess:
+        """Mock process object that mimics asyncio.subprocess.Process."""
 
-    proc = MagicMock()
-    proc.returncode = returncode
-    proc.communicate = AsyncMock(wraps=fake_communicate)
-    return proc
+        def __init__(self) -> None:
+            self.returncode = returncode
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return (stdout, b"")
+
+    return MockProcess()
 
 
 def _ffprobe_json(
@@ -41,9 +44,9 @@ def _ffprobe_json(
     return json.dumps({"streams": [stream], "format": {"bit_rate": format_bitrate}}).encode()
 
 
-def _make_async_create(proc: MagicMock) -> object:
+def _make_async_create(proc: object) -> object:
     """Create an async function that returns a given process mock."""
-    async def fake_create(*args: object, **kwargs: object) -> MagicMock:
+    async def fake_create(*args: object, **kwargs: object) -> object:
         return proc
     return fake_create
 
@@ -106,8 +109,14 @@ async def test_probe_one_raises_on_no_audio_stream(prober: AudioProber) -> None:
 
 
 async def test_probe_one_raises_on_timeout(prober: AudioProber) -> None:
+    async def wait_for_timeout(coro: object, **kwargs: object) -> object:  # type: ignore[no-untyped-def]
+        # Close the coroutine to avoid "was never awaited" warnings
+        if hasattr(coro, "close"):
+            coro.close()  # type: ignore[attr-defined]
+        raise TimeoutError
+
     with patch("components.audio_prober.asyncio.create_subprocess_exec", new=_make_async_create(_make_proc(b""))):
-        with patch("components.audio_prober.asyncio.wait_for", side_effect=TimeoutError):
+        with patch("components.audio_prober.asyncio.wait_for", new=wait_for_timeout):
             with pytest.raises(AudioProbeError, match="timed out"):
                 await prober._probe_one(GUID, PATH)
 
@@ -143,8 +152,12 @@ async def test_probe_all_empty_list(prober: AudioProber) -> None:
 async def test_probe_all_returns_all_successes(prober: AudioProber) -> None:
     pairs = [(f"ep-{i}", Path(f"/cache/ep-{i}.mp3")) for i in range(3)]
     stdout = _ffprobe_json()
-    mock_proc = _make_proc(stdout)
-    with patch("components.audio_prober.asyncio.create_subprocess_exec", new=_make_async_create(mock_proc)):
+
+    async def fake_create(*args: object, **kwargs: object) -> object:
+        # Create a fresh mock each time with a new _communicate function
+        return _make_proc(stdout)
+
+    with patch("components.audio_prober.asyncio.create_subprocess_exec", new=fake_create):
         results = await prober.probe_all(pairs)
     assert len(results) == 3
     assert [r.guid for r in results] == ["ep-0", "ep-1", "ep-2"]
@@ -159,7 +172,7 @@ async def test_probe_all_skips_failed_episodes(prober: AudioProber) -> None:
 
     call_count = 0
 
-    async def fake_create(*args: object, **kwargs: object) -> MagicMock:
+    async def fake_create(*args: object, **kwargs: object) -> object:
         nonlocal call_count
         call_count += 1
         return ok_proc if call_count == 1 else fail_proc

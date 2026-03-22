@@ -52,9 +52,6 @@ disallow_untyped_defs = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-filterwarnings = [
-    "ignore:coroutine.*_execute_mock_call.*was never awaited:RuntimeWarning",
-]
 
 [dependency-groups]
 dev = [
