@@ -13,3 +13,7 @@ class ConfigError(PodcastAdCutterError):
 
 class AudioProbeError(PodcastAdCutterError):
     """Raised when ffprobe fails to extract audio metadata from a file."""
+
+
+class FfmpegError(PodcastAdCutterError):
+    """Raised when ffmpeg exits with a non-zero return code."""

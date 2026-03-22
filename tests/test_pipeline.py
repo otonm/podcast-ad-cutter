@@ -505,6 +505,7 @@ async def test_pipeline_probe_all_called_with_downloaded_pairs() -> None:
         patch("components.pipeline.EpisodeStore") as mock_store_cls,
         patch("components.pipeline.AudioMetadataStore") as mock_ams_cls,
         patch("components.pipeline.AudioProber") as mock_prober_cls,
+        patch("components.pipeline.AudioPreprocessor") as mock_prep_cls,
     ):
         _prober_test_setup(
             mock_dl_cls, mock_fp_cls, mock_pub_cls, mock_ep_dl_cls,
@@ -513,6 +514,7 @@ async def test_pipeline_probe_all_called_with_downloaded_pairs() -> None:
         mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value=set())
         mock_ams_cls.return_value.save_all = AsyncMock()
         mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[])
+        mock_prep_cls.return_value.preprocess_all = AsyncMock(return_value=[])
 
         pipeline = Pipeline(config)
         await pipeline.run()
@@ -537,6 +539,7 @@ async def test_pipeline_filters_already_probed_guids() -> None:
         patch("components.pipeline.EpisodeStore") as mock_store_cls,
         patch("components.pipeline.AudioMetadataStore") as mock_ams_cls,
         patch("components.pipeline.AudioProber") as mock_prober_cls,
+        patch("components.pipeline.AudioPreprocessor") as mock_prep_cls,
     ):
         _prober_test_setup(
             mock_dl_cls, mock_fp_cls, mock_pub_cls, mock_ep_dl_cls,
@@ -546,6 +549,7 @@ async def test_pipeline_filters_already_probed_guids() -> None:
         mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value={"ep-done"})
         mock_ams_cls.return_value.save_all = AsyncMock()
         mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[])
+        mock_prep_cls.return_value.preprocess_all = AsyncMock(return_value=[])
 
         pipeline = Pipeline(config)
         await pipeline.run()
@@ -569,6 +573,7 @@ async def test_pipeline_saves_probe_results() -> None:
         patch("components.pipeline.EpisodeStore") as mock_store_cls,
         patch("components.pipeline.AudioMetadataStore") as mock_ams_cls,
         patch("components.pipeline.AudioProber") as mock_prober_cls,
+        patch("components.pipeline.AudioPreprocessor") as mock_prep_cls,
     ):
         _prober_test_setup(
             mock_dl_cls, mock_fp_cls, mock_pub_cls, mock_ep_dl_cls,
@@ -578,6 +583,7 @@ async def test_pipeline_saves_probe_results() -> None:
         mock_ams = mock_ams_cls.return_value
         mock_ams.save_all = AsyncMock()
         mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[probe_result])
+        mock_prep_cls.return_value.preprocess_all = AsyncMock(return_value=[])
 
         pipeline = Pipeline(config)
         await pipeline.run()
@@ -603,6 +609,7 @@ async def test_pipeline_logs_probe_start_and_completion(caplog: pytest.LogCaptur
         patch("components.pipeline.EpisodeStore") as mock_store_cls,
         patch("components.pipeline.AudioMetadataStore") as mock_ams_cls,
         patch("components.pipeline.AudioProber") as mock_prober_cls,
+        patch("components.pipeline.AudioPreprocessor") as mock_prep_cls,
     ):
         _prober_test_setup(
             mock_dl_cls, mock_fp_cls, mock_pub_cls, mock_ep_dl_cls,
@@ -612,6 +619,7 @@ async def test_pipeline_logs_probe_start_and_completion(caplog: pytest.LogCaptur
         mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value={"ep-done"})
         mock_ams_cls.return_value.save_all = AsyncMock()
         mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[probe_result])
+        mock_prep_cls.return_value.preprocess_all = AsyncMock(return_value=[])
 
         pipeline = Pipeline(config)
         with caplog.at_level(logging.DEBUG, logger="components.pipeline"):
@@ -638,6 +646,138 @@ async def test_on_download_progress_intermediate() -> None:
 
     with patch("sys.stderr") as mock_stderr:
         await pipeline._on_download_progress("ep-001", 0.5)
+
+    mock_stderr.write.assert_called_once_with("\r  Episode 'ep-001': 50%")
+    mock_stderr.flush.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# AudioPreprocessor integration
+# ---------------------------------------------------------------------------
+
+
+async def test_pipeline_calls_audio_preprocessor() -> None:
+    """preprocess_all is awaited with the downloaded pairs and a progress callback."""
+    ep = Episode(guid="ep-prep", url="https://example.com/ep.mp3", title="Prep Ep")
+    config, parsed = _prober_config([ep])
+    downloaded_pair = ("ep-prep", Path("/cache/ep-prep.mp3"))
+
+    with (
+        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
+        patch("components.pipeline.FeedParser") as mock_fp_cls,
+        patch("components.pipeline.FeedPublisher") as mock_pub_cls,
+        patch("components.pipeline.EpisodeDownloader") as mock_ep_dl_cls,
+        patch("components.pipeline.Database") as mock_db_cls,
+        patch("components.pipeline.EpisodeStore") as mock_store_cls,
+        patch("components.pipeline.AudioMetadataStore") as mock_ams_cls,
+        patch("components.pipeline.AudioProber") as mock_prober_cls,
+        patch("components.pipeline.AudioPreprocessor") as mock_prep_cls,
+    ):
+        _prober_test_setup(
+            mock_dl_cls, mock_fp_cls, mock_pub_cls, mock_ep_dl_cls,
+            mock_db_cls, mock_store_cls, ep, parsed, [downloaded_pair],
+        )
+        mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value=set())
+        mock_ams_cls.return_value.save_all = AsyncMock()
+        mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[])
+        mock_prep_cls.return_value.preprocess_all = AsyncMock(return_value=[])
+
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    mock_prep_cls.return_value.preprocess_all.assert_awaited_once()
+    call_args = mock_prep_cls.return_value.preprocess_all.call_args
+    assert call_args[0][0] == [downloaded_pair]
+    assert call_args[1]["on_progress"] is not None
+
+
+async def test_pipeline_preprocessor_skipped_when_no_downloads() -> None:
+    """preprocess_all is NOT called when EpisodeDownloader returns no files."""
+    ep = Episode(guid="ep-prep", url="https://example.com/ep.mp3", title="Prep Ep")
+    config, parsed = _prober_config([ep])
+
+    with (
+        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
+        patch("components.pipeline.FeedParser") as mock_fp_cls,
+        patch("components.pipeline.FeedPublisher") as mock_pub_cls,
+        patch("components.pipeline.EpisodeDownloader") as mock_ep_dl_cls,
+        patch("components.pipeline.Database") as mock_db_cls,
+        patch("components.pipeline.EpisodeStore") as mock_store_cls,
+        patch("components.pipeline.AudioPreprocessor") as mock_prep_cls,
+    ):
+        _prober_test_setup(
+            mock_dl_cls, mock_fp_cls, mock_pub_cls, mock_ep_dl_cls,
+            mock_db_cls, mock_store_cls, ep, parsed, [],  # empty downloads
+        )
+        mock_prep_cls.return_value.preprocess_all = AsyncMock(return_value=[])
+
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    mock_prep_cls.return_value.preprocess_all.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _on_preprocess_progress branch coverage
+# ---------------------------------------------------------------------------
+
+
+async def test_on_preprocess_progress_starting(caplog: pytest.LogCaptureFixture) -> None:
+    """Progress callback at 0.0 logs a 'Preprocessing' message."""
+    config = MagicMock()
+    config.app.paths.data_dir = MagicMock()
+    config.app.paths.output_dir = MagicMock()
+    config.app.paths.cache_dir = MagicMock()
+
+    with (
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.AudioPreprocessor"),
+    ):
+        pipeline = Pipeline(config)
+
+    with caplog.at_level(logging.DEBUG, logger="components.pipeline"):
+        await pipeline._on_preprocess_progress("ep-001", 0.0)
+
+    assert "Preprocessing episode 'ep-001'" in caplog.text
+
+
+async def test_on_preprocess_progress_complete(caplog: pytest.LogCaptureFixture) -> None:
+    """Progress callback at 1.0 logs a 'preprocessed' message."""
+    config = MagicMock()
+    config.app.paths.data_dir = MagicMock()
+    config.app.paths.output_dir = MagicMock()
+    config.app.paths.cache_dir = MagicMock()
+
+    with (
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.AudioPreprocessor"),
+    ):
+        pipeline = Pipeline(config)
+
+    with caplog.at_level(logging.DEBUG, logger="components.pipeline"):
+        await pipeline._on_preprocess_progress("ep-001", 1.0)
+
+    assert "Episode 'ep-001' preprocessed." in caplog.text
+
+
+async def test_on_preprocess_progress_intermediate() -> None:
+    """Progress callback at an intermediate value writes percentage in-place to stderr."""
+    config = MagicMock()
+    config.app.paths.data_dir = MagicMock()
+    config.app.paths.output_dir = MagicMock()
+    config.app.paths.cache_dir = MagicMock()
+
+    with (
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.AudioPreprocessor"),
+    ):
+        pipeline = Pipeline(config)
+
+    with patch("sys.stderr") as mock_stderr:
+        await pipeline._on_preprocess_progress("ep-001", 0.5)
 
     mock_stderr.write.assert_called_once_with("\r  Episode 'ep-001': 50%")
     mock_stderr.flush.assert_called_once()

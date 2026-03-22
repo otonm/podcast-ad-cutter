@@ -7,6 +7,7 @@ import sys
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from components.audio_preprocessor import AudioPreprocessor
 from components.audio_prober import AudioProber
 from components.episode_downloader import EpisodeDownloader
 from components.feed_downloader import FeedDownloader
@@ -55,6 +56,7 @@ class Pipeline:
         self._feed_publisher = FeedPublisher(config.app.paths.output_dir)
         self._episode_downloader = EpisodeDownloader(config.app.paths.cache_dir)
         self._audio_prober = AudioProber()
+        self._audio_preprocessor = AudioPreprocessor(config.app.paths.cache_dir)
 
     async def run(self) -> list[ParsedFeed]:
         """Execute the pipeline for the selected feeds.
@@ -139,6 +141,10 @@ class Pipeline:
                         f"{len(unprobed) - len(probe_results)} failed"
                     )
                     await audio_metadata_store.save_all(probe_results)
+                    await self._audio_preprocessor.preprocess_all(
+                        downloaded,
+                        on_progress=self._on_preprocess_progress,
+                    )
 
         return parsed_feeds
 
@@ -233,5 +239,24 @@ class Pipeline:
             logger.debug(f"Episode '{guid}' downloaded.")
         else:
             # Overwrite the current terminal line with updated progress — no newline.
+            sys.stderr.write(f"\r  Episode '{guid}': {percent:.0%}")
+            sys.stderr.flush()
+
+    async def _on_preprocess_progress(self, guid: str, percent: float) -> None:
+        """Log episode preprocessing progress.
+
+        Args:
+            guid: Episode GUID being preprocessed.
+            percent: Progress in ``[0.0, 1.0]``.  ``0.0`` means starting;
+                ``1.0`` means complete.
+
+        """
+        if percent == 0.0:
+            logger.debug(f"Preprocessing episode '{guid}' \u2026")
+        elif percent == 1.0:
+            sys.stderr.write("\n")
+            sys.stderr.flush()
+            logger.debug(f"Episode '{guid}' preprocessed.")
+        else:
             sys.stderr.write(f"\r  Episode '{guid}': {percent:.0%}")
             sys.stderr.flush()
