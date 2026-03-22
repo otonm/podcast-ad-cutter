@@ -40,6 +40,17 @@ class Episode:
 
 
 @dataclass
+class AudioMetadata:
+    """Audio metadata extracted from a downloaded episode file via ffprobe."""
+
+    guid: str
+    duration: float  # exact seconds (sub-second precision from ffprobe)
+    codec: str       # e.g. "aac", "mp3"
+    channels: int    # 1 = mono, 2 = stereo
+    bitrate: int     # bits per second
+
+
+@dataclass
 class FeedParseInput:
     """Input contract for FeedParser.parse_all() — plain data, no config types."""
 
