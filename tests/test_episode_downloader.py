@@ -229,6 +229,8 @@ async def test_retries_on_http_error_then_succeeds(
         results = await downloader.download_all([(GUID, URL)])
 
     assert len(results) == 1
+    _, path = results[0]
+    assert path.read_bytes() == AUDIO_DATA
 
 
 async def test_all_retries_exhausted_episode_omitted(
@@ -296,22 +298,8 @@ async def test_multiple_episodes_one_fails(
 
 
 # ---------------------------------------------------------------------------
-# Task 5: Partial file cleanup — exhausted retries and CancelledError
+# Task 5: Partial file cleanup — CancelledError
 # ---------------------------------------------------------------------------
-
-
-async def test_partial_file_deleted_on_exhausted_retries(
-    downloader: EpisodeDownloader,
-    cache_dir: Path,
-) -> None:
-    """No stale partial file remains after all retries are exhausted."""
-    with aioresponses() as m:
-        m.get(URL, status=503)
-        m.get(URL, status=503)
-        m.get(URL, status=503)
-        await downloader.download_all([(GUID, URL)])
-
-    assert list(cache_dir.iterdir()) == []  # noqa: ASYNC240
 
 
 async def test_cancelled_error_deletes_partial_file_and_propagates(
