@@ -50,6 +50,33 @@ CREATE TABLE IF NOT EXISTS episode_audio_metadata (
 )
 """
 
+_TRANSCRIPTIONS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS transcriptions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    guid          TEXT    NOT NULL UNIQUE REFERENCES episodes(guid),
+    transcription TEXT    NOT NULL
+)
+"""
+
+_TRANSCRIPTION_SEGMENTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS transcription_segments (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    guid     TEXT    NOT NULL REFERENCES episodes(guid),
+    start_ms INTEGER NOT NULL,
+    end_ms   INTEGER NOT NULL,
+    text     TEXT    NOT NULL
+)
+"""
+
+_COST_TRACKING_SCHEMA = """
+CREATE TABLE IF NOT EXISTS cost_tracking (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT    NOT NULL,
+    model    TEXT    NOT NULL,
+    cost     REAL    NOT NULL
+)
+"""
+
 
 class Database:
     """Async context manager that owns the SQLite connection and schema.
@@ -79,6 +106,9 @@ class Database:
         await self.conn.execute("PRAGMA foreign_keys = ON")
         await self.conn.execute(_EPISODES_SCHEMA)
         await self.conn.execute(_AUDIO_METADATA_SCHEMA)
+        await self.conn.execute(_TRANSCRIPTIONS_SCHEMA)
+        await self.conn.execute(_TRANSCRIPTION_SEGMENTS_SCHEMA)
+        await self.conn.execute(_COST_TRACKING_SCHEMA)
         await self.conn.commit()
         logger.debug(f"Database opened: {self._db_path}")
         return self

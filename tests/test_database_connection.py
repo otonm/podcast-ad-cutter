@@ -131,3 +131,81 @@ async def test_episode_audio_metadata_has_expected_columns(db_path: Path) -> Non
         pass
     cols = await _audio_metadata_column_names(db_path)
     assert {"id", "guid", "duration", "codec", "channels", "bitrate"} <= cols
+
+
+async def _table_column_names(db_path: Path, table: str) -> set[str]:
+    async with aiosqlite.connect(db_path) as conn:
+        cursor = await conn.execute(f"PRAGMA table_info({table})")
+        rows = await cursor.fetchall()
+    return {row[1] for row in rows}
+
+
+async def test_transcriptions_table_exists(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    async with aiosqlite.connect(db_path) as conn:
+        cursor = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='transcriptions'"
+        )
+        row = await cursor.fetchone()
+    assert row is not None
+
+
+async def test_transcriptions_table_has_expected_columns(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    cols = await _table_column_names(db_path, "transcriptions")
+    assert {"id", "guid", "transcription"} <= cols
+
+
+async def test_transcription_segments_table_exists(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    async with aiosqlite.connect(db_path) as conn:
+        cursor = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='transcription_segments'"
+        )
+        row = await cursor.fetchone()
+    assert row is not None
+
+
+async def test_transcription_segments_table_has_expected_columns(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    cols = await _table_column_names(db_path, "transcription_segments")
+    assert {"id", "guid", "start_ms", "end_ms", "text"} <= cols
+
+
+async def test_cost_tracking_table_exists(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    async with aiosqlite.connect(db_path) as conn:
+        cursor = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='cost_tracking'"
+        )
+        row = await cursor.fetchone()
+    assert row is not None
+
+
+async def test_cost_tracking_table_has_expected_columns(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    cols = await _table_column_names(db_path, "cost_tracking")
+    assert {"id", "provider", "model", "cost"} <= cols
+
+
+async def test_transcriptions_fk_enforced(db_path: Path) -> None:
+    async with Database(db_path) as db:
+        with pytest.raises(aiosqlite.IntegrityError):
+            await db.conn.execute(
+                "INSERT INTO transcriptions (guid, transcription) VALUES ('ghost-guid', 'text')"
+            )
+
+
+async def test_transcription_segments_fk_enforced(db_path: Path) -> None:
+    async with Database(db_path) as db:
+        with pytest.raises(aiosqlite.IntegrityError):
+            await db.conn.execute(
+                "INSERT INTO transcription_segments (guid, start_ms, end_ms, text) "
+                "VALUES ('ghost-guid', 0, 1000, 'hello')"
+            )

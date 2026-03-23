@@ -76,9 +76,10 @@ def configure_logging(*, level: str, log_to_file: bool, log_dir: Path = Path("lo
     root = logging.getLogger()
     root.setLevel(getattr(logging, level))
 
-    # aiosqlite is extremely chatty at DEBUG — keep it at WARNING regardless of
-    # the application log level so it doesn't drown out our own messages.
+    # Some libraries are extremely chatty at DEBUG — keep them at WARNING
+    # regardless of the application log level so they don't drown out our own messages.
     logging.getLogger("aiosqlite").setLevel(logging.WARNING)
+    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 
     # Remove any pre-existing handlers so this function is idempotent
     for handler in root.handlers[:]:

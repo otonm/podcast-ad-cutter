@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from utils.exceptions import AudioProbeError, ConfigError, FfmpegError, PodcastAdCutterError
+from utils.exceptions import AudioProbeError, ConfigError, FfmpegError, PodcastAdCutterError, TranscriptionError
 
 
 def test_config_error_is_podcast_error() -> None:
@@ -35,3 +35,13 @@ def test_ffmpeg_error_message_with_stderr() -> None:
 def test_ffmpeg_error_ignores_blank_stderr() -> None:
     exc = FfmpegError("ffmpeg exited with code 1", stderr="   \n  ")
     assert str(exc) == "ffmpeg exited with code 1"
+
+
+def test_transcription_error_is_podcast_error() -> None:
+    assert issubclass(TranscriptionError, PodcastAdCutterError)
+
+
+def test_transcription_error_stores_message() -> None:
+    exc = TranscriptionError("litellm failed")
+    assert exc.message == "litellm failed"
+    assert str(exc) == "litellm failed"

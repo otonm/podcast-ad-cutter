@@ -23,3 +23,11 @@ class FfmpegError(PodcastAdCutterError):
         super().__init__(detail)
         self.message = message
         self.stderr = stderr
+
+
+class TranscriptionError(PodcastAdCutterError):
+    """Raised when an STT transcription call fails."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message

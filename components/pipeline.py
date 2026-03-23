@@ -7,16 +7,23 @@ import sys
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from slugify import slugify
+
 from components.audio_preprocessor import AudioPreprocessor
 from components.audio_prober import AudioProber
+from components.episode_copier import EpisodeCopier
 from components.episode_downloader import EpisodeDownloader
+from components.episode_transcriptor import EpisodeTranscriptor
 from components.feed_downloader import FeedDownloader
 from components.feed_parser import FeedParser
 from components.feed_publisher import FeedPublisher
+from config.config_loader import PROVIDER_KEY_MAP
 from database.audio_metadata_store import AudioMetadataStore
 from database.connection import Database
+from database.cost_tracking_store import CostTrackingStore
 from database.episode_store import EpisodeStore
-from models.feed import FeedParseInput, ParsedFeed, PublisherInput
+from database.transcription_store import TranscriptionStore
+from models.feed import Episode, FeedParseInput, ParsedFeed, PublisherInput
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -33,10 +40,9 @@ class Pipeline:
     data each component needs and passes it through their APIs — no component
     below Pipeline imports from the config module.
 
-    Currently the pipeline performs two stages: downloading the RSS/Atom XML
-    for the selected feeds, then parsing the XML into structured data.
-    Further stages (transcription, ad detection, audio cutting) will be
-    added here as new components.
+    Each episode is processed according to a decision tree that checks whether
+    the transcription and the output audio file already exist, performing only
+    the remaining work.
 
     Args:
         config: Validated application config.
@@ -57,6 +63,13 @@ class Pipeline:
         self._episode_downloader = EpisodeDownloader(config.app.paths.cache_dir)
         self._audio_prober = AudioProber()
         self._audio_preprocessor = AudioPreprocessor(config.app.paths.cache_dir)
+        self._episode_copier = EpisodeCopier(config.app.paths.output_dir, config.app.base_url)
+        transcription_cfg = config.app.models.transcription
+        self._transcriptor = EpisodeTranscriptor(
+            provider=transcription_cfg.provider,
+            model=transcription_cfg.model,
+            api_key=getattr(config.credentials, PROVIDER_KEY_MAP[transcription_cfg.provider]),
+        )
 
     async def run(self) -> list[ParsedFeed]:
         """Execute the pipeline for the selected feeds.
@@ -84,9 +97,9 @@ class Pipeline:
 
             for feed in parsed_feeds:
                 cfg = feed_cfg_map[feed.config_title]
-                episodes = await store.get_episodes_for_feed(
+                episodes = list(await store.get_episodes_for_feed(
                     feed.config_title, cfg.episodes_to_keep
-                )
+                ))
                 logger.debug(
                     f"Building publisher input for '{feed.config_title}': "
                     f"{len(episodes)} episode(s), image_url={'set' if feed.image_url else 'absent'}, "
@@ -120,42 +133,130 @@ class Pipeline:
                 )
                 output_path = await self._feed_publisher.publish(publisher_input)
                 logger.info(f"Feed '{feed.config_title}' published to {output_path}")
-                episode_pairs = [(ep.guid, ep.url) for ep in episodes]
-                downloaded = await self._episode_downloader.download_all(
-                    episode_pairs,
-                    on_progress=self._on_download_progress,
-                )
-                if downloaded:
-                    audio_metadata_store = AudioMetadataStore(db.conn)
-                    probed_guids = await audio_metadata_store.get_probed_guids()
-                    unprobed = [(g, p) for g, p in downloaded if g not in probed_guids]
-                    skipped = len(downloaded) - len(unprobed)
-                    logger.debug(
-                        f"Probing {len(unprobed)} episode(s) for '{feed.config_title}' "
-                        f"({skipped} already probed)"
-                    )
-                    probe_results = await self._audio_prober.probe_all(unprobed)
-                    logger.debug(
-                        f"Probe complete for '{feed.config_title}': "
-                        f"{len(probe_results)} succeeded, "
-                        f"{len(unprobed) - len(probe_results)} failed"
-                    )
-                    await audio_metadata_store.save_all(probe_results)
-                    all_meta = await audio_metadata_store.get_all_for_guids(
-                        [g for g, _ in downloaded]
-                    )
-                    duration_map = {m.guid: m.duration for m in all_meta}
-                    triples = [
-                        (g, p, duration_map[g])
-                        for g, p in downloaded
-                        if g in duration_map
-                    ]
-                    await self._audio_preprocessor.preprocess_all(
-                        triples,
-                        on_progress=self._on_preprocess_progress,
-                    )
+
+                if not episodes:
+                    continue
+
+                feed_slug = slugify(feed.title)
+                output_feed_dir = self._config.app.paths.output_dir / feed_slug
+
+                transcription_store = TranscriptionStore(db.conn)
+                audio_metadata_store = AudioMetadataStore(db.conn)
+                cost_store = CostTrackingStore(db.conn)
+                transcribed_guids = await transcription_store.get_transcribed_guids()
+
+                for episode in episodes:
+                    try:
+                        await self._process_episode(
+                            episode=episode,
+                            feed=feed,
+                            feed_slug=feed_slug,
+                            output_feed_dir=output_feed_dir,
+                            store=store,
+                            transcribed_guids=transcribed_guids,
+                            transcription_store=transcription_store,
+                            audio_metadata_store=audio_metadata_store,
+                            cost_store=cost_store,
+                        )
+                    except Exception:
+                        logger.exception(f"Episode '{episode.guid}': error, skipping")
 
         return parsed_feeds
+
+    async def _process_episode(
+        self,
+        *,
+        episode: Episode,
+        feed: ParsedFeed,
+        feed_slug: str,
+        output_feed_dir: Path,
+        store: EpisodeStore,
+        transcribed_guids: set[str],
+        transcription_store: TranscriptionStore,
+        audio_metadata_store: AudioMetadataStore,
+        cost_store: CostTrackingStore,
+    ) -> None:
+        """Process one episode according to its current state.
+
+        Checks whether the transcription and the output audio file already exist,
+        and performs only the work that is still needed.
+
+        Branches:
+            A — transcription + audio exist: compute URL only.
+            B — transcription exists, no audio: download, probe, preprocess, copy.
+            C — audio exists, no transcription: probe, preprocess, transcribe.
+            D — neither exists: full pipeline (download, probe, preprocess, transcribe, copy).
+
+        """
+        pub_date_str = episode.pub_date.strftime("%d.%m.%Y")
+        title_slug = slugify(episode.title)
+        existing_audio = next(
+            (p for p in output_feed_dir.glob(f"{pub_date_str}-{title_slug}.*")),  # noqa: ASYNC240
+            None,
+        )
+        transcription_exists = episode.guid in transcribed_guids
+        audio_exists = existing_audio is not None
+
+        if transcription_exists and audio_exists:
+            # Branch A: both exist — reconstruct the URL from the existing file.
+            ext = existing_audio.suffix.lstrip(".")
+            new_url = FeedPublisher.episode_url(
+                self._config.app.base_url, feed_slug, episode.pub_date, episode.title, ext
+            )
+        elif transcription_exists:
+            # Branch B: transcription OK, audio missing — re-download and copy.
+            raw_path = await self._episode_downloader.download(
+                episode.guid, episode.url, on_progress=self._on_download_progress
+            )
+            meta = await self._audio_prober.probe(episode.guid, raw_path)
+            await audio_metadata_store.save_all([meta])
+            await self._audio_preprocessor.preprocess(
+                episode.guid, raw_path, meta.duration, on_progress=self._on_preprocess_progress
+            )
+            _, _, new_url = await self._episode_copier.copy(
+                episode.guid, raw_path, feed_slug, episode.pub_date, episode.title
+            )
+        elif audio_exists:
+            # Branch C: audio present, transcription missing — transcribe from output file.
+            meta = await self._audio_prober.probe(episode.guid, existing_audio)
+            await audio_metadata_store.save_all([meta])
+            mono_path = await self._audio_preprocessor.preprocess(
+                episode.guid, existing_audio, meta.duration, on_progress=self._on_preprocess_progress
+            )
+            _, transcription, segments, cost = await self._transcriptor.transcribe(
+                episode.guid, mono_path
+            )
+            await transcription_store.save_transcription(transcription)
+            await transcription_store.save_segments(segments)
+            await cost_store.save_cost(cost)
+            transcribed_guids.add(episode.guid)
+            ext = existing_audio.suffix.lstrip(".")
+            new_url = FeedPublisher.episode_url(
+                self._config.app.base_url, feed_slug, episode.pub_date, episode.title, ext
+            )
+        else:
+            # Branch D: nothing exists — run the full pipeline.
+            raw_path = await self._episode_downloader.download(
+                episode.guid, episode.url, on_progress=self._on_download_progress
+            )
+            meta = await self._audio_prober.probe(episode.guid, raw_path)
+            await audio_metadata_store.save_all([meta])
+            mono_path = await self._audio_preprocessor.preprocess(
+                episode.guid, raw_path, meta.duration, on_progress=self._on_preprocess_progress
+            )
+            _, transcription, segments, cost = await self._transcriptor.transcribe(
+                episode.guid, mono_path
+            )
+            await transcription_store.save_transcription(transcription)
+            await transcription_store.save_segments(segments)
+            await cost_store.save_cost(cost)
+            transcribed_guids.add(episode.guid)
+            _, _, new_url = await self._episode_copier.copy(
+                episode.guid, raw_path, feed_slug, episode.pub_date, episode.title
+            )
+
+        await store.update_episode_url(episode.guid, new_url)
+        await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url)
 
     def _select_feeds(self) -> list[FeedConfig]:
         """Return the feeds to process for this run.

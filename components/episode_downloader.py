@@ -69,15 +69,17 @@ class EpisodeDownloader:
         self._chunk_size = chunk_size
         self._timeout = timeout
 
-    async def download_all(
+    async def download(
         self,
-        episodes: list[tuple[str, str]],
+        guid: str,
+        url: str,
         on_progress: ProgressCallback | None = None,
-    ) -> list[tuple[str, Path]]:
-        """Download audio for each episode in order.
+    ) -> Path:
+        """Download audio for one episode to the local cache.
 
         Args:
-            episodes: ``(guid, url)`` pairs to download.  Order is preserved.
+            guid: Episode GUID (used for the output filename and log messages).
+            url: Enclosure URL to download from.
             on_progress: Optional async callback invoked as
                 ``await on_progress(guid, percent)`` where *percent* is in
                 ``[0.0, 1.0]``.  ``0.0`` signals "starting / indeterminate";
@@ -85,20 +87,17 @@ class EpisodeDownloader:
                 only when the server provides a ``Content-Length`` header.
 
         Returns:
-            ``(guid, cache_path)`` for every episode downloaded successfully,
-            in input order.  Failed episodes are omitted.
+            Path to the cached file.
+
+        Raises:
+            aiohttp.ClientError: After all retries are exhausted.
+            TimeoutError: After all retries are exhausted.
 
         """
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-
         client_timeout = aiohttp.ClientTimeout(total=self._timeout)
-        results: list[tuple[str, Path]] = []
         async with aiohttp.ClientSession(timeout=client_timeout) as session:
-            for guid, url in episodes:
-                path = await self._fetch_with_retry(session, guid, url, on_progress)
-                if path is not None:
-                    results.append((guid, path))
-        return results
+            return await self._fetch_with_retry(session, guid, url, on_progress)
 
     async def _fetch_with_retry(
         self,
@@ -106,7 +105,7 @@ class EpisodeDownloader:
         guid: str,
         url: str,
         on_progress: ProgressCallback | None,
-    ) -> Path | None:
+    ) -> Path:
         """Attempt to download one episode, retrying on transient errors.
 
         Args:
@@ -116,13 +115,16 @@ class EpisodeDownloader:
             on_progress: Progress callback (may be ``None``).
 
         Returns:
-            Path to the cached file on success, or ``None`` after all retries
-            are exhausted.
+            Path to the cached file on success.
+
+        Raises:
+            aiohttp.ClientError: After all retries are exhausted.
+            TimeoutError: After all retries are exhausted.
 
         """
         for attempt in range(self._max_retries + 1):
             try:
-                return await self._download_one(session, guid, url, on_progress)
+                return await self._download_episode(session, guid, url, on_progress)
             except (TimeoutError, aiohttp.ClientError) as exc:
                 if attempt < self._max_retries:
                     delay = self._retry_delay * (2**attempt)
@@ -133,14 +135,11 @@ class EpisodeDownloader:
                     )
                     await asyncio.sleep(delay)
                 else:
-                    logger.error(
-                        f"All retries exhausted for '{guid}' after "
-                        f"{self._max_retries + 1} attempt(s): {exc}"
-                    )
-                    return None
-        return None  # pragma: no cover — loop always returns or returns None inside
+                    raise
+        msg = "unreachable"  # pragma: no cover
+        raise RuntimeError(msg)  # pragma: no cover
 
-    async def _download_one(
+    async def _download_episode(
         self,
         session: aiohttp.ClientSession,
         guid: str,

@@ -36,33 +36,30 @@ class AudioProber:
     def __init__(self, timeout: float = 30.0) -> None:
         self._timeout = timeout
 
-    async def probe_all(
-        self, pairs: list[tuple[str, Path]]
-    ) -> list[AudioMetadata]:
-        """Probe each (guid, path) pair and return successful results.
+    async def probe(self, guid: str, path: Path) -> AudioMetadata:
+        """Probe one audio file and return its metadata.
 
         Args:
-            pairs: ``(guid, local_path)`` pairs to probe.  Order is preserved.
+            guid: Episode GUID — used in error messages and the result.
+            path: Path to the local audio file.
 
         Returns:
-            :class:`~models.feed.AudioMetadata` for every episode probed
-            successfully, in input order.  Failed episodes are omitted.
+            :class:`~models.feed.AudioMetadata` with codec, duration,
+            channels and bitrate.
+
+        Raises:
+            AudioProbeError: On non-zero ffprobe exit, timeout, missing audio
+                stream, or unparseable JSON output.
 
         """
-        results: list[AudioMetadata] = []
-        for guid, path in pairs:
-            try:
-                metadata = await self._probe_one(guid, path)
-                results.append(metadata)
-                logger.debug(
-                    f"Probed '{guid}': codec={metadata.codec}, "
-                    f"duration={metadata.duration:.2f}s, "
-                    f"channels={metadata.channels}, "
-                    f"bitrate={metadata.bitrate}bps"
-                )
-            except AudioProbeError as exc:
-                logger.error(f"Skipping probe for '{guid}': {exc}")
-        return results
+        metadata = await self._probe_one(guid, path)
+        logger.debug(
+            f"Probed '{guid}': codec={metadata.codec}, "
+            f"duration={metadata.duration:.2f}s, "
+            f"channels={metadata.channels}, "
+            f"bitrate={metadata.bitrate}bps"
+        )
+        return metadata
 
     async def _probe_one(self, guid: str, path: Path) -> AudioMetadata:
         """Run ffprobe on one file and return parsed metadata.

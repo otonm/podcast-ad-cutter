@@ -12,9 +12,10 @@ import pytest
 from components.pipeline import Pipeline
 from config.config_loader import FeedConfig
 from models.feed import AudioMetadata, Episode, FeedParseInput, ParsedFeed, PublisherInput
+from models.transcription import Transcription, TranscriptionCost, TranscriptionSegment
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Shared helpers
 # ---------------------------------------------------------------------------
 
 
@@ -30,11 +31,108 @@ def make_feed(title: str, *, enabled: bool = True) -> FeedConfig:
 def make_config(feeds: list[FeedConfig]) -> MagicMock:
     cfg = MagicMock()
     cfg.app.feeds = feeds
+    cfg.app.models.transcription.provider = "groq"
+    cfg.app.models.transcription.model = "whisper-large-v3-turbo"
+    cfg.credentials.groq_api_key = "sk-test"
     return cfg
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# Branch-test helpers
+# ---------------------------------------------------------------------------
+
+
+def _branch_config(output_dir: Path | MagicMock) -> tuple[MagicMock, Episode, ParsedFeed]:
+    """Build config/episode/parsed-feed for decision-tree branch tests."""
+    ep = Episode(
+        guid="ep-1",
+        url="https://example.com/ep.mp3",
+        title="My Episode",
+        pub_date=datetime(2026, 3, 22, tzinfo=UTC),
+    )
+    feed_cfg = FeedConfig(
+        title="My Podcast", url="http://x.com/feed", enabled=True, episodes_to_keep=5
+    )
+    config = MagicMock()
+    config.app.feeds = [feed_cfg]
+    config.app.paths.data_dir = MagicMock()
+    config.app.paths.output_dir = output_dir
+    config.app.paths.cache_dir = MagicMock()
+    config.app.models.transcription.provider = "groq"
+    config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.credentials.groq_api_key = "sk-test"
+    config.app.base_url = "http://localhost"
+    parsed = ParsedFeed(
+        config_title="My Podcast",
+        feed_url="http://x.com/feed",
+        title="My Podcast",
+        episodes=[ep],
+    )
+    return config, ep, parsed
+
+
+def _wire_branch_mocks(
+    m_dl: MagicMock,
+    m_fp: MagicMock,
+    m_pub: MagicMock,
+    m_db: MagicMock,
+    m_store: MagicMock,
+    m_ts: MagicMock,
+    m_ams: MagicMock,
+    m_cs: MagicMock,
+    m_ep_dl: MagicMock,
+    m_prober: MagicMock,
+    m_prep: MagicMock,
+    m_trans: MagicMock,
+    m_copier: MagicMock,
+    *,
+    episodes: list[Episode],
+    parsed: ParsedFeed,
+    transcribed_guids: set[str],
+) -> None:
+    """Wire standard mocks for all branch and error tests."""
+    m_dl.return_value.download_all = AsyncMock(return_value=[("My Podcast", "<rss/>")])
+    m_fp.return_value.parse_all.return_value = [parsed]
+
+    mock_db_obj = MagicMock()
+    m_db.return_value.__aenter__ = AsyncMock(return_value=mock_db_obj)
+    m_db.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    mock_store = AsyncMock()
+    mock_store.save_episodes = AsyncMock()
+    mock_store.get_episodes_for_feed = AsyncMock(return_value=episodes)
+    mock_store.update_episode_url = AsyncMock()
+    m_store.return_value = mock_store
+
+    m_pub.return_value.publish = AsyncMock(return_value=Path("/out/my-podcast.rss"))
+    m_pub.return_value.update_episode_url = AsyncMock()
+
+    m_ts.return_value.get_transcribed_guids = AsyncMock(return_value=transcribed_guids)
+    m_ts.return_value.save_transcription = AsyncMock()
+    m_ts.return_value.save_segments = AsyncMock()
+
+    m_ams.return_value.save_all = AsyncMock()
+    m_cs.return_value.save_cost = AsyncMock()
+
+    meta = AudioMetadata(guid="ep-1", duration=60.0, codec="aac", channels=1, bitrate=32000)
+    m_ep_dl.return_value.download = AsyncMock(return_value=Path("/cache/ep.mp3"))
+    m_prober.return_value.probe = AsyncMock(return_value=meta)
+    m_prep.return_value.preprocess = AsyncMock(return_value=Path("/cache/ep.mono.m4a"))
+    m_trans.return_value.transcribe = AsyncMock(return_value=(
+        "ep-1",
+        Transcription(guid="ep-1", text="Hello world"),
+        [TranscriptionSegment(guid="ep-1", start_ms=0, end_ms=1000, text="Hello")],
+        TranscriptionCost(provider="groq", model="whisper-large-v3-turbo", cost=0.001),
+    ))
+    m_copier.return_value.copy = AsyncMock(return_value=(
+        "ep-1",
+        Path("/out/my-podcast/22.03.2026-my-episode.mp3"),
+        "http://localhost/my-podcast/22.03.2026-my-episode.mp3",
+    ))
+
+
+# ---------------------------------------------------------------------------
+# Feed-selection tests
 # ---------------------------------------------------------------------------
 
 
@@ -222,6 +320,11 @@ async def test_run_with_unknown_feed_name_raises() -> None:
             await pipeline.run()
 
 
+# ---------------------------------------------------------------------------
+# FeedPublisher integration
+# ---------------------------------------------------------------------------
+
+
 async def test_run_calls_feed_publisher() -> None:
     """Pipeline.run() must call FeedPublisher.publish() once per parsed feed."""
     feed = make_feed("My Podcast")
@@ -333,7 +436,6 @@ async def test_run_saves_parsed_episodes() -> None:
         patch("components.pipeline.FeedParser") as mock_fp_cls,
         patch("components.pipeline.Database") as mock_db_cls,
         patch("components.pipeline.EpisodeStore") as mock_store_cls,
-        patch("components.pipeline.EpisodeDownloader") as mock_ep_dl_cls,
         patch("components.pipeline.FeedPublisher") as mock_pub_cls,
     ):
         mock_dl = mock_dl_cls.return_value
@@ -345,64 +447,11 @@ async def test_run_saves_parsed_episodes() -> None:
         mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_store = AsyncMock()
         mock_store_cls.return_value = mock_store
-        mock_ep_dl_cls.return_value.download_all = AsyncMock(return_value=[])
         mock_pub_cls.return_value.publish = AsyncMock(return_value=MagicMock())
         pipeline = Pipeline(config)
         await pipeline.run()
 
     mock_store.save_episodes.assert_awaited_once_with("Feed A", [ep])
-
-
-async def test_pipeline_calls_episode_downloader() -> None:
-    """Pipeline calls EpisodeDownloader.download_all once per feed after publishing."""
-    feed_cfg = FeedConfig(title="My Podcast", url="http://x.com/feed", enabled=True, episodes_to_keep=5)
-    config = MagicMock()
-    config.app.feeds = [feed_cfg]
-    config.app.paths.data_dir = MagicMock()
-    config.app.paths.output_dir = MagicMock()
-    config.app.paths.cache_dir = MagicMock()
-    config.app.base_url = "http://localhost"
-
-    ep = Episode(
-        guid="ep-001",
-        url="https://example.com/ep.mp3",
-        title="Ep 1",
-        pub_date=datetime(2026, 3, 22, tzinfo=UTC),
-    )
-    parsed = ParsedFeed(
-        config_title="My Podcast",
-        feed_url="http://x.com/feed",
-        title="My Podcast",
-        episodes=[ep],
-    )
-
-    with (
-        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
-        patch("components.pipeline.FeedParser") as mock_fp_cls,
-        patch("components.pipeline.FeedPublisher") as mock_pub_cls,
-        patch("components.pipeline.EpisodeDownloader") as mock_ep_dl_cls,
-        patch("components.pipeline.Database") as mock_db_cls,
-        patch("components.pipeline.EpisodeStore") as mock_store_cls,
-    ):
-        mock_dl_cls.return_value.download_all = AsyncMock(return_value=[("My Podcast", "<rss/>")])
-        mock_fp_cls.return_value.parse_all.return_value = [parsed]
-        mock_db = MagicMock()
-        mock_db_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
-        mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-        mock_store_cls.return_value.save_episodes = AsyncMock()
-        mock_store_cls.return_value.get_episodes_for_feed = AsyncMock(return_value=[ep])
-        mock_pub_cls.return_value.publish = AsyncMock(return_value=Path("/output/my-podcast.rss"))
-        mock_ep_dl = mock_ep_dl_cls.return_value
-        mock_ep_dl.download_all = AsyncMock(return_value=[])
-
-        pipeline = Pipeline(config)
-        await pipeline.run()
-
-    # EpisodeDownloader.download_all must be called once with (guid, url) pairs and a progress callback
-    mock_ep_dl.download_all.assert_awaited_once()
-    call_args = mock_ep_dl.download_all.call_args
-    assert call_args[0][0] == [("ep-001", "https://example.com/ep.mp3")]
-    assert call_args[1]["on_progress"] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -416,6 +465,9 @@ async def test_on_download_progress_starting(caplog: pytest.LogCaptureFixture) -
     config.app.paths.data_dir = MagicMock()
     config.app.paths.output_dir = MagicMock()
     config.app.paths.cache_dir = MagicMock()
+    config.app.models.transcription.provider = "groq"
+    config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.credentials.groq_api_key = "sk-test"
 
     with (
         patch("components.pipeline.FeedDownloader"),
@@ -435,6 +487,9 @@ async def test_on_download_progress_complete(caplog: pytest.LogCaptureFixture) -
     config.app.paths.data_dir = MagicMock()
     config.app.paths.output_dir = MagicMock()
     config.app.paths.cache_dir = MagicMock()
+    config.app.models.transcription.provider = "groq"
+    config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.credentials.groq_api_key = "sk-test"
 
     with (
         patch("components.pipeline.FeedDownloader"),
@@ -448,199 +503,15 @@ async def test_on_download_progress_complete(caplog: pytest.LogCaptureFixture) -
     assert "Episode 'ep-001' downloaded." in caplog.text
 
 
-# ---------------------------------------------------------------------------
-# AudioProber integration
-# ---------------------------------------------------------------------------
-
-
-def _prober_test_setup(
-    mock_dl_cls: MagicMock,
-    mock_fp_cls: MagicMock,
-    mock_pub_cls: MagicMock,
-    mock_ep_dl_cls: MagicMock,
-    mock_db_cls: MagicMock,
-    mock_store_cls: MagicMock,
-    ep: Episode,
-    parsed: ParsedFeed,
-    downloaded: list[tuple[str, Path]],
-) -> None:
-    """Wire common mocks for prober integration tests."""
-    mock_dl_cls.return_value.download_all = AsyncMock(return_value=[("Probe Podcast", "<rss/>")])
-    mock_fp_cls.return_value.parse_all.return_value = [parsed]
-    mock_db = MagicMock()
-    mock_db_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
-    mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-    mock_store_cls.return_value.save_episodes = AsyncMock()
-    mock_store_cls.return_value.get_episodes_for_feed = AsyncMock(return_value=[ep])
-    mock_pub_cls.return_value.publish = AsyncMock(return_value=Path("/output/probe.rss"))
-    mock_ep_dl_cls.return_value.download_all = AsyncMock(return_value=downloaded)
-
-
-def _prober_config(episodes: list[Episode] | None = None) -> tuple[MagicMock, ParsedFeed]:
-    ep = Episode(guid="ep-probe", url="https://example.com/ep.mp3", title="Probe Ep")
-    eps = episodes if episodes is not None else [ep]
-    feed_cfg = FeedConfig(title="Probe Podcast", url="http://x.com/feed", enabled=True, episodes_to_keep=5)
-    config = MagicMock()
-    config.app.feeds = [feed_cfg]
-    config.app.paths.data_dir = MagicMock()
-    config.app.paths.output_dir = MagicMock()
-    config.app.paths.cache_dir = MagicMock()
-    config.app.base_url = "http://localhost"
-    parsed = ParsedFeed(config_title="Probe Podcast", feed_url="http://x.com/feed", title="Probe Podcast", episodes=eps)
-    return config, parsed
-
-
-async def test_pipeline_probe_all_called_with_downloaded_pairs() -> None:
-    """probe_all receives the (guid, path) pairs returned by EpisodeDownloader."""
-    ep = Episode(guid="ep-probe", url="https://example.com/ep.mp3", title="Probe Ep")
-    config, parsed = _prober_config([ep])
-    downloaded_pair = ("ep-probe", Path("/cache/ep-probe.mp3"))
-
-    with (
-        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
-        patch("components.pipeline.FeedParser") as mock_fp_cls,
-        patch("components.pipeline.FeedPublisher") as mock_pub_cls,
-        patch("components.pipeline.EpisodeDownloader") as mock_ep_dl_cls,
-        patch("components.pipeline.Database") as mock_db_cls,
-        patch("components.pipeline.EpisodeStore") as mock_store_cls,
-        patch("components.pipeline.AudioMetadataStore") as mock_ams_cls,
-        patch("components.pipeline.AudioProber") as mock_prober_cls,
-        patch("components.pipeline.AudioPreprocessor") as mock_prep_cls,
-    ):
-        _prober_test_setup(
-            mock_dl_cls, mock_fp_cls, mock_pub_cls, mock_ep_dl_cls,
-            mock_db_cls, mock_store_cls, ep, parsed, [downloaded_pair],
-        )
-        mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value=set())
-        mock_ams_cls.return_value.save_all = AsyncMock()
-        mock_ams_cls.return_value.get_all_for_guids = AsyncMock(return_value=[])
-        mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[])
-        mock_prep_cls.return_value.preprocess_all = AsyncMock(return_value=[])
-
-        pipeline = Pipeline(config)
-        await pipeline.run()
-
-    mock_prober_cls.return_value.probe_all.assert_awaited_once_with([downloaded_pair])
-
-
-async def test_pipeline_filters_already_probed_guids() -> None:
-    """GUIDs already in audio_metadata are excluded from probe_all input."""
-    ep1 = Episode(guid="ep-done", url="https://example.com/ep1.mp3", title="Done Ep")
-    ep2 = Episode(guid="ep-new", url="https://example.com/ep2.mp3", title="New Ep")
-    config, parsed = _prober_config([ep1, ep2])
-    done_pair = ("ep-done", Path("/cache/ep-done.mp3"))
-    new_pair = ("ep-new", Path("/cache/ep-new.mp3"))
-
-    with (
-        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
-        patch("components.pipeline.FeedParser") as mock_fp_cls,
-        patch("components.pipeline.FeedPublisher") as mock_pub_cls,
-        patch("components.pipeline.EpisodeDownloader") as mock_ep_dl_cls,
-        patch("components.pipeline.Database") as mock_db_cls,
-        patch("components.pipeline.EpisodeStore") as mock_store_cls,
-        patch("components.pipeline.AudioMetadataStore") as mock_ams_cls,
-        patch("components.pipeline.AudioProber") as mock_prober_cls,
-        patch("components.pipeline.AudioPreprocessor") as mock_prep_cls,
-    ):
-        _prober_test_setup(
-            mock_dl_cls, mock_fp_cls, mock_pub_cls, mock_ep_dl_cls,
-            mock_db_cls, mock_store_cls, ep1, parsed, [done_pair, new_pair],
-        )
-        mock_store_cls.return_value.get_episodes_for_feed = AsyncMock(return_value=[ep1, ep2])
-        mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value={"ep-done"})
-        mock_ams_cls.return_value.save_all = AsyncMock()
-        mock_ams_cls.return_value.get_all_for_guids = AsyncMock(return_value=[])
-        mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[])
-        mock_prep_cls.return_value.preprocess_all = AsyncMock(return_value=[])
-
-        pipeline = Pipeline(config)
-        await pipeline.run()
-
-    mock_prober_cls.return_value.probe_all.assert_awaited_once_with([new_pair])
-
-
-async def test_pipeline_saves_probe_results() -> None:
-    """AudioMetadataStore.save_all is called with the results from probe_all."""
-    ep = Episode(guid="ep-probe", url="https://example.com/ep.mp3", title="Probe Ep")
-    config, parsed = _prober_config([ep])
-    downloaded_pair = ("ep-probe", Path("/cache/ep-probe.mp3"))
-    probe_result = AudioMetadata(guid="ep-probe", duration=3600.0, codec="aac", channels=2, bitrate=128000)
-
-    with (
-        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
-        patch("components.pipeline.FeedParser") as mock_fp_cls,
-        patch("components.pipeline.FeedPublisher") as mock_pub_cls,
-        patch("components.pipeline.EpisodeDownloader") as mock_ep_dl_cls,
-        patch("components.pipeline.Database") as mock_db_cls,
-        patch("components.pipeline.EpisodeStore") as mock_store_cls,
-        patch("components.pipeline.AudioMetadataStore") as mock_ams_cls,
-        patch("components.pipeline.AudioProber") as mock_prober_cls,
-        patch("components.pipeline.AudioPreprocessor") as mock_prep_cls,
-    ):
-        _prober_test_setup(
-            mock_dl_cls, mock_fp_cls, mock_pub_cls, mock_ep_dl_cls,
-            mock_db_cls, mock_store_cls, ep, parsed, [downloaded_pair],
-        )
-        mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value=set())
-        mock_ams = mock_ams_cls.return_value
-        mock_ams.save_all = AsyncMock()
-        mock_ams.get_all_for_guids = AsyncMock(return_value=[probe_result])
-        mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[probe_result])
-        mock_prep_cls.return_value.preprocess_all = AsyncMock(return_value=[])
-
-        pipeline = Pipeline(config)
-        await pipeline.run()
-
-    mock_ams.save_all.assert_awaited_once_with([probe_result])
-
-
-async def test_pipeline_logs_probe_start_and_completion(caplog: pytest.LogCaptureFixture) -> None:
-    """Pipeline emits debug logs before and after probe_all, showing counts."""
-    ep1 = Episode(guid="ep-done", url="https://example.com/ep1.mp3", title="Done Ep")
-    ep2 = Episode(guid="ep-new", url="https://example.com/ep2.mp3", title="New Ep")
-    config, parsed = _prober_config([ep1, ep2])
-    done_pair = ("ep-done", Path("/cache/ep-done.mp3"))
-    new_pair = ("ep-new", Path("/cache/ep-new.mp3"))
-    probe_result = AudioMetadata(guid="ep-new", duration=120.0, codec="mp3", channels=2, bitrate=64000)
-
-    with (
-        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
-        patch("components.pipeline.FeedParser") as mock_fp_cls,
-        patch("components.pipeline.FeedPublisher") as mock_pub_cls,
-        patch("components.pipeline.EpisodeDownloader") as mock_ep_dl_cls,
-        patch("components.pipeline.Database") as mock_db_cls,
-        patch("components.pipeline.EpisodeStore") as mock_store_cls,
-        patch("components.pipeline.AudioMetadataStore") as mock_ams_cls,
-        patch("components.pipeline.AudioProber") as mock_prober_cls,
-        patch("components.pipeline.AudioPreprocessor") as mock_prep_cls,
-    ):
-        _prober_test_setup(
-            mock_dl_cls, mock_fp_cls, mock_pub_cls, mock_ep_dl_cls,
-            mock_db_cls, mock_store_cls, ep1, parsed, [done_pair, new_pair],
-        )
-        mock_store_cls.return_value.get_episodes_for_feed = AsyncMock(return_value=[ep1, ep2])
-        mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value={"ep-done"})
-        mock_ams_cls.return_value.save_all = AsyncMock()
-        mock_ams_cls.return_value.get_all_for_guids = AsyncMock(return_value=[probe_result])
-        mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[probe_result])
-        mock_prep_cls.return_value.preprocess_all = AsyncMock(return_value=[])
-
-        pipeline = Pipeline(config)
-        with caplog.at_level(logging.DEBUG, logger="components.pipeline"):
-            await pipeline.run()
-
-    # Start message: 1 to probe, 1 already done
-    assert any("Probing 1 episode(s)" in r.message and "1 already probed" in r.message for r in caplog.records)
-    # Completion message: 1 succeeded, 0 failed
-    assert any("1 succeeded" in r.message and "0 failed" in r.message for r in caplog.records)
-
-
 async def test_on_download_progress_intermediate() -> None:
     """Progress callback at an intermediate value writes percentage in-place to stderr."""
     config = MagicMock()
     config.app.paths.data_dir = MagicMock()
     config.app.paths.output_dir = MagicMock()
     config.app.paths.cache_dir = MagicMock()
+    config.app.models.transcription.provider = "groq"
+    config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.credentials.groq_api_key = "sk-test"
 
     with (
         patch("components.pipeline.FeedDownloader"),
@@ -656,114 +527,6 @@ async def test_on_download_progress_intermediate() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AudioPreprocessor integration
-# ---------------------------------------------------------------------------
-
-
-async def test_pipeline_calls_audio_preprocessor() -> None:
-    """preprocess_all is awaited with (guid, path, duration) triples and a progress callback."""
-    ep = Episode(guid="ep-prep", url="https://example.com/ep.mp3", title="Prep Ep")
-    config, parsed = _prober_config([ep])
-    downloaded_pair = ("ep-prep", Path("/cache/ep-prep.mp3"))
-    meta = AudioMetadata(guid="ep-prep", duration=60.0, codec="aac", channels=1, bitrate=32000)
-
-    with (
-        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
-        patch("components.pipeline.FeedParser") as mock_fp_cls,
-        patch("components.pipeline.FeedPublisher") as mock_pub_cls,
-        patch("components.pipeline.EpisodeDownloader") as mock_ep_dl_cls,
-        patch("components.pipeline.Database") as mock_db_cls,
-        patch("components.pipeline.EpisodeStore") as mock_store_cls,
-        patch("components.pipeline.AudioMetadataStore") as mock_ams_cls,
-        patch("components.pipeline.AudioProber") as mock_prober_cls,
-        patch("components.pipeline.AudioPreprocessor") as mock_prep_cls,
-    ):
-        _prober_test_setup(
-            mock_dl_cls, mock_fp_cls, mock_pub_cls, mock_ep_dl_cls,
-            mock_db_cls, mock_store_cls, ep, parsed, [downloaded_pair],
-        )
-        mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value=set())
-        mock_ams_cls.return_value.save_all = AsyncMock()
-        mock_ams_cls.return_value.get_all_for_guids = AsyncMock(return_value=[meta])
-        mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[meta])
-        mock_prep_cls.return_value.preprocess_all = AsyncMock(return_value=[])
-
-        pipeline = Pipeline(config)
-        await pipeline.run()
-
-    mock_prep_cls.return_value.preprocess_all.assert_awaited_once()
-    call_args = mock_prep_cls.return_value.preprocess_all.call_args
-    assert call_args[0][0] == [("ep-prep", Path("/cache/ep-prep.mp3"), 60.0)]
-    assert call_args[1]["on_progress"] is not None
-
-
-async def test_pipeline_excludes_unprobed_from_preprocessing() -> None:
-    """Episodes with no metadata in the DB are excluded from preprocess_all."""
-    ep_probed = Episode(guid="ep-good", url="https://example.com/good.mp3", title="Good")
-    ep_unprobed = Episode(guid="ep-bad", url="https://example.com/bad.mp3", title="Bad")
-    config, parsed = _prober_config([ep_probed, ep_unprobed])
-    downloaded = [("ep-good", Path("/cache/good.mp3")), ("ep-bad", Path("/cache/bad.mp3"))]
-    meta = AudioMetadata(guid="ep-good", duration=90.0, codec="aac", channels=1, bitrate=32000)
-
-    with (
-        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
-        patch("components.pipeline.FeedParser") as mock_fp_cls,
-        patch("components.pipeline.FeedPublisher") as mock_pub_cls,
-        patch("components.pipeline.EpisodeDownloader") as mock_ep_dl_cls,
-        patch("components.pipeline.Database") as mock_db_cls,
-        patch("components.pipeline.EpisodeStore") as mock_store_cls,
-        patch("components.pipeline.AudioMetadataStore") as mock_ams_cls,
-        patch("components.pipeline.AudioProber") as mock_prober_cls,
-        patch("components.pipeline.AudioPreprocessor") as mock_prep_cls,
-    ):
-        mock_store_cls.return_value.get_episodes_for_feed = AsyncMock(return_value=[ep_probed, ep_unprobed])
-        _prober_test_setup(
-            mock_dl_cls, mock_fp_cls, mock_pub_cls, mock_ep_dl_cls,
-            mock_db_cls, mock_store_cls, ep_probed, parsed, downloaded,
-        )
-        mock_ams_cls.return_value.get_probed_guids = AsyncMock(return_value=set())
-        mock_ams_cls.return_value.save_all = AsyncMock()
-        mock_ams_cls.return_value.get_all_for_guids = AsyncMock(return_value=[meta])
-        mock_prober_cls.return_value.probe_all = AsyncMock(return_value=[meta])
-        mock_prep_cls.return_value.preprocess_all = AsyncMock(return_value=[])
-
-        pipeline = Pipeline(config)
-        await pipeline.run()
-
-    call_args = mock_prep_cls.return_value.preprocess_all.call_args
-    triples = call_args[0][0]
-    assert len(triples) == 1
-    assert triples[0][0] == "ep-good"
-    assert triples[0][2] == 90.0
-
-
-async def test_pipeline_preprocessor_skipped_when_no_downloads() -> None:
-    """preprocess_all is NOT called when EpisodeDownloader returns no files."""
-    ep = Episode(guid="ep-prep", url="https://example.com/ep.mp3", title="Prep Ep")
-    config, parsed = _prober_config([ep])
-
-    with (
-        patch("components.pipeline.FeedDownloader") as mock_dl_cls,
-        patch("components.pipeline.FeedParser") as mock_fp_cls,
-        patch("components.pipeline.FeedPublisher") as mock_pub_cls,
-        patch("components.pipeline.EpisodeDownloader") as mock_ep_dl_cls,
-        patch("components.pipeline.Database") as mock_db_cls,
-        patch("components.pipeline.EpisodeStore") as mock_store_cls,
-        patch("components.pipeline.AudioPreprocessor") as mock_prep_cls,
-    ):
-        _prober_test_setup(
-            mock_dl_cls, mock_fp_cls, mock_pub_cls, mock_ep_dl_cls,
-            mock_db_cls, mock_store_cls, ep, parsed, [],  # empty downloads
-        )
-        mock_prep_cls.return_value.preprocess_all = AsyncMock(return_value=[])
-
-        pipeline = Pipeline(config)
-        await pipeline.run()
-
-    mock_prep_cls.return_value.preprocess_all.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
 # _on_preprocess_progress branch coverage
 # ---------------------------------------------------------------------------
 
@@ -774,6 +537,9 @@ async def test_on_preprocess_progress_starting(caplog: pytest.LogCaptureFixture)
     config.app.paths.data_dir = MagicMock()
     config.app.paths.output_dir = MagicMock()
     config.app.paths.cache_dir = MagicMock()
+    config.app.models.transcription.provider = "groq"
+    config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.credentials.groq_api_key = "sk-test"
 
     with (
         patch("components.pipeline.FeedDownloader"),
@@ -794,6 +560,9 @@ async def test_on_preprocess_progress_complete(caplog: pytest.LogCaptureFixture)
     config.app.paths.data_dir = MagicMock()
     config.app.paths.output_dir = MagicMock()
     config.app.paths.cache_dir = MagicMock()
+    config.app.models.transcription.provider = "groq"
+    config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.credentials.groq_api_key = "sk-test"
 
     with (
         patch("components.pipeline.FeedDownloader"),
@@ -814,11 +583,15 @@ async def test_on_preprocess_progress_intermediate() -> None:
     config.app.paths.data_dir = MagicMock()
     config.app.paths.output_dir = MagicMock()
     config.app.paths.cache_dir = MagicMock()
+    config.app.models.transcription.provider = "groq"
+    config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.credentials.groq_api_key = "sk-test"
 
     with (
         patch("components.pipeline.FeedDownloader"),
         patch("components.pipeline.EpisodeDownloader"),
         patch("components.pipeline.AudioPreprocessor"),
+        patch("components.pipeline.EpisodeTranscriptor"),
     ):
         pipeline = Pipeline(config)
 
@@ -827,3 +600,380 @@ async def test_on_preprocess_progress_intermediate() -> None:
 
     mock_stderr.write.assert_called_once_with("\r  Episode 'ep-001': 50%")
     mock_stderr.flush.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Transcriptor constructor
+# ---------------------------------------------------------------------------
+
+
+async def test_pipeline_constructs_transcriptor_with_model_id_and_key() -> None:
+    """Pipeline resolves provider/model/api_key and passes them as primitives to EpisodeTranscriptor."""
+    feed_cfg = FeedConfig(title="Trans Podcast", url="http://x.com/feed", enabled=True, episodes_to_keep=5)
+    config = MagicMock()
+    config.app.feeds = [feed_cfg]
+    config.app.paths.data_dir = MagicMock()
+    config.app.paths.output_dir = MagicMock()
+    config.app.paths.cache_dir = MagicMock()
+    config.app.models.transcription.provider = "groq"
+    config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.credentials.groq_api_key = "sk-groq-test"
+    config.app.base_url = "http://localhost"
+
+    with (
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.AudioPreprocessor"),
+        patch("components.pipeline.EpisodeTranscriptor") as mock_trans_cls,
+    ):
+        Pipeline(config)
+
+    mock_trans_cls.assert_called_once_with(
+        provider="groq",
+        model="whisper-large-v3-turbo",
+        api_key="sk-groq-test",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-episode decision-tree branch tests
+# ---------------------------------------------------------------------------
+
+
+async def test_branch_a_transcription_and_audio_exist(tmp_path: Path) -> None:
+    """Branch A: both transcription and audio exist — only URL update, no processing."""
+    audio_file = tmp_path / "my-podcast" / "22.03.2026-my-episode.mp3"
+    audio_file.parent.mkdir(parents=True)
+    audio_file.write_bytes(b"audio")
+
+    config, ep, parsed = _branch_config(tmp_path)
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.EpisodeCopier") as m_copier,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_copier,
+            episodes=[ep], parsed=parsed, transcribed_guids={"ep-1"},
+        )
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    m_ep_dl.return_value.download.assert_not_called()
+    m_prober.return_value.probe.assert_not_called()
+    m_prep.return_value.preprocess.assert_not_called()
+    m_trans.return_value.transcribe.assert_not_called()
+    m_copier.return_value.copy.assert_not_called()
+    m_store.return_value.update_episode_url.assert_awaited_once()
+    m_pub.return_value.update_episode_url.assert_awaited_once()
+
+
+async def test_branch_b_transcription_exists_no_audio_redownloads_and_copies(
+    tmp_path: Path,
+) -> None:
+    """Branch B: transcription OK, no audio — download, probe, preprocess, copy; no transcribe."""
+    config, ep, parsed = _branch_config(MagicMock())  # MagicMock → glob returns empty → no audio
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.EpisodeCopier") as m_copier,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_copier,
+            episodes=[ep], parsed=parsed, transcribed_guids={"ep-1"},
+        )
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    m_ep_dl.return_value.download.assert_awaited_once_with(
+        "ep-1", "https://example.com/ep.mp3", on_progress=pipeline._on_download_progress
+    )
+    m_prober.return_value.probe.assert_awaited_once()
+    m_ams.return_value.save_all.assert_awaited_once()
+    m_prep.return_value.preprocess.assert_awaited_once()
+    m_trans.return_value.transcribe.assert_not_called()
+    m_copier.return_value.copy.assert_awaited_once()
+    m_store.return_value.update_episode_url.assert_awaited_once()
+
+
+async def test_branch_c_audio_exists_no_transcription_transcribes_from_output(
+    tmp_path: Path,
+) -> None:
+    """Branch C: audio exists, no transcription — probe+preprocess+transcribe; no download/copy."""
+    audio_file = tmp_path / "my-podcast" / "22.03.2026-my-episode.mp3"
+    audio_file.parent.mkdir(parents=True)
+    audio_file.write_bytes(b"audio")
+
+    config, ep, parsed = _branch_config(tmp_path)
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.EpisodeCopier") as m_copier,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_copier,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    m_ep_dl.return_value.download.assert_not_called()
+    m_prober.return_value.probe.assert_awaited_once_with("ep-1", audio_file)
+    m_prep.return_value.preprocess.assert_awaited_once_with(
+        "ep-1", audio_file, 60.0, on_progress=pipeline._on_preprocess_progress
+    )
+    m_trans.return_value.transcribe.assert_awaited_once()
+    m_ts.return_value.save_transcription.assert_awaited_once()
+    m_ts.return_value.save_segments.assert_awaited_once()
+    m_cs.return_value.save_cost.assert_awaited_once()
+    m_copier.return_value.copy.assert_not_called()
+    m_store.return_value.update_episode_url.assert_awaited_once()
+
+
+async def test_branch_d_no_transcription_no_audio_full_pipeline() -> None:
+    """Branch D: nothing exists — full pipeline runs (download+probe+preprocess+transcribe+copy)."""
+    config, ep, parsed = _branch_config(MagicMock())
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.EpisodeCopier") as m_copier,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_copier,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    m_ep_dl.return_value.download.assert_awaited_once()
+    m_prober.return_value.probe.assert_awaited_once()
+    m_ams.return_value.save_all.assert_awaited_once()
+    m_prep.return_value.preprocess.assert_awaited_once()
+    m_trans.return_value.transcribe.assert_awaited_once()
+    m_ts.return_value.save_transcription.assert_awaited_once()
+    m_ts.return_value.save_segments.assert_awaited_once()
+    m_cs.return_value.save_cost.assert_awaited_once()
+    m_copier.return_value.copy.assert_awaited_once()
+    m_store.return_value.update_episode_url.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Error handling — loop independence
+# ---------------------------------------------------------------------------
+
+
+async def test_download_error_skips_episode_continues_loop() -> None:
+    """A download error on ep1 does not prevent ep2 from being processed."""
+    ep1 = Episode(guid="ep-1", url="https://example.com/ep1.mp3", title="Ep 1",
+                  pub_date=datetime(2026, 3, 22, tzinfo=UTC))
+    ep2 = Episode(guid="ep-2", url="https://example.com/ep2.mp3", title="Ep 2",
+                  pub_date=datetime(2026, 3, 22, tzinfo=UTC))
+    config, _, parsed = _branch_config(MagicMock())
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.EpisodeCopier") as m_copier,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_copier,
+            episodes=[ep1, ep2], parsed=parsed, transcribed_guids=set(),
+        )
+        m_ep_dl.return_value.download = AsyncMock(side_effect=[
+            RuntimeError("network failure"),
+            Path("/cache/ep-2.mp3"),
+        ])
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    assert m_ep_dl.return_value.download.await_count == 2
+    assert m_trans.return_value.transcribe.await_count == 1
+
+
+async def test_transcribe_error_skips_episode_continues_loop() -> None:
+    """A transcription error on ep1 does not prevent ep2 from being processed."""
+    ep1 = Episode(guid="ep-1", url="https://example.com/ep1.mp3", title="Ep 1",
+                  pub_date=datetime(2026, 3, 22, tzinfo=UTC))
+    ep2 = Episode(guid="ep-2", url="https://example.com/ep2.mp3", title="Ep 2",
+                  pub_date=datetime(2026, 3, 22, tzinfo=UTC))
+    config, _, parsed = _branch_config(MagicMock())
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.EpisodeCopier") as m_copier,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_copier,
+            episodes=[ep1, ep2], parsed=parsed, transcribed_guids=set(),
+        )
+        m_trans.return_value.transcribe = AsyncMock(side_effect=[
+            RuntimeError("transcription failed"),
+            ("ep-2", Transcription(guid="ep-2", text="ok"),
+             [], TranscriptionCost(provider="groq", model="w", cost=0.0)),
+        ])
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    assert m_trans.return_value.transcribe.await_count == 2
+    # ep1 failed before copy; ep2 copy should succeed
+    assert m_copier.return_value.copy.await_count == 1
+
+
+async def test_preprocess_error_skips_episode_continues_loop() -> None:
+    """A preprocess error on ep1 leaves ep2 fully processed."""
+    ep1 = Episode(guid="ep-1", url="https://example.com/ep1.mp3", title="Ep 1",
+                  pub_date=datetime(2026, 3, 22, tzinfo=UTC))
+    ep2 = Episode(guid="ep-2", url="https://example.com/ep2.mp3", title="Ep 2",
+                  pub_date=datetime(2026, 3, 22, tzinfo=UTC))
+    config, _, parsed = _branch_config(MagicMock())
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.EpisodeCopier") as m_copier,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_copier,
+            episodes=[ep1, ep2], parsed=parsed, transcribed_guids=set(),
+        )
+        m_prep.return_value.preprocess = AsyncMock(side_effect=[
+            RuntimeError("ffmpeg error"),
+            Path("/cache/ep-2.mono.m4a"),
+        ])
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    assert m_prep.return_value.preprocess.await_count == 2
+    # transcribe only called once (ep1 never reached it)
+    assert m_trans.return_value.transcribe.await_count == 1
+
+
+async def test_multiple_episodes_independent_failures() -> None:
+    """Two consecutive failures do not prevent the third episode from being processed."""
+    ep1 = Episode(guid="ep-1", url="https://example.com/ep1.mp3", title="Ep 1",
+                  pub_date=datetime(2026, 3, 22, tzinfo=UTC))
+    ep2 = Episode(guid="ep-2", url="https://example.com/ep2.mp3", title="Ep 2",
+                  pub_date=datetime(2026, 3, 22, tzinfo=UTC))
+    ep3 = Episode(guid="ep-3", url="https://example.com/ep3.mp3", title="Ep 3",
+                  pub_date=datetime(2026, 3, 22, tzinfo=UTC))
+    config, _, parsed = _branch_config(MagicMock())
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.EpisodeCopier") as m_copier,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_copier,
+            episodes=[ep1, ep2, ep3], parsed=parsed, transcribed_guids=set(),
+        )
+        # ep1 download fails, ep2 preprocess fails, ep3 succeeds
+        m_ep_dl.return_value.download = AsyncMock(side_effect=[
+            RuntimeError("ep1 download"),
+            Path("/cache/ep-2.mp3"),
+            Path("/cache/ep-3.mp3"),
+        ])
+        m_prep.return_value.preprocess = AsyncMock(side_effect=[
+            RuntimeError("ep2 preprocess"),
+            Path("/cache/ep-3.mono.m4a"),
+        ])
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    assert m_ep_dl.return_value.download.await_count == 3
+    assert m_prep.return_value.preprocess.await_count == 2
+    assert m_trans.return_value.transcribe.await_count == 1
+    assert m_copier.return_value.copy.await_count == 1
