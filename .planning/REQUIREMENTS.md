@@ -11,9 +11,9 @@
 
 ### Ad Detection
 
-- [ ] **AD-01**: Pipeline instantiates AdDetector with config from `models.ad_detection` (provider, model, api_key)
-- [ ] **AD-02**: Pipeline instantiates AdParser (stateless, no config needed)
-- [ ] **AD-03**: Pipeline instantiates AdStore and loads `ad_detected_guids` set before processing episodes
+- [x] **AD-01**: Pipeline instantiates AdDetector with config from `models.ad_detection` (provider, model, api_key)
+- [x] **AD-02**: Pipeline instantiates AdParser (stateless, no config needed)
+- [x] **AD-03**: Pipeline instantiates AdStore and loads `ad_detected_guids` set before processing episodes
 - [ ] **AD-04**: For each episode, after transcription and topic extraction: if episode GUID not in `ad_detected_guids`, call AdDetector.detect() with transcript segments and topic extraction
 - [ ] **AD-05**: Pass AdDetector output through AdParser.parse() to merge consecutive segments into AdSegment objects
 - [ ] **AD-06**: Save merged AdSegment objects to AdStore.save_segments(); call AdStore.mark_detected() to record the run
@@ -21,12 +21,12 @@
 
 ### Audio Editing
 
-- [ ] **EDIT-01**: Pipeline instantiates AudioEditor with output_dir, file_type, and bitrate from config
+- [x] **EDIT-01**: Pipeline instantiates AudioEditor with output_dir, file_type, and bitrate from config
 - [x] **EDIT-02**: AudioEditor.edit() keeps its current `return None` behavior when no qualifying ad segments exist. The pipeline preserves the original episode URL unchanged — no local output file is produced for clean episodes. (Decision D-01 from discuss-phase overrides the original always-produces-output requirement.)
 - [ ] **EDIT-03**: Pipeline calls AudioEditor.edit() with: raw input path, ad segments, feed_slug, pub_date, episode title, min_duration_ms, min_confidence, total_duration_s from AudioMetadata
 - [ ] **EDIT-04**: Output file written to `output/{feed_slug}/{DD.MM.YYYY}-{episode-title}.{ext}`
 - [ ] **EDIT-05**: If output file already exists, skip audio editing entirely (idempotency — AudioEditor already implements this guard)
-- [ ] **EDIT-06**: EpisodeCopier removed from Pipeline; AudioEditor is the sole output-file producer
+- [x] **EDIT-06**: EpisodeCopier removed from Pipeline; AudioEditor is the sole output-file producer
 
 ### Pipeline Integration
 
@@ -69,19 +69,19 @@
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | BUG-01 | Phase 1 | Complete |
-| AD-01 | Phase 2 | Pending |
-| AD-02 | Phase 2 | Pending |
-| AD-03 | Phase 2 | Pending |
+| AD-01 | Phase 2 | Complete |
+| AD-02 | Phase 2 | Complete |
+| AD-03 | Phase 2 | Complete |
 | AD-04 | Phase 2 | Pending |
 | AD-05 | Phase 2 | Pending |
 | AD-06 | Phase 2 | Pending |
 | AD-07 | Phase 2 | Pending |
-| EDIT-01 | Phase 2 | Pending |
+| EDIT-01 | Phase 2 | Complete |
 | EDIT-02 | Phase 2 | Complete |
 | EDIT-03 | Phase 2 | Pending |
 | EDIT-04 | Phase 2 | Pending |
 | EDIT-05 | Phase 2 | Pending |
-| EDIT-06 | Phase 2 | Pending |
+| EDIT-06 | Phase 2 | Complete |
 | PIPE-01 | Phase 2 | Pending |
 | PIPE-02 | Phase 2 | Pending |
 | PIPE-03 | Phase 2 | Pending |
