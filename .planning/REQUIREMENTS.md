@@ -22,7 +22,7 @@
 ### Audio Editing
 
 - [ ] **EDIT-01**: Pipeline instantiates AudioEditor with output_dir, file_type, and bitrate from config
-- [ ] **EDIT-02**: AudioEditor.edit() always produces an output file — when no qualifying ad segments exist, re-encode the input without cuts (do not return None)
+- [ ] **EDIT-02**: AudioEditor.edit() keeps its current `return None` behavior when no qualifying ad segments exist. The pipeline preserves the original episode URL unchanged — no local output file is produced for clean episodes. (Decision D-01 from discuss-phase overrides the original always-produces-output requirement.)
 - [ ] **EDIT-03**: Pipeline calls AudioEditor.edit() with: raw input path, ad segments, feed_slug, pub_date, episode title, min_duration_ms, min_confidence, total_duration_s from AudioMetadata
 - [ ] **EDIT-04**: Output file written to `output/{feed_slug}/{DD.MM.YYYY}-{episode-title}.{ext}`
 - [ ] **EDIT-05**: If output file already exists, skip audio editing entirely (idempotency — AudioEditor already implements this guard)
