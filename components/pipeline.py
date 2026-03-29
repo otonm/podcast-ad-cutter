@@ -207,21 +207,23 @@ class Pipeline:
         cost_store: CostTrackingStore,
         topic_store: TopicStore,
         extracted_guids: set[str],
-        ad_store: AdStore,  # noqa: ARG002
-        ad_detected_guids: set[str],  # noqa: ARG002
+        ad_store: AdStore,
+        ad_detected_guids: set[str],
     ) -> None:
         """Process one episode according to its current state.
 
-        Checks whether the transcription and the output audio file already exist,
-        and performs only the work that is still needed.
+        Checks whether the output audio file already exists, and performs only
+        the work that is still needed.
 
         Branches:
-            A — transcription + audio exist: compute URL only.
-            B — transcription exists, no audio: download, probe, preprocess, copy.
-            C — audio exists, no transcription: probe, preprocess, transcribe.
-            D — neither exists: full pipeline (download, probe, preprocess, transcribe, copy).
+            A — output file exists on disk: compute URL only, return early.
+            B — transcription exists, no output: download, probe, ad detection tail.
+            C — cached audio exists, no transcription: probe, preprocess, transcribe, ad detection tail.
+            D — nothing exists: full pipeline (download, probe, preprocess, transcribe, ad detection tail).
 
-        ad_store and ad_detected_guids: used by plan 02-03 decision tree update.
+        Ad detection tail (Branches B, C, D):
+            Load or run ad detection. Call AudioEditor.edit(). If Path returned,
+            update episode URL. If None returned, keep original URL unchanged.
 
         """
         pub_date_str = episode.pub_date.strftime("%d.%m.%Y")
@@ -230,61 +232,56 @@ class Pipeline:
             (p for p in output_feed_dir.glob(f"{pub_date_str}-{title_slug}.*")),  # noqa: ASYNC240
             None,
         )
+        cache_dir = self._config.app.paths.cache_dir
+        cached_audio = next(
+            (p for p in cache_dir.glob(f"{episode.guid}.*")),
+            None,
+        )
         transcription_exists = episode.guid in transcribed_guids
-        audio_exists = existing_audio is not None
+        output_exists = existing_audio is not None
+        cached_audio_exists = cached_audio is not None
 
-        if transcription_exists and audio_exists:
-            # Branch A: both exist — reconstruct the URL from the existing file.
+        if output_exists:
+            # Branch A: output already produced — reconstruct URL from existing file.
             ext = existing_audio.suffix.lstrip(".")
             new_url = FeedPublisher.episode_url(
                 self._config.app.base_url, feed_slug, episode.pub_date, episode.title, ext
             )
-        elif transcription_exists:
-            # Branch B: transcription OK, audio missing — re-download and edit.
+            await store.update_episode_url(episode.guid, new_url)
+            await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url)
+            return  # short-circuit — no further processing
+        if transcription_exists:
+            # Branch B: transcription OK, no output — re-download and probe; skip preprocess (D-05).
             raw_path = await self._episode_downloader.download(
                 episode.guid, episode.url, on_progress=self._on_download_progress
             )
             meta = await self._audio_prober.probe(episode.guid, raw_path)
             await audio_metadata_store.save_all([meta])
-            await self._audio_preprocessor.preprocess(
-                episode.guid, raw_path, meta.duration, on_progress=self._on_preprocess_progress
-            )
-            output_path = await self._audio_editor.edit(
-                episode.guid, raw_path, [], feed_slug, episode.pub_date, episode.title,
-                min_duration_ms=0, min_confidence=0.0, total_duration_s=meta.duration,
-            )
-            if output_path is not None:
-                ext = output_path.suffix.lstrip(".")
-                new_url = FeedPublisher.episode_url(
-                    self._config.app.base_url, feed_slug, episode.pub_date, episode.title, ext
-                )
-            else:
-                new_url = episode.url
-        elif audio_exists:
-            # Branch C: audio present, transcription missing — transcribe from output file.
-            meta = await self._audio_prober.probe(episode.guid, existing_audio)
+            t_segments = await transcription_store.get_segments_for_guid(episode.guid)
+            topic = await topic_store.get_topic_for_guid(episode.guid)
+        elif cached_audio_exists:
+            # Branch C: cached audio present, transcription missing — transcribe from cached file.
+            meta = await self._audio_prober.probe(episode.guid, cached_audio)
             await audio_metadata_store.save_all([meta])
             mono_path = await self._audio_preprocessor.preprocess(
-                episode.guid, existing_audio, meta.duration, on_progress=self._on_preprocess_progress
+                episode.guid, cached_audio, meta.duration, on_progress=self._on_preprocess_progress
             )
-            _, transcription, segments, cost = await self._transcriptor.transcribe(
+            _, transcription, t_segments, cost = await self._transcriptor.transcribe(
                 episode.guid, mono_path
             )
             await transcription_store.save_transcription(transcription)
-            await transcription_store.save_segments(segments)
+            await transcription_store.save_segments(t_segments)
             await cost_store.save_cost(cost)
             transcribed_guids.add(episode.guid)
             if episode.guid not in extracted_guids:
-                _, topic, topic_cost = await self._topic_extractor.extract(
+                _, topic_obj, topic_cost = await self._topic_extractor.extract(
                     episode.guid, feed.config_title, episode.title, transcription.text
                 )
-                await topic_store.save_topic(topic)
+                await topic_store.save_topic(topic_obj)
                 await cost_store.save_cost(topic_cost)
                 extracted_guids.add(episode.guid)
-            ext = existing_audio.suffix.lstrip(".")
-            new_url = FeedPublisher.episode_url(
-                self._config.app.base_url, feed_slug, episode.pub_date, episode.title, ext
-            )
+            raw_path = cached_audio  # AudioEditor receives the cached audio path in Branch C
+            topic = await topic_store.get_topic_for_guid(episode.guid)
         else:
             # Branch D: nothing exists — run the full pipeline.
             raw_path = await self._episode_downloader.download(
@@ -295,34 +292,55 @@ class Pipeline:
             mono_path = await self._audio_preprocessor.preprocess(
                 episode.guid, raw_path, meta.duration, on_progress=self._on_preprocess_progress
             )
-            _, transcription, segments, cost = await self._transcriptor.transcribe(
+            _, transcription, t_segments, cost = await self._transcriptor.transcribe(
                 episode.guid, mono_path
             )
             await transcription_store.save_transcription(transcription)
-            await transcription_store.save_segments(segments)
+            await transcription_store.save_segments(t_segments)
             await cost_store.save_cost(cost)
             transcribed_guids.add(episode.guid)
             if episode.guid not in extracted_guids:
-                _, topic, topic_cost = await self._topic_extractor.extract(
+                _, topic_obj, topic_cost = await self._topic_extractor.extract(
                     episode.guid, feed.config_title, episode.title, transcription.text
                 )
-                await topic_store.save_topic(topic)
+                await topic_store.save_topic(topic_obj)
                 await cost_store.save_cost(topic_cost)
                 extracted_guids.add(episode.guid)
-            output_path = await self._audio_editor.edit(
-                episode.guid, raw_path, [], feed_slug, episode.pub_date, episode.title,
-                min_duration_ms=0, min_confidence=0.0, total_duration_s=meta.duration,
-            )
-            if output_path is not None:
-                ext = output_path.suffix.lstrip(".")
-                new_url = FeedPublisher.episode_url(
-                    self._config.app.base_url, feed_slug, episode.pub_date, episode.title, ext
-                )
-            else:
-                new_url = episode.url
+            topic = await topic_store.get_topic_for_guid(episode.guid)
 
-        await store.update_episode_url(episode.guid, new_url)
-        await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url)
+        # Ad detection tail (Branches B, C, D)
+        if episode.guid not in ad_detected_guids:
+            _, detections, ad_cost = await self._ad_detector.detect(
+                episode.guid, t_segments, topic
+            )
+            segments = self._ad_parser.parse(episode.guid, detections, t_segments)
+            await ad_store.save_segments(episode.guid, segments)
+            await ad_store.mark_detected(episode.guid)
+            await cost_store.save_cost(ad_cost)
+            ad_detected_guids.add(episode.guid)
+        else:
+            segments = await ad_store.get_segments_for_guid(episode.guid)
+
+        output_path = await self._audio_editor.edit(
+            episode.guid,
+            raw_path,
+            segments,
+            feed_slug,
+            episode.pub_date,
+            episode.title,
+            min_duration_ms=self._config.app.ad_detection.min_duration,
+            min_confidence=self._config.app.ad_detection.min_confidence,
+            total_duration_s=meta.duration,
+        )
+
+        if output_path is not None:
+            new_url = FeedPublisher.episode_url(
+                self._config.app.base_url, feed_slug, episode.pub_date, episode.title,
+                self._config.app.output.file_type,
+            )
+            await store.update_episode_url(episode.guid, new_url)
+            await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url)
+        # else: no qualifying ads — keep original URL, no update calls
 
     def _select_feeds(self) -> list[FeedConfig]:
         """Return the feeds to process for this run.
