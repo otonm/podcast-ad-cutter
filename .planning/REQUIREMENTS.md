@@ -14,32 +14,32 @@
 - [x] **AD-01**: Pipeline instantiates AdDetector with config from `models.ad_detection` (provider, model, api_key)
 - [x] **AD-02**: Pipeline instantiates AdParser (stateless, no config needed)
 - [x] **AD-03**: Pipeline instantiates AdStore and loads `ad_detected_guids` set before processing episodes
-- [ ] **AD-04**: For each episode, after transcription and topic extraction: if episode GUID not in `ad_detected_guids`, call AdDetector.detect() with transcript segments and topic extraction
-- [ ] **AD-05**: Pass AdDetector output through AdParser.parse() to merge consecutive segments into AdSegment objects
-- [ ] **AD-06**: Save merged AdSegment objects to AdStore.save_segments(); call AdStore.mark_detected() to record the run
-- [ ] **AD-07**: If episode GUID already in `ad_detected_guids`, load existing AdSegment objects from AdStore.get_segments_for_guid() and skip detection
+- [x] **AD-04**: For each episode, after transcription and topic extraction: if episode GUID not in `ad_detected_guids`, call AdDetector.detect() with transcript segments and topic extraction
+- [x] **AD-05**: Pass AdDetector output through AdParser.parse() to merge consecutive segments into AdSegment objects
+- [x] **AD-06**: Save merged AdSegment objects to AdStore.save_segments(); call AdStore.mark_detected() to record the run
+- [x] **AD-07**: If episode GUID already in `ad_detected_guids`, load existing AdSegment objects from AdStore.get_segments_for_guid() and skip detection
 
 ### Audio Editing
 
 - [x] **EDIT-01**: Pipeline instantiates AudioEditor with output_dir, file_type, and bitrate from config
 - [x] **EDIT-02**: AudioEditor.edit() keeps its current `return None` behavior when no qualifying ad segments exist. The pipeline preserves the original episode URL unchanged — no local output file is produced for clean episodes. (Decision D-01 from discuss-phase overrides the original always-produces-output requirement.)
-- [ ] **EDIT-03**: Pipeline calls AudioEditor.edit() with: raw input path, ad segments, feed_slug, pub_date, episode title, min_duration_ms, min_confidence, total_duration_s from AudioMetadata
-- [ ] **EDIT-04**: Output file written to `output/{feed_slug}/{DD.MM.YYYY}-{episode-title}.{ext}`
-- [ ] **EDIT-05**: If output file already exists, skip audio editing entirely (idempotency — AudioEditor already implements this guard)
+- [x] **EDIT-03**: Pipeline calls AudioEditor.edit() with: raw input path, ad segments, feed_slug, pub_date, episode title, min_duration_ms, min_confidence, total_duration_s from AudioMetadata
+- [x] **EDIT-04**: Output file written to `output/{feed_slug}/{DD.MM.YYYY}-{episode-title}.{ext}`
+- [x] **EDIT-05**: If output file already exists, skip audio editing entirely (idempotency — AudioEditor already implements this guard)
 - [x] **EDIT-06**: EpisodeCopier removed from Pipeline; AudioEditor is the sole output-file producer
 
 ### Pipeline Integration
 
-- [ ] **PIPE-01**: Decision tree updated — episode processing checks: `transcription_exists`, `ad_detected` (from ad_detection_runs), `output_exists` (filesystem)
-- [ ] **PIPE-02**: Branch logic: if output_exists → reconstruct URL only (Branch A); otherwise run missing stages in order: download → probe → preprocess → transcribe → extract topics → detect ads → edit audio
-- [ ] **PIPE-03**: Ad detection cost saved to CostTrackingStore (AdDetectionCost → cost_store.save_cost)
-- [ ] **PIPE-04**: Episode URL updated to point to locally produced output file after audio edit
+- [x] **PIPE-01**: Decision tree updated — episode processing checks: `transcription_exists`, `ad_detected` (from ad_detection_runs), `output_exists` (filesystem)
+- [x] **PIPE-02**: Branch logic: if output_exists → reconstruct URL only (Branch A); otherwise run missing stages in order: download → probe → preprocess → transcribe → extract topics → detect ads → edit audio
+- [x] **PIPE-03**: Ad detection cost saved to CostTrackingStore (AdDetectionCost → cost_store.save_cost)
+- [x] **PIPE-04**: Episode URL updated to point to locally produced output file after audio edit
 - [x] **PIPE-05**: RSS feed published with updated episode URLs pointing to edited audio files
 
 ### Testing
 
-- [ ] **TEST-01**: Pipeline tests cover the full ad detection + audio editing path (end-to-end mocked)
-- [ ] **TEST-02**: Pipeline tests cover the idempotency branches (ad already detected, output already exists)
+- [x] **TEST-01**: Pipeline tests cover the full ad detection + audio editing path (end-to-end mocked)
+- [x] **TEST-02**: Pipeline tests cover the idempotency branches (ad already detected, output already exists)
 - [x] **TEST-03**: All existing tests remain green; 100% coverage maintained; ruff clean
 
 ## v2 Requirements
@@ -72,23 +72,23 @@
 | AD-01 | Phase 2 | Complete |
 | AD-02 | Phase 2 | Complete |
 | AD-03 | Phase 2 | Complete |
-| AD-04 | Phase 2 | Pending |
-| AD-05 | Phase 2 | Pending |
-| AD-06 | Phase 2 | Pending |
-| AD-07 | Phase 2 | Pending |
+| AD-04 | Phase 2 | Complete |
+| AD-05 | Phase 2 | Complete |
+| AD-06 | Phase 2 | Complete |
+| AD-07 | Phase 2 | Complete |
 | EDIT-01 | Phase 2 | Complete |
 | EDIT-02 | Phase 2 | Complete |
-| EDIT-03 | Phase 2 | Pending |
-| EDIT-04 | Phase 2 | Pending |
-| EDIT-05 | Phase 2 | Pending |
+| EDIT-03 | Phase 2 | Complete |
+| EDIT-04 | Phase 2 | Complete |
+| EDIT-05 | Phase 2 | Complete |
 | EDIT-06 | Phase 2 | Complete |
-| PIPE-01 | Phase 2 | Pending |
-| PIPE-02 | Phase 2 | Pending |
-| PIPE-03 | Phase 2 | Pending |
-| PIPE-04 | Phase 2 | Pending |
+| PIPE-01 | Phase 2 | Complete |
+| PIPE-02 | Phase 2 | Complete |
+| PIPE-03 | Phase 2 | Complete |
+| PIPE-04 | Phase 2 | Complete |
 | PIPE-05 | Phase 2 | Complete |
-| TEST-01 | Phase 2 | Pending |
-| TEST-02 | Phase 2 | Pending |
+| TEST-01 | Phase 2 | Complete |
+| TEST-02 | Phase 2 | Complete |
 | TEST-03 | Phase 2 | Complete |
 
 **Coverage:**
