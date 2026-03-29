@@ -31,7 +31,7 @@ Automatically produce ad-free podcast audio files with a valid RSS feed, minimis
 - ✓ Fix TopicExtractor retry loop — retry loop added with `_parse_response` helper, cost accumulation across attempts, API failures raise immediately (Validated in Phase 01: topicextractor-retry-bug-fix)
 - [ ] Wire AdDetector, AdParser, AdStore, AudioEditor into Pipeline.__init__
 - [ ] Expand Pipeline._process_episode decision tree to include ad detection → audio editing stages
-- [ ] AudioEditor always produces an output file (even when no qualifying ads — re-encode without cuts)
+- [ ] AudioEditor keeps its return-None behavior when no qualifying ad segments exist — pipeline preserves original episode URL unchanged (per D-01)
 - [ ] Pipeline idempotency: skip ad detection if ad_detection_runs record exists; skip audio edit if output file exists
 - [ ] Replace EpisodeCopier with AudioEditor as the sole output-file producer
 - [ ] Output pattern: `output/{feed_slug}/{DD.MM.YYYY}-{episode-title}.{ext}` (already implemented in AudioEditor)
@@ -53,7 +53,7 @@ The project has a well-established async Python architecture. All major componen
 - **TopicExtractor retry bug**: ✓ Fixed in Phase 01. `topic_extractor.py` now retries up to `max_retries` on parse failure, mirroring AdDetector's pattern.
 - **Pipeline wiring gap**: AdDetector, AdParser, AdStore, AudioEditor are implemented and tested in isolation but not yet instantiated or called in Pipeline.
 - **EpisodeCopier replacement**: EpisodeCopier converted audio to output format as a "copy" step. AudioEditor does the same (plus ad cutting), so EpisodeCopier should be removed from the flow once AudioEditor is wired.
-- **No-qualifying-ads behaviour**: When `AudioEditor.edit()` finds no qualifying segments, it currently returns `None`. Per the project's design, a final output file must always be produced (re-encode without cuts). AudioEditor should be updated to always produce output.
+- **No-qualifying-ads behaviour**: When `AudioEditor.edit()` finds no qualifying segments, it returns `None`. This is correct per D-01 — the pipeline preserves the original episode URL unchanged and produces no local file for clean episodes. AudioEditor requires no changes.
 - **Decision tree extension**: The existing 4-branch decision tree (A/B/C/D) needs ad-state tracking added as a second dimension: `ad_detected` (from AdStore.get_detected_guids) drives whether ad detection runs; `output_exists` (filesystem check) drives whether audio editing runs.
 
 ## Constraints
@@ -67,7 +67,7 @@ The project has a well-established async Python architecture. All major componen
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| AudioEditor always produces output (even with no qualifying ads) | User expects a final file and RSS entry for every episode; None return would leave original feed URL unchanged | — Pending |
+| AudioEditor keeps return-None behavior when no qualifying ads exist | Original URL preserved for clean episodes; no re-encoding needed; consistent with D-01 locked in discuss-phase | — Decided (D-01) |
 | EpisodeCopier removed, AudioEditor is sole output producer | AudioEditor already handles format encoding; keeping both creates duplicate logic | — Pending |
 | Ad detection skipped if ad_detection_runs record exists | Expensive LLM call; transcript doesn't change between runs | — Pending |
 | Audio edit skipped if output file already exists | AudioEditor already implements this guard internally | — Pending |
