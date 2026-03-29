@@ -29,7 +29,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 2 plans
 
 Plans:
-- [ ] 01-01: Fix TopicExtractor retry loop to mirror AdDetector pattern (failing test first, then implementation)
+- [x] 01-01: Fix TopicExtractor retry loop to mirror AdDetector pattern (failing test first, then implementation)
 - [ ] 01-02: Verify full test suite green, coverage 100%, ruff clean
 
 ### Phase 2: Pipeline Integration — Ad Detection & Audio Editing
@@ -58,5 +58,5 @@ Phases execute in numeric order: 1 → 2
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. TopicExtractor Retry Bug Fix | 0/2 | Not started | - |
+| 1. TopicExtractor Retry Bug Fix | 1/2 | In Progress|  |
 | 2. Pipeline Integration — Ad Detection & Audio Editing | 0/4 | Not started | - |

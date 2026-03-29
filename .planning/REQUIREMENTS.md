@@ -7,7 +7,7 @@
 
 ### Bug Fixes
 
-- [ ] **BUG-01**: TopicExtractor retries on malformed JSON — implementation raises immediately instead of appending retry prompt and calling LLM again (5 failing tests in test_topic_extractor.py)
+- [x] **BUG-01**: TopicExtractor retries on malformed JSON — implementation raises immediately instead of appending retry prompt and calling LLM again (5 failing tests in test_topic_extractor.py)
 
 ### Ad Detection
 
@@ -68,7 +68,7 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BUG-01 | Phase 1 | Pending |
+| BUG-01 | Phase 1 | Complete |
 | AD-01 | Phase 2 | Pending |
 | AD-02 | Phase 2 | Pending |
 | AD-03 | Phase 2 | Pending |
