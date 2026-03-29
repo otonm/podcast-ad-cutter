@@ -11,7 +11,9 @@ import pytest
 
 from components.pipeline import Pipeline
 from config.config_loader import FeedConfig
+from models.ad_detection import AdDetectionCost, AdSegment  # noqa: TC002
 from models.feed import AudioMetadata, Episode, FeedParseInput, ParsedFeed, PublisherInput
+from models.topic import TopicExtraction, TopicExtractionCost
 from models.transcription import Transcription, TranscriptionCost, TranscriptionSegment
 
 # ---------------------------------------------------------------------------
@@ -33,7 +35,10 @@ def make_config(feeds: list[FeedConfig]) -> MagicMock:
     cfg.app.feeds = feeds
     cfg.app.models.transcription.provider = "groq"
     cfg.app.models.transcription.model = "whisper-large-v3-turbo"
+    cfg.app.models.context_extraction.provider = "openai"
+    cfg.app.models.context_extraction.model = "gpt-4o-mini"
     cfg.credentials.groq_api_key = "sk-test"
+    cfg.credentials.openai_api_key = "sk-openai-test"
     return cfg
 
 
@@ -60,8 +65,15 @@ def _branch_config(output_dir: Path | MagicMock) -> tuple[MagicMock, Episode, Pa
     config.app.paths.cache_dir = MagicMock()
     config.app.models.transcription.provider = "groq"
     config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.app.models.context_extraction.provider = "openai"
+    config.app.models.context_extraction.model = "gpt-4o-mini"
     config.credentials.groq_api_key = "sk-test"
+    config.credentials.openai_api_key = "sk-openai-test"
     config.app.base_url = "http://localhost"
+    config.app.models.ad_detection.provider = "openai"
+    config.app.models.ad_detection.model = "gpt-4o-mini"
+    config.app.output.file_type = "mp3"
+    config.app.output.bitrate = "128k"
     parsed = ParsedFeed(
         config_title="My Podcast",
         feed_url="http://x.com/feed",
@@ -84,11 +96,17 @@ def _wire_branch_mocks(
     m_prober: MagicMock,
     m_prep: MagicMock,
     m_trans: MagicMock,
-    m_copier: MagicMock,
+    m_ad_store: MagicMock,
+    m_topic_ext: MagicMock,
+    m_topic_store: MagicMock,
+    m_ad_detector: MagicMock,
+    m_ad_parser: MagicMock,
+    m_audio_editor: MagicMock,
     *,
     episodes: list[Episode],
     parsed: ParsedFeed,
     transcribed_guids: set[str],
+    extracted_guids: set[str] | None = None,
 ) -> None:
     """Wire standard mocks for all branch and error tests."""
     m_dl.return_value.download_all = AsyncMock(return_value=[("My Podcast", "<rss/>")])
@@ -114,6 +132,23 @@ def _wire_branch_mocks(
     m_ams.return_value.save_all = AsyncMock()
     m_cs.return_value.save_cost = AsyncMock()
 
+    m_topic_store.return_value.get_extracted_guids = AsyncMock(
+        return_value=extracted_guids if extracted_guids is not None else set()
+    )
+    m_topic_store.return_value.save_topic = AsyncMock()
+    m_topic_ext.return_value.extract = AsyncMock(return_value=(
+        "ep-1",
+        TopicExtraction(
+            guid="ep-1",
+            podcast="My Podcast",
+            title="My Episode",
+            topic="The topic.",
+            hosts="Host A",
+            show="My Show",
+        ),
+        TopicExtractionCost(provider="openai", model="gpt-4o-mini", cost=0.0001),
+    ))
+
     meta = AudioMetadata(guid="ep-1", duration=60.0, codec="aac", channels=1, bitrate=32000)
     m_ep_dl.return_value.download = AsyncMock(return_value=Path("/cache/ep.mp3"))
     m_prober.return_value.probe = AsyncMock(return_value=meta)
@@ -124,11 +159,17 @@ def _wire_branch_mocks(
         [TranscriptionSegment(guid="ep-1", start_ms=0, end_ms=1000, text="Hello")],
         TranscriptionCost(provider="groq", model="whisper-large-v3-turbo", cost=0.001),
     ))
-    m_copier.return_value.copy = AsyncMock(return_value=(
+    m_ad_store.return_value.get_detected_guids = AsyncMock(return_value=set())
+    m_ad_store.return_value.get_segments_for_guid = AsyncMock(return_value=[])
+    m_ad_store.return_value.save_segments = AsyncMock()
+    m_ad_store.return_value.mark_detected = AsyncMock()
+    m_ad_detector.return_value.detect = AsyncMock(return_value=(
         "ep-1",
-        Path("/out/my-podcast/22.03.2026-my-episode.mp3"),
-        "http://localhost/my-podcast/22.03.2026-my-episode.mp3",
+        [],
+        AdDetectionCost(provider="openai", model="gpt-4o-mini", cost=0.0001),
     ))
+    m_ad_parser.return_value.parse = MagicMock(return_value=[])
+    m_audio_editor.return_value.edit = AsyncMock(return_value=None)
 
 
 # ---------------------------------------------------------------------------
@@ -467,11 +508,15 @@ async def test_on_download_progress_starting(caplog: pytest.LogCaptureFixture) -
     config.app.paths.cache_dir = MagicMock()
     config.app.models.transcription.provider = "groq"
     config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.app.models.context_extraction.provider = "openai"
+    config.app.models.context_extraction.model = "gpt-4o-mini"
     config.credentials.groq_api_key = "sk-test"
+    config.credentials.openai_api_key = "sk-openai-test"
 
     with (
         patch("components.pipeline.FeedDownloader"),
         patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.TopicExtractor"),
     ):
         pipeline = Pipeline(config)
 
@@ -489,11 +534,15 @@ async def test_on_download_progress_complete(caplog: pytest.LogCaptureFixture) -
     config.app.paths.cache_dir = MagicMock()
     config.app.models.transcription.provider = "groq"
     config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.app.models.context_extraction.provider = "openai"
+    config.app.models.context_extraction.model = "gpt-4o-mini"
     config.credentials.groq_api_key = "sk-test"
+    config.credentials.openai_api_key = "sk-openai-test"
 
     with (
         patch("components.pipeline.FeedDownloader"),
         patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.TopicExtractor"),
     ):
         pipeline = Pipeline(config)
 
@@ -511,11 +560,15 @@ async def test_on_download_progress_intermediate() -> None:
     config.app.paths.cache_dir = MagicMock()
     config.app.models.transcription.provider = "groq"
     config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.app.models.context_extraction.provider = "openai"
+    config.app.models.context_extraction.model = "gpt-4o-mini"
     config.credentials.groq_api_key = "sk-test"
+    config.credentials.openai_api_key = "sk-openai-test"
 
     with (
         patch("components.pipeline.FeedDownloader"),
         patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.TopicExtractor"),
     ):
         pipeline = Pipeline(config)
 
@@ -539,12 +592,16 @@ async def test_on_preprocess_progress_starting(caplog: pytest.LogCaptureFixture)
     config.app.paths.cache_dir = MagicMock()
     config.app.models.transcription.provider = "groq"
     config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.app.models.context_extraction.provider = "openai"
+    config.app.models.context_extraction.model = "gpt-4o-mini"
     config.credentials.groq_api_key = "sk-test"
+    config.credentials.openai_api_key = "sk-openai-test"
 
     with (
         patch("components.pipeline.FeedDownloader"),
         patch("components.pipeline.EpisodeDownloader"),
         patch("components.pipeline.AudioPreprocessor"),
+        patch("components.pipeline.TopicExtractor"),
     ):
         pipeline = Pipeline(config)
 
@@ -562,12 +619,16 @@ async def test_on_preprocess_progress_complete(caplog: pytest.LogCaptureFixture)
     config.app.paths.cache_dir = MagicMock()
     config.app.models.transcription.provider = "groq"
     config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.app.models.context_extraction.provider = "openai"
+    config.app.models.context_extraction.model = "gpt-4o-mini"
     config.credentials.groq_api_key = "sk-test"
+    config.credentials.openai_api_key = "sk-openai-test"
 
     with (
         patch("components.pipeline.FeedDownloader"),
         patch("components.pipeline.EpisodeDownloader"),
         patch("components.pipeline.AudioPreprocessor"),
+        patch("components.pipeline.TopicExtractor"),
     ):
         pipeline = Pipeline(config)
 
@@ -585,13 +646,17 @@ async def test_on_preprocess_progress_intermediate() -> None:
     config.app.paths.cache_dir = MagicMock()
     config.app.models.transcription.provider = "groq"
     config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.app.models.context_extraction.provider = "openai"
+    config.app.models.context_extraction.model = "gpt-4o-mini"
     config.credentials.groq_api_key = "sk-test"
+    config.credentials.openai_api_key = "sk-openai-test"
 
     with (
         patch("components.pipeline.FeedDownloader"),
         patch("components.pipeline.EpisodeDownloader"),
         patch("components.pipeline.AudioPreprocessor"),
         patch("components.pipeline.EpisodeTranscriptor"),
+        patch("components.pipeline.TopicExtractor"),
     ):
         pipeline = Pipeline(config)
 
@@ -617,7 +682,10 @@ async def test_pipeline_constructs_transcriptor_with_model_id_and_key() -> None:
     config.app.paths.cache_dir = MagicMock()
     config.app.models.transcription.provider = "groq"
     config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.app.models.context_extraction.provider = "openai"
+    config.app.models.context_extraction.model = "gpt-4o-mini"
     config.credentials.groq_api_key = "sk-groq-test"
+    config.credentials.openai_api_key = "sk-openai-test"
     config.app.base_url = "http://localhost"
 
     with (
@@ -625,6 +693,7 @@ async def test_pipeline_constructs_transcriptor_with_model_id_and_key() -> None:
         patch("components.pipeline.EpisodeDownloader"),
         patch("components.pipeline.AudioPreprocessor"),
         patch("components.pipeline.EpisodeTranscriptor") as mock_trans_cls,
+        patch("components.pipeline.TopicExtractor"),
     ):
         Pipeline(config)
 
@@ -661,11 +730,17 @@ async def test_branch_a_transcription_and_audio_exist(tmp_path: Path) -> None:
         patch("components.pipeline.AudioProber") as m_prober,
         patch("components.pipeline.AudioPreprocessor") as m_prep,
         patch("components.pipeline.EpisodeTranscriptor") as m_trans,
-        patch("components.pipeline.EpisodeCopier") as m_copier,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
-            m_ep_dl, m_prober, m_prep, m_trans, m_copier,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
             episodes=[ep], parsed=parsed, transcribed_guids={"ep-1"},
         )
         pipeline = Pipeline(config)
@@ -675,7 +750,7 @@ async def test_branch_a_transcription_and_audio_exist(tmp_path: Path) -> None:
     m_prober.return_value.probe.assert_not_called()
     m_prep.return_value.preprocess.assert_not_called()
     m_trans.return_value.transcribe.assert_not_called()
-    m_copier.return_value.copy.assert_not_called()
+    m_topic_ext.return_value.extract.assert_not_called()
     m_store.return_value.update_episode_url.assert_awaited_once()
     m_pub.return_value.update_episode_url.assert_awaited_once()
 
@@ -699,11 +774,17 @@ async def test_branch_b_transcription_exists_no_audio_redownloads_and_copies(
         patch("components.pipeline.AudioProber") as m_prober,
         patch("components.pipeline.AudioPreprocessor") as m_prep,
         patch("components.pipeline.EpisodeTranscriptor") as m_trans,
-        patch("components.pipeline.EpisodeCopier") as m_copier,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
-            m_ep_dl, m_prober, m_prep, m_trans, m_copier,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
             episodes=[ep], parsed=parsed, transcribed_guids={"ep-1"},
         )
         pipeline = Pipeline(config)
@@ -716,7 +797,7 @@ async def test_branch_b_transcription_exists_no_audio_redownloads_and_copies(
     m_ams.return_value.save_all.assert_awaited_once()
     m_prep.return_value.preprocess.assert_awaited_once()
     m_trans.return_value.transcribe.assert_not_called()
-    m_copier.return_value.copy.assert_awaited_once()
+    m_topic_ext.return_value.extract.assert_not_called()
     m_store.return_value.update_episode_url.assert_awaited_once()
 
 
@@ -743,11 +824,17 @@ async def test_branch_c_audio_exists_no_transcription_transcribes_from_output(
         patch("components.pipeline.AudioProber") as m_prober,
         patch("components.pipeline.AudioPreprocessor") as m_prep,
         patch("components.pipeline.EpisodeTranscriptor") as m_trans,
-        patch("components.pipeline.EpisodeCopier") as m_copier,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
-            m_ep_dl, m_prober, m_prep, m_trans, m_copier,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         pipeline = Pipeline(config)
@@ -761,8 +848,9 @@ async def test_branch_c_audio_exists_no_transcription_transcribes_from_output(
     m_trans.return_value.transcribe.assert_awaited_once()
     m_ts.return_value.save_transcription.assert_awaited_once()
     m_ts.return_value.save_segments.assert_awaited_once()
-    m_cs.return_value.save_cost.assert_awaited_once()
-    m_copier.return_value.copy.assert_not_called()
+    m_topic_ext.return_value.extract.assert_awaited_once()
+    m_topic_store.return_value.save_topic.assert_awaited_once()
+    assert m_cs.return_value.save_cost.await_count == 2  # transcription cost + topic cost
     m_store.return_value.update_episode_url.assert_awaited_once()
 
 
@@ -783,11 +871,17 @@ async def test_branch_d_no_transcription_no_audio_full_pipeline() -> None:
         patch("components.pipeline.AudioProber") as m_prober,
         patch("components.pipeline.AudioPreprocessor") as m_prep,
         patch("components.pipeline.EpisodeTranscriptor") as m_trans,
-        patch("components.pipeline.EpisodeCopier") as m_copier,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
-            m_ep_dl, m_prober, m_prep, m_trans, m_copier,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         pipeline = Pipeline(config)
@@ -800,8 +894,9 @@ async def test_branch_d_no_transcription_no_audio_full_pipeline() -> None:
     m_trans.return_value.transcribe.assert_awaited_once()
     m_ts.return_value.save_transcription.assert_awaited_once()
     m_ts.return_value.save_segments.assert_awaited_once()
-    m_cs.return_value.save_cost.assert_awaited_once()
-    m_copier.return_value.copy.assert_awaited_once()
+    m_topic_ext.return_value.extract.assert_awaited_once()
+    m_topic_store.return_value.save_topic.assert_awaited_once()
+    assert m_cs.return_value.save_cost.await_count == 2  # transcription cost + topic cost
     m_store.return_value.update_episode_url.assert_awaited_once()
 
 
@@ -831,11 +926,17 @@ async def test_download_error_skips_episode_continues_loop() -> None:
         patch("components.pipeline.AudioProber") as m_prober,
         patch("components.pipeline.AudioPreprocessor") as m_prep,
         patch("components.pipeline.EpisodeTranscriptor") as m_trans,
-        patch("components.pipeline.EpisodeCopier") as m_copier,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
-            m_ep_dl, m_prober, m_prep, m_trans, m_copier,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
             episodes=[ep1, ep2], parsed=parsed, transcribed_guids=set(),
         )
         m_ep_dl.return_value.download = AsyncMock(side_effect=[
@@ -870,11 +971,17 @@ async def test_transcribe_error_skips_episode_continues_loop() -> None:
         patch("components.pipeline.AudioProber") as m_prober,
         patch("components.pipeline.AudioPreprocessor") as m_prep,
         patch("components.pipeline.EpisodeTranscriptor") as m_trans,
-        patch("components.pipeline.EpisodeCopier") as m_copier,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
-            m_ep_dl, m_prober, m_prep, m_trans, m_copier,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
             episodes=[ep1, ep2], parsed=parsed, transcribed_guids=set(),
         )
         m_trans.return_value.transcribe = AsyncMock(side_effect=[
@@ -886,8 +993,8 @@ async def test_transcribe_error_skips_episode_continues_loop() -> None:
         await pipeline.run()
 
     assert m_trans.return_value.transcribe.await_count == 2
-    # ep1 failed before copy; ep2 copy should succeed
-    assert m_copier.return_value.copy.await_count == 1
+    # ep1 failed before audio edit; ep2 audio edit should succeed (but editor returns None)
+    m_audio_editor.return_value.edit.assert_awaited()
 
 
 async def test_preprocess_error_skips_episode_continues_loop() -> None:
@@ -911,11 +1018,17 @@ async def test_preprocess_error_skips_episode_continues_loop() -> None:
         patch("components.pipeline.AudioProber") as m_prober,
         patch("components.pipeline.AudioPreprocessor") as m_prep,
         patch("components.pipeline.EpisodeTranscriptor") as m_trans,
-        patch("components.pipeline.EpisodeCopier") as m_copier,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
-            m_ep_dl, m_prober, m_prep, m_trans, m_copier,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
             episodes=[ep1, ep2], parsed=parsed, transcribed_guids=set(),
         )
         m_prep.return_value.preprocess = AsyncMock(side_effect=[
@@ -953,11 +1066,17 @@ async def test_multiple_episodes_independent_failures() -> None:
         patch("components.pipeline.AudioProber") as m_prober,
         patch("components.pipeline.AudioPreprocessor") as m_prep,
         patch("components.pipeline.EpisodeTranscriptor") as m_trans,
-        patch("components.pipeline.EpisodeCopier") as m_copier,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
-            m_ep_dl, m_prober, m_prep, m_trans, m_copier,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
             episodes=[ep1, ep2, ep3], parsed=parsed, transcribed_guids=set(),
         )
         # ep1 download fails, ep2 preprocess fails, ep3 succeeds
@@ -976,4 +1095,159 @@ async def test_multiple_episodes_independent_failures() -> None:
     assert m_ep_dl.return_value.download.await_count == 3
     assert m_prep.return_value.preprocess.await_count == 2
     assert m_trans.return_value.transcribe.await_count == 1
-    assert m_copier.return_value.copy.await_count == 1
+    m_audio_editor.return_value.edit.assert_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Constructor wiring — AdDetector, AdParser, AudioEditor, AdStore
+# ---------------------------------------------------------------------------
+
+
+def _make_wiring_config() -> MagicMock:
+    """Minimal config for constructor wiring tests."""
+    feed_cfg = FeedConfig(title="Pod", url="http://x.com/feed", enabled=True, episodes_to_keep=5)
+    config = MagicMock()
+    config.app.feeds = [feed_cfg]
+    config.app.paths.data_dir = MagicMock()
+    config.app.paths.output_dir = MagicMock()
+    config.app.paths.cache_dir = MagicMock()
+    config.app.models.transcription.provider = "groq"
+    config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.app.models.context_extraction.provider = "openai"
+    config.app.models.context_extraction.model = "gpt-4o-mini"
+    config.app.models.ad_detection.provider = "openai"
+    config.app.models.ad_detection.model = "gpt-4o-mini"
+    config.app.output.file_type = "mp3"
+    config.app.output.bitrate = "128k"
+    config.credentials.groq_api_key = "sk-test"
+    config.credentials.openai_api_key = "sk-openai-test"
+    return config
+
+
+async def test_pipeline_constructs_ad_detector() -> None:
+    """Pipeline resolves provider/model/api_key and passes them as primitives to AdDetector."""
+    config = _make_wiring_config()
+
+    with (
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.AudioPreprocessor"),
+        patch("components.pipeline.EpisodeTranscriptor"),
+        patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.AdDetector") as mock_ad_detector_cls,
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
+    ):
+        Pipeline(config)
+
+    mock_ad_detector_cls.assert_called_once_with(
+        provider="openai",
+        model="gpt-4o-mini",
+        api_key="sk-openai-test",
+    )
+
+
+async def test_pipeline_constructs_ad_parser() -> None:
+    """Pipeline instantiates AdParser() with no arguments."""
+    config = _make_wiring_config()
+
+    with (
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.AudioPreprocessor"),
+        patch("components.pipeline.EpisodeTranscriptor"),
+        patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser") as mock_ad_parser_cls,
+        patch("components.pipeline.AudioEditor"),
+    ):
+        Pipeline(config)
+
+    mock_ad_parser_cls.assert_called_once_with()
+
+
+async def test_pipeline_constructs_audio_editor() -> None:
+    """Pipeline passes output_dir/file_type/bitrate as primitives to AudioEditor."""
+    config = _make_wiring_config()
+
+    with (
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.AudioPreprocessor"),
+        patch("components.pipeline.EpisodeTranscriptor"),
+        patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor") as mock_audio_editor_cls,
+    ):
+        Pipeline(config)
+
+    mock_audio_editor_cls.assert_called_once_with(
+        output_dir=config.app.paths.output_dir,
+        file_type="mp3",
+        bitrate="128k",
+    )
+
+
+async def test_pipeline_does_not_instantiate_episode_copier() -> None:
+    """Pipeline.__init__ must not call EpisodeCopier after removal."""
+    config = _make_wiring_config()
+
+    with (
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.AudioPreprocessor"),
+        patch("components.pipeline.EpisodeTranscriptor"),
+        patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
+    ):
+        Pipeline(config)
+
+    # If EpisodeCopier is still imported and instantiated, this import will succeed
+    # and we can verify it's no longer referenced in the module.
+    import components.pipeline as pipeline_module  # noqa: PLC0415
+    assert not hasattr(pipeline_module, "EpisodeCopier"), (
+        "EpisodeCopier should have been removed from components.pipeline"
+    )
+
+
+async def test_run_loads_ad_detected_guids_before_episode_loop() -> None:
+    """run() creates AdStore(db.conn) and awaits get_detected_guids() before processing episodes."""
+    config, ep, parsed = _branch_config(MagicMock())
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    # AdStore must be instantiated with the db connection object
+    mock_db_obj = m_db.return_value.__aenter__.return_value
+    m_ad_store.assert_called_once_with(mock_db_obj.conn)
+    # get_detected_guids must be awaited once
+    m_ad_store.return_value.get_detected_guids.assert_awaited_once()
