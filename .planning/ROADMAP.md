@@ -12,7 +12,7 @@ The pipeline infrastructure is complete. Feed download, transcription, topic ext
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: TopicExtractor Retry Bug Fix** - Fix retry loop so TopicExtractor mirrors AdDetector's working retry pattern
+- [x] **Phase 1: TopicExtractor Retry Bug Fix** - Fix retry loop so TopicExtractor mirrors AdDetector's working retry pattern (completed 2026-03-29)
 - [ ] **Phase 2: Pipeline Integration — Ad Detection & Audio Editing** - Wire AdDetector, AdParser, AdStore, and AudioEditor into Pipeline; update decision tree; remove EpisodeCopier
 
 ## Phase Details
@@ -30,7 +30,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 Plans:
 - [x] 01-01: Fix TopicExtractor retry loop to mirror AdDetector pattern (failing test first, then implementation)
-- [ ] 01-02: Verify full test suite green, coverage 100%, ruff clean
+- [x] 01-02: Verify full test suite green, coverage 100%, ruff clean
 
 ### Phase 2: Pipeline Integration — Ad Detection & Audio Editing
 **Goal**: The Pipeline produces a final output audio file and RSS entry for every episode, with ad segments detected, cut, and costs tracked
@@ -58,5 +58,5 @@ Phases execute in numeric order: 1 → 2
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. TopicExtractor Retry Bug Fix | 1/2 | In Progress|  |
+| 1. TopicExtractor Retry Bug Fix | 2/2 | Complete   | 2026-03-29 |
 | 2. Pipeline Integration — Ad Detection & Audio Editing | 0/4 | Not started | - |

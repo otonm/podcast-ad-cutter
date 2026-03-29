@@ -40,7 +40,7 @@
 
 - [ ] **TEST-01**: Pipeline tests cover the full ad detection + audio editing path (end-to-end mocked)
 - [ ] **TEST-02**: Pipeline tests cover the idempotency branches (ad already detected, output already exists)
-- [ ] **TEST-03**: All existing tests remain green; 100% coverage maintained; ruff clean
+- [x] **TEST-03**: All existing tests remain green; 100% coverage maintained; ruff clean
 
 ## v2 Requirements
 
@@ -89,7 +89,7 @@
 | PIPE-05 | Phase 2 | Pending |
 | TEST-01 | Phase 2 | Pending |
 | TEST-02 | Phase 2 | Pending |
-| TEST-03 | Phase 2 | Pending |
+| TEST-03 | Phase 2 | Complete |
 
 **Coverage:**
 - v1 requirements: 22 total
