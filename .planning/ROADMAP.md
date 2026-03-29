@@ -48,7 +48,7 @@ Plans:
 Plans:
 - [x] 02-01-PLAN.md — Update REQUIREMENTS.md and ROADMAP.md to reflect D-01 (AudioEditor keeps return-None behavior)
 - [x] 02-02-PLAN.md — Wire AdDetector, AdParser, AdStore, AudioEditor into Pipeline.__init__ and run(); remove EpisodeCopier (TDD)
-- [ ] 02-03-PLAN.md — Rewrite _process_episode decision tree with ad detection tail and conditional URL update (TDD)
+- [x] 02-03-PLAN.md — Rewrite _process_episode decision tree with ad detection tail and conditional URL update (TDD)
 - [ ] 02-04-PLAN.md — Quality gate: full suite 100% coverage, ruff clean
 
 ## Progress
@@ -59,4 +59,4 @@ Phases execute in numeric order: 1 → 2
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. TopicExtractor Retry Bug Fix | 2/2 | Complete   | 2026-03-29 |
-| 2. Pipeline Integration — Ad Detection & Audio Editing | 2/4 | In Progress|  |
+| 2. Pipeline Integration — Ad Detection & Audio Editing | 3/4 | In Progress|  |

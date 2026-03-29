@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-03-29T15:17:29.247Z"
+stopped_at: Completed 02-03-PLAN.md
+last_updated: "2026-03-29T15:30:30.048Z"
 last_activity: 2026-03-29
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 6
-  completed_plans: 4
+  completed_plans: 5
   percent: 0
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-03-28)
 ## Current Position
 
 Phase: 02 (pipeline-integration-ad-detection-audio-editing) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-03-29
 
@@ -56,6 +56,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 01-topicextractor-retry-bug-fix P02 | 5min | 1 tasks | 6 files |
 | Phase 02 P01 | 2min | 3 tasks | 2 files |
 | Phase 02 P02 | 9min | 3 tasks | 2 files |
+| Phase 02 P03 | 19min | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -77,6 +78,9 @@ Recent decisions affecting current work:
 - [Phase 02]: PROJECT.md corrected to remove three stale always-produces-output statements per D-03
 - [Phase 02]: Replace _episode_copier.copy() with _audio_editor.edit() in branches B and D; fallback to episode.url when edit() returns None (per D-01)
 - [Phase 02]: Mark ad_store and ad_detected_guids _process_episode params with noqa: ARG002 as intentional stubs for plan 02-03 decision tree wiring
+- [Phase 02]: Branch A triggers on output_exists alone — if output file exists, return early regardless of transcription state
+- [Phase 02]: Branch C checks cache_dir/{guid}.* for cached raw audio, distinct from output_feed_dir
+- [Phase 02]: URL update in only two places: Branch A unconditional, ad tail conditional on output_path is not None
 
 ### Pending Todos
 
@@ -88,6 +92,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-29T15:17:29.245Z
-Stopped at: Completed 02-02-PLAN.md
+Last session: 2026-03-29T15:30:30.046Z
+Stopped at: Completed 02-03-PLAN.md
 Resume file: None
