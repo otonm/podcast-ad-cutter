@@ -11,7 +11,7 @@ import pytest
 
 from components.pipeline import Pipeline
 from config.config_loader import FeedConfig
-from models.ad_detection import AdDetectionCost, AdSegment  # noqa: TC002
+from models.ad_detection import AdDetectionCost  # noqa: TC002
 from models.feed import AudioMetadata, Episode, FeedParseInput, ParsedFeed, PublisherInput
 from models.topic import TopicExtraction, TopicExtractionCost
 from models.transcription import Transcription, TranscriptionCost, TranscriptionSegment
@@ -37,6 +37,10 @@ def make_config(feeds: list[FeedConfig]) -> MagicMock:
     cfg.app.models.transcription.model = "whisper-large-v3-turbo"
     cfg.app.models.context_extraction.provider = "openai"
     cfg.app.models.context_extraction.model = "gpt-4o-mini"
+    cfg.app.models.ad_detection.provider = "openai"
+    cfg.app.models.ad_detection.model = "gpt-4o-mini"
+    cfg.app.output.file_type = "mp3"
+    cfg.app.output.bitrate = "128k"
     cfg.credentials.groq_api_key = "sk-test"
     cfg.credentials.openai_api_key = "sk-openai-test"
     return cfg
@@ -510,6 +514,10 @@ async def test_on_download_progress_starting(caplog: pytest.LogCaptureFixture) -
     config.app.models.transcription.model = "whisper-large-v3-turbo"
     config.app.models.context_extraction.provider = "openai"
     config.app.models.context_extraction.model = "gpt-4o-mini"
+    config.app.models.ad_detection.provider = "openai"
+    config.app.models.ad_detection.model = "gpt-4o-mini"
+    config.app.output.file_type = "mp3"
+    config.app.output.bitrate = "128k"
     config.credentials.groq_api_key = "sk-test"
     config.credentials.openai_api_key = "sk-openai-test"
 
@@ -517,6 +525,9 @@ async def test_on_download_progress_starting(caplog: pytest.LogCaptureFixture) -
         patch("components.pipeline.FeedDownloader"),
         patch("components.pipeline.EpisodeDownloader"),
         patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
     ):
         pipeline = Pipeline(config)
 
@@ -536,6 +547,10 @@ async def test_on_download_progress_complete(caplog: pytest.LogCaptureFixture) -
     config.app.models.transcription.model = "whisper-large-v3-turbo"
     config.app.models.context_extraction.provider = "openai"
     config.app.models.context_extraction.model = "gpt-4o-mini"
+    config.app.models.ad_detection.provider = "openai"
+    config.app.models.ad_detection.model = "gpt-4o-mini"
+    config.app.output.file_type = "mp3"
+    config.app.output.bitrate = "128k"
     config.credentials.groq_api_key = "sk-test"
     config.credentials.openai_api_key = "sk-openai-test"
 
@@ -543,6 +558,9 @@ async def test_on_download_progress_complete(caplog: pytest.LogCaptureFixture) -
         patch("components.pipeline.FeedDownloader"),
         patch("components.pipeline.EpisodeDownloader"),
         patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
     ):
         pipeline = Pipeline(config)
 
@@ -562,6 +580,10 @@ async def test_on_download_progress_intermediate() -> None:
     config.app.models.transcription.model = "whisper-large-v3-turbo"
     config.app.models.context_extraction.provider = "openai"
     config.app.models.context_extraction.model = "gpt-4o-mini"
+    config.app.models.ad_detection.provider = "openai"
+    config.app.models.ad_detection.model = "gpt-4o-mini"
+    config.app.output.file_type = "mp3"
+    config.app.output.bitrate = "128k"
     config.credentials.groq_api_key = "sk-test"
     config.credentials.openai_api_key = "sk-openai-test"
 
@@ -569,6 +591,9 @@ async def test_on_download_progress_intermediate() -> None:
         patch("components.pipeline.FeedDownloader"),
         patch("components.pipeline.EpisodeDownloader"),
         patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
     ):
         pipeline = Pipeline(config)
 
@@ -594,6 +619,10 @@ async def test_on_preprocess_progress_starting(caplog: pytest.LogCaptureFixture)
     config.app.models.transcription.model = "whisper-large-v3-turbo"
     config.app.models.context_extraction.provider = "openai"
     config.app.models.context_extraction.model = "gpt-4o-mini"
+    config.app.models.ad_detection.provider = "openai"
+    config.app.models.ad_detection.model = "gpt-4o-mini"
+    config.app.output.file_type = "mp3"
+    config.app.output.bitrate = "128k"
     config.credentials.groq_api_key = "sk-test"
     config.credentials.openai_api_key = "sk-openai-test"
 
@@ -602,6 +631,9 @@ async def test_on_preprocess_progress_starting(caplog: pytest.LogCaptureFixture)
         patch("components.pipeline.EpisodeDownloader"),
         patch("components.pipeline.AudioPreprocessor"),
         patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
     ):
         pipeline = Pipeline(config)
 
@@ -621,6 +653,10 @@ async def test_on_preprocess_progress_complete(caplog: pytest.LogCaptureFixture)
     config.app.models.transcription.model = "whisper-large-v3-turbo"
     config.app.models.context_extraction.provider = "openai"
     config.app.models.context_extraction.model = "gpt-4o-mini"
+    config.app.models.ad_detection.provider = "openai"
+    config.app.models.ad_detection.model = "gpt-4o-mini"
+    config.app.output.file_type = "mp3"
+    config.app.output.bitrate = "128k"
     config.credentials.groq_api_key = "sk-test"
     config.credentials.openai_api_key = "sk-openai-test"
 
@@ -629,6 +665,9 @@ async def test_on_preprocess_progress_complete(caplog: pytest.LogCaptureFixture)
         patch("components.pipeline.EpisodeDownloader"),
         patch("components.pipeline.AudioPreprocessor"),
         patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
     ):
         pipeline = Pipeline(config)
 
@@ -648,6 +687,10 @@ async def test_on_preprocess_progress_intermediate() -> None:
     config.app.models.transcription.model = "whisper-large-v3-turbo"
     config.app.models.context_extraction.provider = "openai"
     config.app.models.context_extraction.model = "gpt-4o-mini"
+    config.app.models.ad_detection.provider = "openai"
+    config.app.models.ad_detection.model = "gpt-4o-mini"
+    config.app.output.file_type = "mp3"
+    config.app.output.bitrate = "128k"
     config.credentials.groq_api_key = "sk-test"
     config.credentials.openai_api_key = "sk-openai-test"
 
@@ -657,6 +700,9 @@ async def test_on_preprocess_progress_intermediate() -> None:
         patch("components.pipeline.AudioPreprocessor"),
         patch("components.pipeline.EpisodeTranscriptor"),
         patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
     ):
         pipeline = Pipeline(config)
 
@@ -684,6 +730,10 @@ async def test_pipeline_constructs_transcriptor_with_model_id_and_key() -> None:
     config.app.models.transcription.model = "whisper-large-v3-turbo"
     config.app.models.context_extraction.provider = "openai"
     config.app.models.context_extraction.model = "gpt-4o-mini"
+    config.app.models.ad_detection.provider = "openai"
+    config.app.models.ad_detection.model = "gpt-4o-mini"
+    config.app.output.file_type = "mp3"
+    config.app.output.bitrate = "128k"
     config.credentials.groq_api_key = "sk-groq-test"
     config.credentials.openai_api_key = "sk-openai-test"
     config.app.base_url = "http://localhost"
@@ -694,6 +744,9 @@ async def test_pipeline_constructs_transcriptor_with_model_id_and_key() -> None:
         patch("components.pipeline.AudioPreprocessor"),
         patch("components.pipeline.EpisodeTranscriptor") as mock_trans_cls,
         patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
     ):
         Pipeline(config)
 
@@ -1251,3 +1304,83 @@ async def test_run_loads_ad_detected_guids_before_episode_loop() -> None:
     m_ad_store.assert_called_once_with(mock_db_obj.conn)
     # get_detected_guids must be awaited once
     m_ad_store.return_value.get_detected_guids.assert_awaited_once()
+
+
+async def test_branch_b_audio_editor_returns_path_uses_computed_url() -> None:
+    """Branch B: when AudioEditor.edit() returns a path, the URL is derived from it."""
+    config, ep, parsed = _branch_config(MagicMock())
+    output_file = Path("/out/my-podcast/22.03.2026-my-episode.mp3")
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids={"ep-1"},
+        )
+        m_audio_editor.return_value.edit = AsyncMock(return_value=output_file)
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    m_store.return_value.update_episode_url.assert_awaited_once()
+    called_url = m_store.return_value.update_episode_url.call_args[0][1]
+    assert called_url.endswith(".mp3")
+
+
+async def test_branch_d_audio_editor_returns_path_uses_computed_url() -> None:
+    """Branch D: when AudioEditor.edit() returns a path, the URL is derived from it."""
+    config, ep, parsed = _branch_config(MagicMock())
+    output_file = Path("/out/my-podcast/22.03.2026-my-episode.mp3")
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        m_audio_editor.return_value.edit = AsyncMock(return_value=output_file)
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    m_store.return_value.update_episode_url.assert_awaited_once()
+    called_url = m_store.return_value.update_episode_url.call_args[0][1]
+    assert called_url.endswith(".mp3")

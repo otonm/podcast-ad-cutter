@@ -9,19 +9,24 @@ from typing import TYPE_CHECKING
 
 from slugify import slugify
 
+from components.ad_detector import AdDetector
+from components.ad_parser import AdParser
+from components.audio_editor import AudioEditor
 from components.audio_preprocessor import AudioPreprocessor
 from components.audio_prober import AudioProber
-from components.episode_copier import EpisodeCopier
 from components.episode_downloader import EpisodeDownloader
 from components.episode_transcriptor import EpisodeTranscriptor
 from components.feed_downloader import FeedDownloader
 from components.feed_parser import FeedParser
 from components.feed_publisher import FeedPublisher
+from components.topic_extractor import TopicExtractor
 from config.config_loader import PROVIDER_KEY_MAP
+from database.ad_store import AdStore
 from database.audio_metadata_store import AudioMetadataStore
 from database.connection import Database
 from database.cost_tracking_store import CostTrackingStore
 from database.episode_store import EpisodeStore
+from database.topic_store import TopicStore
 from database.transcription_store import TranscriptionStore
 from models.feed import Episode, FeedParseInput, ParsedFeed, PublisherInput
 
@@ -63,12 +68,29 @@ class Pipeline:
         self._episode_downloader = EpisodeDownloader(config.app.paths.cache_dir)
         self._audio_prober = AudioProber()
         self._audio_preprocessor = AudioPreprocessor(config.app.paths.cache_dir)
-        self._episode_copier = EpisodeCopier(config.app.paths.output_dir, config.app.base_url)
         transcription_cfg = config.app.models.transcription
         self._transcriptor = EpisodeTranscriptor(
             provider=transcription_cfg.provider,
             model=transcription_cfg.model,
             api_key=getattr(config.credentials, PROVIDER_KEY_MAP[transcription_cfg.provider]),
+        )
+        context_cfg = config.app.models.context_extraction
+        self._topic_extractor = TopicExtractor(
+            provider=context_cfg.provider,
+            model=context_cfg.model,
+            api_key=getattr(config.credentials, PROVIDER_KEY_MAP[context_cfg.provider]),
+        )
+        ad_cfg = config.app.models.ad_detection
+        self._ad_detector = AdDetector(
+            provider=ad_cfg.provider,
+            model=ad_cfg.model,
+            api_key=getattr(config.credentials, PROVIDER_KEY_MAP[ad_cfg.provider]),
+        )
+        self._ad_parser = AdParser()
+        self._audio_editor = AudioEditor(
+            output_dir=config.app.paths.output_dir,
+            file_type=config.app.output.file_type,
+            bitrate=config.app.output.bitrate,
         )
 
     async def run(self) -> list[ParsedFeed]:
@@ -143,7 +165,11 @@ class Pipeline:
                 transcription_store = TranscriptionStore(db.conn)
                 audio_metadata_store = AudioMetadataStore(db.conn)
                 cost_store = CostTrackingStore(db.conn)
+                topic_store = TopicStore(db.conn)
+                ad_store = AdStore(db.conn)
                 transcribed_guids = await transcription_store.get_transcribed_guids()
+                extracted_guids = await topic_store.get_extracted_guids()
+                ad_detected_guids = await ad_store.get_detected_guids()
 
                 for episode in episodes:
                     try:
@@ -157,13 +183,17 @@ class Pipeline:
                             transcription_store=transcription_store,
                             audio_metadata_store=audio_metadata_store,
                             cost_store=cost_store,
+                            topic_store=topic_store,
+                            extracted_guids=extracted_guids,
+                            ad_store=ad_store,
+                            ad_detected_guids=ad_detected_guids,
                         )
                     except Exception:
                         logger.exception(f"Episode '{episode.guid}': error, skipping")
 
         return parsed_feeds
 
-    async def _process_episode(
+    async def _process_episode(  # noqa: PLR0915
         self,
         *,
         episode: Episode,
@@ -175,6 +205,10 @@ class Pipeline:
         transcription_store: TranscriptionStore,
         audio_metadata_store: AudioMetadataStore,
         cost_store: CostTrackingStore,
+        topic_store: TopicStore,
+        extracted_guids: set[str],
+        ad_store: AdStore,  # noqa: ARG002
+        ad_detected_guids: set[str],  # noqa: ARG002
     ) -> None:
         """Process one episode according to its current state.
 
@@ -186,6 +220,8 @@ class Pipeline:
             B — transcription exists, no audio: download, probe, preprocess, copy.
             C — audio exists, no transcription: probe, preprocess, transcribe.
             D — neither exists: full pipeline (download, probe, preprocess, transcribe, copy).
+
+        ad_store and ad_detected_guids: used by plan 02-03 decision tree update.
 
         """
         pub_date_str = episode.pub_date.strftime("%d.%m.%Y")
@@ -204,7 +240,7 @@ class Pipeline:
                 self._config.app.base_url, feed_slug, episode.pub_date, episode.title, ext
             )
         elif transcription_exists:
-            # Branch B: transcription OK, audio missing — re-download and copy.
+            # Branch B: transcription OK, audio missing — re-download and edit.
             raw_path = await self._episode_downloader.download(
                 episode.guid, episode.url, on_progress=self._on_download_progress
             )
@@ -213,9 +249,17 @@ class Pipeline:
             await self._audio_preprocessor.preprocess(
                 episode.guid, raw_path, meta.duration, on_progress=self._on_preprocess_progress
             )
-            _, _, new_url = await self._episode_copier.copy(
-                episode.guid, raw_path, feed_slug, episode.pub_date, episode.title
+            output_path = await self._audio_editor.edit(
+                episode.guid, raw_path, [], feed_slug, episode.pub_date, episode.title,
+                min_duration_ms=0, min_confidence=0.0, total_duration_s=meta.duration,
             )
+            if output_path is not None:
+                ext = output_path.suffix.lstrip(".")
+                new_url = FeedPublisher.episode_url(
+                    self._config.app.base_url, feed_slug, episode.pub_date, episode.title, ext
+                )
+            else:
+                new_url = episode.url
         elif audio_exists:
             # Branch C: audio present, transcription missing — transcribe from output file.
             meta = await self._audio_prober.probe(episode.guid, existing_audio)
@@ -230,6 +274,13 @@ class Pipeline:
             await transcription_store.save_segments(segments)
             await cost_store.save_cost(cost)
             transcribed_guids.add(episode.guid)
+            if episode.guid not in extracted_guids:
+                _, topic, topic_cost = await self._topic_extractor.extract(
+                    episode.guid, feed.config_title, episode.title, transcription.text
+                )
+                await topic_store.save_topic(topic)
+                await cost_store.save_cost(topic_cost)
+                extracted_guids.add(episode.guid)
             ext = existing_audio.suffix.lstrip(".")
             new_url = FeedPublisher.episode_url(
                 self._config.app.base_url, feed_slug, episode.pub_date, episode.title, ext
@@ -251,9 +302,24 @@ class Pipeline:
             await transcription_store.save_segments(segments)
             await cost_store.save_cost(cost)
             transcribed_guids.add(episode.guid)
-            _, _, new_url = await self._episode_copier.copy(
-                episode.guid, raw_path, feed_slug, episode.pub_date, episode.title
+            if episode.guid not in extracted_guids:
+                _, topic, topic_cost = await self._topic_extractor.extract(
+                    episode.guid, feed.config_title, episode.title, transcription.text
+                )
+                await topic_store.save_topic(topic)
+                await cost_store.save_cost(topic_cost)
+                extracted_guids.add(episode.guid)
+            output_path = await self._audio_editor.edit(
+                episode.guid, raw_path, [], feed_slug, episode.pub_date, episode.title,
+                min_duration_ms=0, min_confidence=0.0, total_duration_s=meta.duration,
             )
+            if output_path is not None:
+                ext = output_path.suffix.lstrip(".")
+                new_url = FeedPublisher.episode_url(
+                    self._config.app.base_url, feed_slug, episode.pub_date, episode.title, ext
+                )
+            else:
+                new_url = episode.url
 
         await store.update_episode_url(episode.guid, new_url)
         await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url)
