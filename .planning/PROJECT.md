@@ -28,7 +28,7 @@ Automatically produce ad-free podcast audio files with a valid RSS feed, minimis
 
 ### Active
 
-- [ ] Fix TopicExtractor retry loop — implementation does not retry on malformed JSON (5 failing tests)
+- ✓ Fix TopicExtractor retry loop — retry loop added with `_parse_response` helper, cost accumulation across attempts, API failures raise immediately (Validated in Phase 01: topicextractor-retry-bug-fix)
 - [ ] Wire AdDetector, AdParser, AdStore, AudioEditor into Pipeline.__init__
 - [ ] Expand Pipeline._process_episode decision tree to include ad detection → audio editing stages
 - [ ] AudioEditor always produces an output file (even when no qualifying ads — re-encode without cuts)
@@ -50,7 +50,7 @@ Automatically produce ad-free podcast audio files with a valid RSS feed, minimis
 
 The project has a well-established async Python architecture. All major components exist. The remaining work is almost entirely integration:
 
-- **TopicExtractor retry bug**: `topic_extractor.py` raises immediately on the first parse failure instead of retrying. Tests expect retry behaviour (retry prompt appended to messages, up to `max_retries`). AdDetector has the correct retry pattern; TopicExtractor should mirror it.
+- **TopicExtractor retry bug**: ✓ Fixed in Phase 01. `topic_extractor.py` now retries up to `max_retries` on parse failure, mirroring AdDetector's pattern.
 - **Pipeline wiring gap**: AdDetector, AdParser, AdStore, AudioEditor are implemented and tested in isolation but not yet instantiated or called in Pipeline.
 - **EpisodeCopier replacement**: EpisodeCopier converted audio to output format as a "copy" step. AudioEditor does the same (plus ad cutting), so EpisodeCopier should be removed from the flow once AudioEditor is wired.
 - **No-qualifying-ads behaviour**: When `AudioEditor.edit()` finds no qualifying segments, it currently returns `None`. Per the project's design, a final output file must always be produced (re-encode without cuts). AudioEditor should be updated to always produce output.
@@ -90,4 +90,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-28 after initialization*
+*Last updated: 2026-03-29 — Phase 01 complete (TopicExtractor retry bug fixed)*
