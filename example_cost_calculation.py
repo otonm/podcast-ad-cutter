@@ -32,7 +32,7 @@ def extract_or_calculate_cost(
                 custom_llm_provider=provider,
             )
         )
-    except (ValueError, Exception) as error:
+    except (ValueError, Exception) as error:  # noqa: BLE001
         LOGGER.warning(
             f"litellm.completion_cost failed for provider={provider} "
             f"model={canonical_model} call_type={call_type.value}: {error}"

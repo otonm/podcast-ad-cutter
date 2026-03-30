@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from utils.exceptions import AudioProbeError, ConfigError, FfmpegError, PodcastAdCutterError, TranscriptionError
+from utils.exceptions import (
+    AdDetectionError,
+    AudioProbeError,
+    ConfigError,
+    FfmpegError,
+    PodcastAdCutterError,
+    TranscriptionError,
+)
 
 
 def test_config_error_is_podcast_error() -> None:
@@ -45,3 +52,13 @@ def test_transcription_error_stores_message() -> None:
     exc = TranscriptionError("litellm failed")
     assert exc.message == "litellm failed"
     assert str(exc) == "litellm failed"
+
+
+def test_ad_detection_error_is_podcast_error() -> None:
+    assert issubclass(AdDetectionError, PodcastAdCutterError)
+
+
+def test_ad_detection_error_stores_message() -> None:
+    exc = AdDetectionError("ad detection failed")
+    assert exc.message == "ad detection failed"
+    assert str(exc) == "ad detection failed"

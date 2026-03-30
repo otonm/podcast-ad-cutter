@@ -257,7 +257,7 @@ async def test_cost_falls_back_to_completion_cost_when_hidden_params_zero(
             "components.topic_extractor.litellm.acompletion",
             new=AsyncMock(return_value=mock_resp),
         ),
-        patch("components.topic_extractor.litellm.completion_cost", return_value=0.003),
+        patch("utils.llm.litellm.completion_cost", return_value=0.003),
     ):
         _, _, cost = await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
     assert cost.cost == pytest.approx(0.003)
@@ -272,7 +272,7 @@ async def test_cost_falls_back_to_completion_cost_when_hidden_params_none(
             "components.topic_extractor.litellm.acompletion",
             new=AsyncMock(return_value=mock_resp),
         ),
-        patch("components.topic_extractor.litellm.completion_cost", return_value=0.004),
+        patch("utils.llm.litellm.completion_cost", return_value=0.004),
     ):
         _, _, cost = await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
     assert cost.cost == pytest.approx(0.004)
@@ -286,7 +286,7 @@ async def test_cost_returns_zero_when_completion_cost_raises(extractor: TopicExt
             new=AsyncMock(return_value=mock_resp),
         ),
         patch(
-            "components.topic_extractor.litellm.completion_cost",
+            "utils.llm.litellm.completion_cost",
             side_effect=Exception("no pricing"),
         ),
     ):
@@ -301,7 +301,7 @@ async def test_cost_returns_zero_when_hidden_params_non_numeric(extractor: Topic
             "components.topic_extractor.litellm.acompletion",
             new=AsyncMock(return_value=mock_resp),
         ),
-        patch("components.topic_extractor.litellm.completion_cost", side_effect=Exception("no pricing")),
+        patch("utils.llm.litellm.completion_cost", side_effect=Exception("no pricing")),
     ):
         _, _, cost = await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
     assert cost.cost == 0.0

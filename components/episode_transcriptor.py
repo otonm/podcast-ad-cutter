@@ -98,6 +98,7 @@ class EpisodeTranscriptor:
             TranscriptionError: On any litellm or API failure.
 
         """
+        logger.debug(f"Transcribing '{guid}' with model {self._model_id}")
         try:
             with path.open("rb") as f:
                 response = await litellm.atranscription(
@@ -131,5 +132,5 @@ class EpisodeTranscriptor:
             cost=cost_value,
         )
 
-        logger.debug(f"Transcribed '{guid}': {len(segments)} segment(s)")
+        logger.info(f"Transcribed '{guid}': {len(segments)} segment(s)")
         return (guid, transcription, segments, cost_record)

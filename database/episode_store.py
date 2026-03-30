@@ -142,6 +142,26 @@ class EpisodeStore:
         )
         return episodes
 
+    async def get_guids_for_feed(self, podcast: str) -> set[str]:
+        """Return the set of GUIDs currently stored for a podcast.
+
+        Used before saving new episodes to determine whether any episodes from
+        a freshly-fetched RSS feed are new (not yet seen).
+
+        Args:
+            podcast: The feed's config title used when episodes were saved.
+
+        Returns:
+            Set of GUID strings.  Empty set if no episodes are stored yet.
+
+        """
+        async with self._conn.execute(
+            "SELECT guid FROM episodes WHERE podcast = ?",
+            (podcast,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return {row[0] for row in rows}
+
     async def update_episode_url(self, guid: str, new_url: str) -> None:
         """Replace the enclosure URL for a specific episode.
 

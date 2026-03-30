@@ -85,8 +85,11 @@ class AudioEditor:
             if (s.end_ms - s.start_ms) >= min_duration_ms and s.confidence >= min_confidence
         ]
 
+        logger.debug(
+            f"Episode '{guid}': {len(qualifying)} of {len(ad_segments)} ad segment(s) qualify "
+            f"(min_dur={min_duration_ms}ms, min_conf={min_confidence:.0%})"
+        )
         if not qualifying:
-            logger.debug(f"Episode '{guid}': no qualifying ad segments, skipping edit")
             return None
 
         qualifying = self._merge_overlapping(qualifying)
@@ -118,6 +121,7 @@ class AudioEditor:
             "-i", str(input_path),
             "-filter_complex", filter_complex,
             "-map", out_label,
+            "-vn",
             "-c:a", codec,
             "-b:a", self._bitrate,
             "-map_metadata", "-1",

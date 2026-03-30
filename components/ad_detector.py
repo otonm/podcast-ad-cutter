@@ -10,6 +10,7 @@ import litellm
 
 from models.ad_detection import AdDetectionCost, AdSegmentDetection
 from utils.exceptions import AdDetectionError
+from utils.llm import compute_completion_cost
 
 if TYPE_CHECKING:
     from models.topic import TopicExtraction
@@ -19,29 +20,95 @@ logger = logging.getLogger(__name__)
 
 _COMPLETION_RESERVE_TOKENS = 512
 
-_SYSTEM_PROMPT_TEMPLATE = (
-    "You are an advertisement detection assistant for podcast audio.\n"
-    "Your task is to identify which transcript segments are advertisements, "
-    "sponsorship reads, or promotional content — not organic episode content.\n\n"
-    "Episode context:\n"
-    "- Show: {show}\n"
-    "- Hosts: {hosts}\n"
-    "- Topic: {topic}\n\n"
-    "You will receive transcript segments in the format: [index][start_ms][end_ms] text\n\n"
-    "Reply with a JSON array of objects, each with exactly these keys:\n"
-    '- "index": integer segment index\n'
-    '- "confidence": float 0.0\u20131.0\n'
-    '- "sponsor": advertiser name (empty string if unknown)\n'
-    '- "ad_topic": brief description of the ad (empty string if unknown)\n\n'
-    "If no segments are ads, reply with []. Return only the JSON array, no other text."
-)
+_SYSTEM_PROMPT_TEMPLATE: str = """You are an expert audio editor and detector of advertisements in podcast transcripts.
+Your job is to identify existing advertisement segments in podcast transcripts for later removal or replacement.
 
-_RETRY_PROMPT = (
-    "Your previous response was not valid JSON or was not a JSON array with required keys. "
-    "Reply with only a JSON array. Each element must have exactly these four keys: "
-    '"index" (integer), "confidence" (float 0.0\u20131.0), "sponsor" (string), "ad_topic" (string). '
-    "If there are no ads, reply with []. No other text."
-)
+## Definition of an ad
+
+An ad is any span where the host or another speaker promotes a product, service, sponsor, organization, or another show
+in a clearly promotional way.
+
+Examples of common ad patterns:
+
+- Introductions: 'When we return on...', 'We'll be right back after this message.'
+- Openers: 'This episode is brought to you by...', 'Our sponsor today is...', 'Before we get started, a word from...',
+  'Support for this show comes from...'
+- Body: describing features, benefits, or personal endorsement of a product, usually include promo codes, discount URLs,
+  affiliate links
+- Closers/call to action: 'Use code [X] for a discount', 'Link in the description', 'Back to the show', '...at [url]'
+- Return-to-show language: 'And we are back...', '<podcast name> is back...'
+
+However, the exact wording can vary widely, and ads may not always follow these patterns.
+
+Typical characteristics:
+
+- Duration: typically 15-120 seconds
+- Location: pre-roll (before intro), mid-roll (during episode), end-roll (after outro)
+- Structure: usually spans multiple consecutive transcript segments
+- Content: usually distinct from the episode's topic, however the theme can be similar
+  (economics, politics, entertainment)
+- Other: usually include promo codes, discount URLs or codes, affiliate links or are
+  cross-promotion of other network shows
+
+Ignore organic brand mentions that are part of the episode topic.
+
+## Detection workflow
+
+1. Scan the **entire** transcript from the first segment to the last segment before answering.
+2. Identify every candidate ad region, especially:
+   - the first 10 segments,
+   - segments after an opener or introduction,
+   - post-roll content after the outro or credits.
+3. For each candidate, expand backward and forward to capture the full continuous ad block.
+4. Merge only segments from the same continuous occurrence.
+5. If the same sponsor or similar ad copy appears again later, return it as a separate object.
+
+Use the provided episode domain and topic to distinguish ads from content.
+
+**Determine**: segments that construct the ad block (the indices),
+your confidence (0.0 = not at all, 1.0 = completely confident),
+the reason for the message (the content),
+the sponsor itself.
+
+## Ad repetition
+
+Repeated ads are common in podcast transcripts.
+If the same sponsor or substantially the same ad copy appears again later, ALWAYS treat it as a new ad block.
+Return **every** non-contiguous occurrence separately, even if the wording is identical or nearly identical.
+**NEVER deduplicate** repeated ads.
+
+## Input format
+
+You will receive transcript segments in the format: [index][start_ms][end_ms] text.
+Return the index of the first and last segment that belong to each ad block.
+The included timestamps will be then used in code to determine the lenght of the ad.
+
+## Output format
+
+Reply with a JSON array of objects, each with exactly these keys, no markdown, no preamble:
+- "index": integer segment index
+- "confidence": float 0.0-1.0
+- "sponsor": advertiser name (empty string if unknown)
+- "ad_topic": brief description of the ad (empty string if unknown)
+
+If no segments are ads, reply with [].
+
+## Final notes
+
+Prefer to over-identify rather than under-identify ads, but try to avoid false positives as much as possible.
+Use the confidence score to indicate your certainty.
+"""
+
+_RETRY_PROMPT: str = """
+Your previous response was not valid JSON or was not a JSON array with required keys.
+
+Reply with only a JSON array. Each element must have exactly these four keys:
+- "index" (integer)
+- "confidence" (float 0.0-1.0)
+- "sponsor" (string)
+- "ad_topic" (string)
+
+If there are no ads, reply with []. No other text."""
 
 type AdDetectionResult = tuple[str, list[AdSegmentDetection], AdDetectionCost]
 
@@ -121,29 +188,6 @@ class AdDetector:
         )
         return trimmed
 
-    def _compute_cost(self, response: object) -> float:
-        """Extract cost from response hidden params, falling back to litellm.completion_cost."""
-        hidden = getattr(response, "_hidden_params", {}) or {}
-        raw = hidden.get("response_cost")
-        if raw is not None:
-            try:
-                val = float(raw)
-            except (TypeError, ValueError):
-                pass
-            else:
-                if val > 0.0:
-                    logger.debug(f"Ad detection cost is {val}")
-                    return val
-        try:
-            cost = litellm.completion_cost(completion_response=response)
-            logger.debug(f"Ad detection cost (completion_cost fallback) is {cost}")
-            return float(cost)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                f"Could not compute cost for {self._model_id} ({exc}), cost will be $0.00"
-            )
-            return 0.0
-
     def _parse_response(self, content: str, guid: str) -> list[AdSegmentDetection]:
         data = json.loads(content)
         if not isinstance(data, list):
@@ -182,6 +226,10 @@ class AdDetector:
                 after all retries are exhausted.
 
         """
+        logger.debug(
+            f"Running ad detection for '{guid}': {len(segments)} segment(s), "
+            f"topic={'set' if topic_extraction else 'unset'}"
+        )
         system_prompt = self._build_system_prompt(topic_extraction)
         formatted = self._format_segments(segments)
         formatted = self._truncate_segments(formatted, system_prompt)
@@ -193,13 +241,15 @@ class AdDetector:
                 messages=messages,
                 response_format={"type": "json_object"},
                 api_key=self._api_key,
+                reasoning_effort="high",
+                drop_params=True
             )
         except Exception as exc:
             msg = f"litellm.acompletion failed for '{guid}': {exc}"
             logger.error(f"Skipping ad detection for '{guid}': {msg}")
             raise AdDetectionError(msg) from exc
 
-        total_cost = self._compute_cost(response)
+        total_cost = compute_completion_cost(response, self._model_id)
         content = response.choices[0].message.content
 
         for attempt in range(self._max_retries):
@@ -225,11 +275,13 @@ class AdDetector:
                         messages=messages,
                         response_format={"type": "json_object"},
                         api_key=self._api_key,
+                        reasoning_effort="high",
+                        drop_params=True
                     )
                 except Exception as retry_exc:
                     msg = f"litellm.acompletion failed for '{guid}' on retry: {retry_exc}"
                     raise AdDetectionError(msg) from retry_exc
-                total_cost += self._compute_cost(response)
+                total_cost += compute_completion_cost(response, self._model_id)
                 content = response.choices[0].message.content
             else:
                 cost_record = AdDetectionCost(
@@ -237,7 +289,10 @@ class AdDetector:
                     model=self._model,
                     cost=total_cost,
                 )
-                logger.debug(f"Detected {len(detections)} ad segment(s) for '{guid}'")
+                if detections:
+                    logger.info(f"Detected {len(detections)} ad segment(s) for '{guid}'")
+                else:
+                    logger.info(f"No ads detected for '{guid}'")
                 return (guid, detections, cost_record)
 
         msg = f"Ad detection failed for '{guid}': exhausted retries"  # pragma: no cover

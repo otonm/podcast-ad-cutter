@@ -198,7 +198,7 @@ async def test_cost_falls_back_to_completion_cost(detector: AdDetector) -> None:
     mock_resp = _make_response(response_cost=0.0)
     with (
         patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
-        patch("components.ad_detector.litellm.completion_cost", return_value=0.003),
+        patch("utils.llm.litellm.completion_cost", return_value=0.003),
     ):
         _, _, cost = await detector.detect("ep-1", _SEGMENTS, _TOPIC)
     assert cost.cost == pytest.approx(0.003)
@@ -208,7 +208,7 @@ async def test_cost_returns_zero_when_completion_cost_raises(detector: AdDetecto
     mock_resp = _make_response(response_cost=None)
     with (
         patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
-        patch("components.ad_detector.litellm.completion_cost", side_effect=Exception("no pricing")),
+        patch("utils.llm.litellm.completion_cost", side_effect=Exception("no pricing")),
     ):
         _, _, cost = await detector.detect("ep-1", _SEGMENTS, _TOPIC)
     assert cost.cost == 0.0
@@ -350,7 +350,7 @@ async def test_cost_handles_type_error_in_float_conversion(detector: AdDetector)
     resp._hidden_params = {"response_cost": "not-a-float-and-not-none"}
     with (
         patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=resp)),
-        patch("components.ad_detector.litellm.completion_cost", return_value=0.001),
+        patch("utils.llm.litellm.completion_cost", return_value=0.001),
     ):
         _, _, cost = await detector.detect("ep-1", _SEGMENTS, _TOPIC)
     assert cost.cost == pytest.approx(0.001)

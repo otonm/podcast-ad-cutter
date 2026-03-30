@@ -137,3 +137,68 @@ async def test_save_segments_raises_on_fk_violation(db_path: Path) -> None:
             await store.save_segments([
                 TranscriptionSegment(guid="ghost-guid", start_ms=0, end_ms=1000, text="hi")
             ])
+
+
+# ---------------------------------------------------------------------------
+# get_transcription_text
+# ---------------------------------------------------------------------------
+
+async def test_get_transcription_text_returns_text(db_path: Path) -> None:
+    async with Database(db_path) as db:
+        ep_store = EpisodeStore(db.conn)
+        await ep_store.save_episodes("pod", [_ep("ep-1")])
+        store = TranscriptionStore(db.conn)
+        await store.save_transcription(Transcription(guid="ep-1", text="Hello world"))
+        result = await store.get_transcription_text("ep-1")
+    assert result == "Hello world"
+
+
+async def test_get_transcription_text_unknown_guid_returns_none(db_path: Path) -> None:
+    async with Database(db_path) as db:
+        store = TranscriptionStore(db.conn)
+        result = await store.get_transcription_text("no-such-guid")
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# get_segments_for_guid
+# ---------------------------------------------------------------------------
+
+async def test_get_segments_for_guid_returns_ordered(db_path: Path) -> None:
+    async with Database(db_path) as db:
+        ep_store = EpisodeStore(db.conn)
+        await ep_store.save_episodes("pod", [_ep("ep-1")])
+        store = TranscriptionStore(db.conn)
+        await store.save_segments([
+            TranscriptionSegment(guid="ep-1", start_ms=1500, end_ms=3000, text="world"),
+            TranscriptionSegment(guid="ep-1", start_ms=0, end_ms=1500, text="Hello"),
+        ])
+        result = await store.get_segments_for_guid("ep-1")
+
+    assert len(result) == 2
+    assert result[0].start_ms == 0
+    assert result[1].start_ms == 1500
+
+
+async def test_get_segments_for_guid_correct_fields(db_path: Path) -> None:
+    async with Database(db_path) as db:
+        ep_store = EpisodeStore(db.conn)
+        await ep_store.save_episodes("pod", [_ep("ep-1")])
+        store = TranscriptionStore(db.conn)
+        await store.save_segments([
+            TranscriptionSegment(guid="ep-1", start_ms=250, end_ms=1750, text="Check"),
+        ])
+        result = await store.get_segments_for_guid("ep-1")
+
+    seg = result[0]
+    assert seg.guid == "ep-1"
+    assert seg.start_ms == 250
+    assert seg.end_ms == 1750
+    assert seg.text == "Check"
+
+
+async def test_get_segments_for_guid_empty(db_path: Path) -> None:
+    async with Database(db_path) as db:
+        store = TranscriptionStore(db.conn)
+        result = await store.get_segments_for_guid("no-such-guid")
+    assert result == []

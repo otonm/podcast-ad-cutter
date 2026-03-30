@@ -308,6 +308,40 @@ async def test_episode_and_season_number_int_round_trip(db_path: Path) -> None:
     assert isinstance(got.season_number, int)
 
 
+async def test_get_guids_for_feed_returns_empty_for_unknown_podcast(db_path: Path) -> None:
+    """get_guids_for_feed returns an empty set when no episodes exist for that podcast."""
+    async with Database(db_path) as db:
+        store = EpisodeStore(db.conn)
+        result = await store.get_guids_for_feed("Unknown Podcast")
+
+    assert result == set()
+
+
+async def test_get_guids_for_feed_returns_guid_set(db_path: Path, episodes: list[Episode]) -> None:
+    """get_guids_for_feed returns the exact set of GUIDs stored for that podcast."""
+    async with Database(db_path) as db:
+        store = EpisodeStore(db.conn)
+        await store.save_episodes("My Podcast", episodes)
+        result = await store.get_guids_for_feed("My Podcast")
+
+    assert result == {"guid-1", "guid-2"}
+
+
+async def test_get_guids_for_feed_excludes_other_podcasts(
+    db_path: Path, episodes: list[Episode]
+) -> None:
+    """get_guids_for_feed does not return GUIDs belonging to a different podcast."""
+    other_ep = Episode(guid="guid-other", url="https://example.com/other.mp3")
+    async with Database(db_path) as db:
+        store = EpisodeStore(db.conn)
+        await store.save_episodes("My Podcast", episodes)
+        await store.save_episodes("Other Podcast", [other_ep])
+        result = await store.get_guids_for_feed("My Podcast")
+
+    assert result == {"guid-1", "guid-2"}
+    assert "guid-other" not in result
+
+
 async def test_new_fields_default_null_round_trip(db_path: Path) -> None:
     """An episode with all new fields at their defaults comes back with None/False."""
     ep = Episode(

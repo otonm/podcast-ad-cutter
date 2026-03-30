@@ -123,6 +123,7 @@ def _wire_branch_mocks(
     mock_store = AsyncMock()
     mock_store.save_episodes = AsyncMock()
     mock_store.get_episodes_for_feed = AsyncMock(return_value=episodes)
+    mock_store.get_guids_for_feed = AsyncMock(return_value=set())
     mock_store.update_episode_url = AsyncMock()
     m_store.return_value = mock_store
 
@@ -252,6 +253,7 @@ async def test_run_returns_parser_result() -> None:
         mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_store = AsyncMock()
         mock_store.get_episodes_for_feed = AsyncMock(return_value=[])
+        mock_store.get_guids_for_feed = AsyncMock(return_value=set())
         mock_store_cls.return_value = mock_store
         mock_publisher_cls.return_value = AsyncMock()
         pipeline = Pipeline(config)
@@ -397,6 +399,7 @@ async def test_run_calls_feed_publisher() -> None:
         mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_store = AsyncMock()
         mock_store.get_episodes_for_feed = AsyncMock(return_value=[])
+        mock_store.get_guids_for_feed = AsyncMock(return_value=set())
         mock_store_cls.return_value = mock_store
         mock_publisher = AsyncMock()
         mock_publisher_cls.return_value = mock_publisher
@@ -451,6 +454,7 @@ async def test_run_passes_new_channel_fields_to_publisher() -> None:
         mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_store = AsyncMock()
         mock_store.get_episodes_for_feed = AsyncMock(return_value=[])
+        mock_store.get_guids_for_feed = AsyncMock(return_value=set())
         mock_store_cls.return_value = mock_store
         mock_publisher = AsyncMock()
         mock_publisher_cls.return_value = mock_publisher
@@ -493,6 +497,7 @@ async def test_run_saves_parsed_episodes() -> None:
         mock_db_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
         mock_db_cls.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_store = AsyncMock()
+        mock_store.get_guids_for_feed = AsyncMock(return_value=set())
         mock_store_cls.return_value = mock_store
         mock_pub_cls.return_value.publish = AsyncMock(return_value=MagicMock())
         pipeline = Pipeline(config)
@@ -1687,3 +1692,215 @@ async def test_branch_c_audio_exists_no_transcription_runs_ad_detection(
     # AudioEditor returned None -> no URL update
     m_store.return_value.update_episode_url.assert_not_called()
     m_pub.return_value.update_episode_url.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Feed-level existence and new-items checks
+# ---------------------------------------------------------------------------
+
+
+async def test_feed_rss_exists_no_new_items_skips_feed(tmp_path: Path) -> None:
+    """RSS file exists and all feed episodes are already in the DB — skip entire feed."""
+    rss_file = tmp_path / "my-podcast.rss"
+    rss_file.write_text("<rss/>")
+
+    config, ep, parsed = _branch_config(tmp_path)
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        # All feed episodes already known to the DB — no new items.
+        m_store.return_value.get_guids_for_feed = AsyncMock(return_value={"ep-1"})
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    m_store.return_value.save_episodes.assert_not_called()
+    m_pub.return_value.publish.assert_not_called()
+    m_ep_dl.return_value.download.assert_not_called()
+
+
+async def test_feed_rss_missing_publishes_new_feed(tmp_path: Path) -> None:
+    """RSS file does not exist yet — WriteNew path: save episodes and publish."""
+    # No RSS file created → output_dir / "my-podcast.rss" does not exist.
+    config, ep, parsed = _branch_config(tmp_path)
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        # DB is empty — all episodes are new.
+        m_store.return_value.get_guids_for_feed = AsyncMock(return_value=set())
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    m_store.return_value.save_episodes.assert_awaited_once()
+    m_pub.return_value.publish.assert_awaited_once()
+
+
+async def test_feed_rss_exists_with_new_items_publishes(tmp_path: Path) -> None:
+    """RSS file exists but feed contains a new episode not yet in the DB — publish update."""
+    rss_file = tmp_path / "my-podcast.rss"
+    rss_file.write_text("<rss/>")
+
+    config, ep, parsed = _branch_config(tmp_path)
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        # DB has no episodes — ep-1 is new even though the RSS file already exists.
+        m_store.return_value.get_guids_for_feed = AsyncMock(return_value=set())
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    m_store.return_value.save_episodes.assert_awaited_once()
+    m_pub.return_value.publish.assert_awaited_once()
+
+
+async def test_branch_c_topic_already_extracted_loads_from_store(tmp_path: Path) -> None:
+    """Branch C: topic already extracted — skips TopicExtractor, fetches from TopicStore."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    cached_file = cache_dir / "ep-1.mp3"
+    cached_file.write_bytes(b"audio")
+
+    config, ep, parsed = _branch_config(MagicMock())
+    config.app.paths.cache_dir = cache_dir
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+            extracted_guids={"ep-1"},
+        )
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    m_topic_ext.return_value.extract.assert_not_called()
+    m_topic_store.return_value.get_topic_for_guid.assert_awaited_once_with("ep-1")
+
+
+async def test_branch_d_topic_already_extracted_loads_from_store() -> None:
+    """Branch D: topic already extracted — skips TopicExtractor, fetches from TopicStore."""
+    config, ep, parsed = _branch_config(MagicMock())
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+            extracted_guids={"ep-1"},
+        )
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    m_topic_ext.return_value.extract.assert_not_called()
+    m_topic_store.return_value.get_topic_for_guid.assert_awaited_once_with("ep-1")

@@ -328,7 +328,7 @@ async def test_transcribe_logs_error_on_failure(
     assert "ep-fail" in caplog.text
 
 
-async def test_transcribe_logs_debug_on_success(
+async def test_transcribe_logs_on_success(
     transcriptor: EpisodeTranscriptor, audio_file: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     with patch(

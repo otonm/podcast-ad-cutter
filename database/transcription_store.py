@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from models.transcription import Transcription, TranscriptionSegment
+
 if TYPE_CHECKING:
     import aiosqlite
-
-    from models.transcription import Transcription, TranscriptionSegment
 
 logger = logging.getLogger(__name__)
 
@@ -73,3 +73,38 @@ class TranscriptionStore:
         )
         await self._conn.commit()
         logger.debug(f"Saved {len(segments)} segment(s) for '{segments[0].guid}'")
+
+    async def get_transcription_text(self, guid: str) -> str | None:
+        """Return the full transcription text for an episode, or None if absent.
+
+        Args:
+            guid: Episode GUID.
+
+        Returns:
+            Transcription text, or ``None`` if no row exists for this GUID.
+
+        """
+        async with self._conn.execute(
+            "SELECT transcription FROM transcriptions WHERE guid = ?", (guid,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        return row[0] if row else None
+
+    async def get_segments_for_guid(self, guid: str) -> list[TranscriptionSegment]:
+        """Return all transcription segments for an episode, ordered by start time.
+
+        Args:
+            guid: Episode GUID.
+
+        Returns:
+            List of :class:`TranscriptionSegment` ordered by ``start_ms`` ascending.
+            Empty list if no segments exist for this GUID.
+
+        """
+        async with self._conn.execute(
+            "SELECT guid, start_ms, end_ms, text FROM transcription_segments "
+            "WHERE guid = ? ORDER BY start_ms ASC",
+            (guid,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [TranscriptionSegment(guid=r[0], start_ms=r[1], end_ms=r[2], text=r[3]) for r in rows]

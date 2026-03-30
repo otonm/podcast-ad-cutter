@@ -209,3 +209,56 @@ async def test_transcription_segments_fk_enforced(db_path: Path) -> None:
                 "INSERT INTO transcription_segments (guid, start_ms, end_ms, text) "
                 "VALUES ('ghost-guid', 0, 1000, 'hello')"
             )
+
+
+async def test_ad_segments_table_exists(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    async with aiosqlite.connect(db_path) as conn:
+        cursor = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='ad_segments'"
+        )
+        row = await cursor.fetchone()
+    assert row is not None
+
+
+async def test_ad_segments_table_has_expected_columns(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    cols = await _table_column_names(db_path, "ad_segments")
+    assert {"id", "guid", "start_ms", "end_ms", "confidence", "sponsor", "ad_topic"} <= cols
+
+
+async def test_ad_detection_runs_table_exists(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    async with aiosqlite.connect(db_path) as conn:
+        cursor = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='ad_detection_runs'"
+        )
+        row = await cursor.fetchone()
+    assert row is not None
+
+
+async def test_ad_detection_runs_table_has_expected_columns(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    cols = await _table_column_names(db_path, "ad_detection_runs")
+    assert {"id", "guid"} <= cols
+
+
+async def test_ad_segments_fk_enforced(db_path: Path) -> None:
+    async with Database(db_path) as db:
+        with pytest.raises(aiosqlite.IntegrityError):
+            await db.conn.execute(
+                "INSERT INTO ad_segments (guid, start_ms, end_ms, confidence, sponsor, ad_topic) "
+                "VALUES ('ghost-guid', 0, 1000, 0.9, 'Sponsor', 'ad')"
+            )
+
+
+async def test_ad_detection_runs_fk_enforced(db_path: Path) -> None:
+    async with Database(db_path) as db:
+        with pytest.raises(aiosqlite.IntegrityError):
+            await db.conn.execute(
+                "INSERT INTO ad_detection_runs (guid) VALUES ('ghost-guid')"
+            )

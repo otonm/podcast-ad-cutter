@@ -31,3 +31,19 @@ class TranscriptionError(PodcastAdCutterError):
     def __init__(self, message: str) -> None:
         super().__init__(message)
         self.message = message
+
+
+class TopicExtractionError(PodcastAdCutterError):
+    """Raised when a topic extraction LLM call fails."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+class AdDetectionError(PodcastAdCutterError):
+    """Raised when an ad detection LLM call fails."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message

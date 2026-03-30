@@ -77,6 +77,45 @@ CREATE TABLE IF NOT EXISTS cost_tracking (
 )
 """
 
+_TOPIC_EXTRACTIONS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS topic_extractions (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    guid    TEXT    NOT NULL UNIQUE REFERENCES episodes(guid),
+    podcast TEXT    NOT NULL,
+    title   TEXT    NOT NULL,
+    topic   TEXT    NOT NULL,
+    hosts   TEXT    NOT NULL,
+    show    TEXT    NOT NULL
+)
+"""
+
+_AD_SEGMENTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS ad_segments (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    guid       TEXT    NOT NULL REFERENCES episodes(guid),
+    start_ms   INTEGER NOT NULL,
+    end_ms     INTEGER NOT NULL,
+    confidence REAL    NOT NULL,
+    sponsor    TEXT    NOT NULL,
+    ad_topic   TEXT    NOT NULL
+)
+"""
+
+_AD_DETECTION_RUNS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS ad_detection_runs (
+    id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    guid TEXT    NOT NULL UNIQUE REFERENCES episodes(guid)
+)
+"""
+
+_TRANSCRIPTION_SEGMENTS_GUID_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_transcription_segments_guid ON transcription_segments(guid)
+"""
+
+_AD_SEGMENTS_GUID_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_ad_segments_guid ON ad_segments(guid)
+"""
+
 
 class Database:
     """Async context manager that owns the SQLite connection and schema.
@@ -109,6 +148,11 @@ class Database:
         await self.conn.execute(_TRANSCRIPTIONS_SCHEMA)
         await self.conn.execute(_TRANSCRIPTION_SEGMENTS_SCHEMA)
         await self.conn.execute(_COST_TRACKING_SCHEMA)
+        await self.conn.execute(_TOPIC_EXTRACTIONS_SCHEMA)
+        await self.conn.execute(_AD_SEGMENTS_SCHEMA)
+        await self.conn.execute(_AD_DETECTION_RUNS_SCHEMA)
+        await self.conn.execute(_TRANSCRIPTION_SEGMENTS_GUID_INDEX)
+        await self.conn.execute(_AD_SEGMENTS_GUID_INDEX)
         await self.conn.commit()
         logger.debug(f"Database opened: {self._db_path}")
         return self

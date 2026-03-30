@@ -114,11 +114,22 @@ class Pipeline:
 
         async with Database(self._db_path) as db:
             store = EpisodeStore(db.conn)
-            for feed in parsed_feeds:
-                await store.save_episodes(feed.config_title, feed.episodes)
 
             for feed in parsed_feeds:
                 cfg = feed_cfg_map[feed.config_title]
+                rss_path = self._output_rss_path(feed)
+
+                # Determine which parsed episodes are new to the DB.
+                existing_guids = await store.get_guids_for_feed(feed.config_title)
+                new_guids = {ep.guid for ep in feed.episodes} - existing_guids
+
+                if rss_path.exists() and not new_guids:
+                    logger.info(f"[{feed.config_title}] no new items — skipping feed")
+                    continue
+
+                # Either the RSS file has never been written, or new episodes arrived.
+                await store.save_episodes(feed.config_title, feed.episodes)
+
                 episodes = list(await store.get_episodes_for_feed(
                     feed.config_title, cfg.episodes_to_keep
                 ))
@@ -241,8 +252,13 @@ class Pipeline:
         output_exists = existing_audio is not None
         cached_audio_exists = cached_audio is not None
 
+        logger.info(f"Processing episode '{episode.title}' [{episode.guid}]")
+
         if output_exists:
             # Branch A: output already produced — reconstruct URL from existing file.
+            logger.debug(
+                f"Episode '{episode.guid}': branch A — output already exists at {existing_audio}, skipping"
+            )
             ext = existing_audio.suffix.lstrip(".")
             new_url = FeedPublisher.episode_url(
                 self._config.app.base_url, feed_slug, episode.pub_date, episode.title, ext
@@ -252,15 +268,27 @@ class Pipeline:
             return  # short-circuit — no further processing
         if transcription_exists:
             # Branch B: transcription OK, no output — re-download and probe; skip preprocess (D-05).
+            logger.debug(
+                f"Episode '{episode.guid}': branch B — transcription cached, no output; re-downloading"
+            )
             raw_path = await self._episode_downloader.download(
                 episode.guid, episode.url, on_progress=self._on_download_progress
             )
             meta = await self._audio_prober.probe(episode.guid, raw_path)
             await audio_metadata_store.save_all([meta])
             t_segments = await transcription_store.get_segments_for_guid(episode.guid)
+            logger.debug(
+                f"Episode '{episode.guid}': loaded {len(t_segments)} transcription segment(s) from DB"
+            )
             topic = await topic_store.get_topic_for_guid(episode.guid)
+            logger.debug(
+                f"Episode '{episode.guid}': topic context {'available' if topic else 'unavailable'}"
+            )
         elif cached_audio_exists:
             # Branch C: cached audio present, transcription missing — transcribe from cached file.
+            logger.debug(
+                f"Episode '{episode.guid}': branch C — cached audio found, transcription missing"
+            )
             meta = await self._audio_prober.probe(episode.guid, cached_audio)
             await audio_metadata_store.save_all([meta])
             mono_path = await self._audio_preprocessor.preprocess(
@@ -280,10 +308,13 @@ class Pipeline:
                 await topic_store.save_topic(topic_obj)
                 await cost_store.save_cost(topic_cost)
                 extracted_guids.add(episode.guid)
+                topic = topic_obj
+            else:
+                topic = await topic_store.get_topic_for_guid(episode.guid)
             raw_path = cached_audio  # AudioEditor receives the cached audio path in Branch C
-            topic = await topic_store.get_topic_for_guid(episode.guid)
         else:
             # Branch D: nothing exists — run the full pipeline.
+            logger.debug(f"Episode '{episode.guid}': branch D — full pipeline (nothing cached)")
             raw_path = await self._episode_downloader.download(
                 episode.guid, episode.url, on_progress=self._on_download_progress
             )
@@ -306,7 +337,9 @@ class Pipeline:
                 await topic_store.save_topic(topic_obj)
                 await cost_store.save_cost(topic_cost)
                 extracted_guids.add(episode.guid)
-            topic = await topic_store.get_topic_for_guid(episode.guid)
+                topic = topic_obj
+            else:
+                topic = await topic_store.get_topic_for_guid(episode.guid)
 
         # Ad detection tail (Branches B, C, D)
         if episode.guid not in ad_detected_guids:
@@ -320,6 +353,9 @@ class Pipeline:
             ad_detected_guids.add(episode.guid)
         else:
             segments = await ad_store.get_segments_for_guid(episode.guid)
+            logger.debug(
+                f"Episode '{episode.guid}': ad detection cached, loading {len(segments)} segment(s) from DB"
+            )
 
         output_path = await self._audio_editor.edit(
             episode.guid,
@@ -340,7 +376,20 @@ class Pipeline:
             )
             await store.update_episode_url(episode.guid, new_url)
             await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url)
-        # else: no qualifying ads — keep original URL, no update calls
+        else:
+            logger.info(f"Episode '{episode.guid}': no qualifying ads — original audio unchanged")
+
+    def _output_rss_path(self, feed: ParsedFeed) -> Path:
+        """Return the expected RSS output path for a parsed feed.
+
+        Args:
+            feed: The parsed feed whose output path is needed.
+
+        Returns:
+            ``output_dir/{feed_slug}.rss`` as a :class:`~pathlib.Path`.
+
+        """
+        return self._config.app.paths.output_dir / f"{slugify(feed.title)}.rss"
 
     def _select_feeds(self) -> list[FeedConfig]:
         """Return the feeds to process for this run.

@@ -9,6 +9,7 @@ import litellm
 
 from models.topic import TopicExtraction, TopicExtractionCost
 from utils.exceptions import TopicExtractionError
+from utils.llm import compute_completion_cost
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,19 @@ _SYSTEM_PROMPT = (
     '- "show": The name of the podcast show as mentioned in the transcript.\n'
     "If information is not found in the transcript, use an empty string for that field."
 )
+
+TOPIC_EXTRACTION_SYSTEM_PROMPT: str = """\
+Your job is to determine the main topic of a podcast from a given trascription segment.
+You are given a transcription of the beggining of a podcast (including possible ad segments etc.).
+Analyze the transcript and determine to the best of your ability the main topic of conversation.
+Summarize the topic in five sentences.
+Try to ignore any ads or promotions that are usually inserted at the beginning of an episode.
+Return information about the topic of the episode as a JSON object. No commentary, no markdown, no preamble.
+
+Structure of the JSON object:
+    'Schema: {"domain": str, "topic": str, "hosts": list[str], "notes": str}'
+"""
+
 
 _COMPLETION_RESERVE_TOKENS = 512
 
@@ -110,30 +124,6 @@ class TopicExtractor:
             show=data["show"],
         )
 
-    def _compute_cost(self, response: object) -> float:
-        """Extract cost from response hidden params, falling back to litellm.completion_cost."""
-        hidden = getattr(response, "_hidden_params", {}) or {}
-        raw = hidden.get("response_cost")
-        if raw is not None:
-            try:
-                val = float(raw)
-            except (TypeError, ValueError):
-                pass
-            else:
-                if val > 0.0:
-                    logger.debug(f"Topic extraction cost is {val}")
-                    return val
-
-        try:
-            cost = litellm.completion_cost(completion_response=response)
-            logger.debug(f"Topic extraction cost (completion_cost fallback) is {cost}")
-            return float(cost)
-        except Exception as exc:  # noqa: BLE001 — litellm may raise for unknown models
-            logger.warning(
-                f"Could not compute cost for {self._model_id} ({exc}), cost will be $0.00"
-            )
-            return 0.0
-
     async def extract(
         self,
         guid: str,
@@ -156,6 +146,7 @@ class TopicExtractor:
             TopicExtractionError: On any litellm/API failure or malformed JSON response.
 
         """
+        logger.debug(f"Extracting topic for '{guid}' with model {self._model_id}")
         trimmed = self._truncate_transcript(transcript)
         messages = self._build_messages(trimmed)
 
@@ -165,13 +156,15 @@ class TopicExtractor:
                 messages=messages,
                 response_format={"type": "json_object"},
                 api_key=self._api_key,
+                reasoning_effort="high",
+                drop_params=True
             )
         except Exception as exc:
             msg = f"litellm.acompletion failed for '{guid}': {exc}"
             logger.error(f"Skipping topic extraction for '{guid}': {msg}")
             raise TopicExtractionError(msg) from exc
 
-        total_cost = self._compute_cost(response)
+        total_cost = compute_completion_cost(response, self._model_id)
         content = response.choices[0].message.content
 
         for attempt in range(self._max_retries):
@@ -197,11 +190,13 @@ class TopicExtractor:
                         messages=messages,
                         response_format={"type": "json_object"},
                         api_key=self._api_key,
+                        reasoning_effort="high",
+                        drop_params=True
                     )
                 except Exception as retry_exc:
                     msg = f"litellm.acompletion failed for '{guid}' on retry: {retry_exc}"
                     raise TopicExtractionError(msg) from retry_exc
-                total_cost += self._compute_cost(response)
+                total_cost += compute_completion_cost(response, self._model_id)
                 content = response.choices[0].message.content
             else:
                 cost_record = TopicExtractionCost(
@@ -209,7 +204,7 @@ class TopicExtractor:
                     model=self._model,
                     cost=total_cost,
                 )
-                logger.debug(f"Extracted topic for '{guid}'")
+                logger.info(f"Extracted topic for '{guid}': show={extraction.show!r}, hosts={extraction.hosts!r}")
                 return (guid, extraction, cost_record)
 
         msg = f"Topic extraction failed for '{guid}': exhausted retries"  # pragma: no cover
