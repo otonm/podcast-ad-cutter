@@ -97,7 +97,8 @@ CREATE TABLE IF NOT EXISTS ad_segments (
     end_ms     INTEGER NOT NULL,
     confidence REAL    NOT NULL,
     sponsor    TEXT    NOT NULL,
-    ad_topic   TEXT    NOT NULL
+    ad_topic   TEXT    NOT NULL,
+    indices    TEXT    NOT NULL DEFAULT '[]'
 )
 """
 

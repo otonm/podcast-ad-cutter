@@ -62,7 +62,7 @@ async def test_extract_returns_result_tuple(extractor: TopicExtractor) -> None:
         "components.topic_extractor.litellm.acompletion",
         new=AsyncMock(return_value=mock_resp),
     ):
-        guid, extraction, cost = await extractor.extract("ep-1", "my-podcast", "Ep Title", _TRANSCRIPT)
+        guid, extraction, cost = await extractor.extract("ep-1", "my-podcast", "Ep Title", "My Show", _TRANSCRIPT)
     assert guid == "ep-1"
     assert isinstance(extraction, TopicExtraction)
     assert isinstance(cost, TopicExtractionCost)
@@ -74,7 +74,7 @@ async def test_extract_populates_topic_fields(extractor: TopicExtractor) -> None
         "components.topic_extractor.litellm.acompletion",
         new=AsyncMock(return_value=mock_resp),
     ):
-        _, extraction, _ = await extractor.extract("ep-1", "my-podcast", "Ep Title", _TRANSCRIPT)
+        _, extraction, _ = await extractor.extract("ep-1", "my-podcast", "Ep Title", "My Show", _TRANSCRIPT)
     assert extraction.guid == "ep-1"
     assert extraction.podcast == "my-podcast"
     assert extraction.title == "Ep Title"
@@ -89,7 +89,7 @@ async def test_extract_cost_record(extractor: TopicExtractor) -> None:
         "components.topic_extractor.litellm.acompletion",
         new=AsyncMock(return_value=mock_resp),
     ):
-        _, _, cost = await extractor.extract("ep-1", "my-podcast", "Ep Title", _TRANSCRIPT)
+        _, _, cost = await extractor.extract("ep-1", "my-podcast", "Ep Title", "My Show", _TRANSCRIPT)
     assert cost.provider == "openai"
     assert cost.model == "gpt-4o-mini"
     assert cost.cost == pytest.approx(0.005)
@@ -106,7 +106,7 @@ async def test_openai_uses_bare_model_id() -> None:
         "components.topic_extractor.litellm.acompletion",
         new=AsyncMock(return_value=mock_resp),
     ) as mock_call:
-        await ex.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        await ex.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     call_kwargs = mock_call.call_args.kwargs
     assert call_kwargs["model"] == "gpt-4o-mini"
 
@@ -118,7 +118,7 @@ async def test_non_openai_uses_provider_slash_model() -> None:
         "components.topic_extractor.litellm.acompletion",
         new=AsyncMock(return_value=mock_resp),
     ) as mock_call:
-        await ex.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        await ex.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     call_kwargs = mock_call.call_args.kwargs
     assert call_kwargs["model"] == "groq/llama-3.1-8b-instant"
 
@@ -133,7 +133,7 @@ async def test_extract_passes_api_key(extractor: TopicExtractor) -> None:
         "components.topic_extractor.litellm.acompletion",
         new=AsyncMock(return_value=mock_resp),
     ) as mock_call:
-        await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert mock_call.call_args.kwargs["api_key"] == "sk-test"
 
 
@@ -143,7 +143,7 @@ async def test_extract_passes_json_response_format(extractor: TopicExtractor) ->
         "components.topic_extractor.litellm.acompletion",
         new=AsyncMock(return_value=mock_resp),
     ) as mock_call:
-        await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert mock_call.call_args.kwargs["response_format"] is TopicExtractionSchema
 
 
@@ -153,12 +153,47 @@ async def test_extract_passes_messages_list(extractor: TopicExtractor) -> None:
         "components.topic_extractor.litellm.acompletion",
         new=AsyncMock(return_value=mock_resp),
     ) as mock_call:
-        await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     msgs = mock_call.call_args.kwargs["messages"]
     assert isinstance(msgs, list)
     roles = [m["role"] for m in msgs]
     assert "system" in roles
     assert "user" in roles
+
+
+# ---------------------------------------------------------------------------
+# Context block in user message
+# ---------------------------------------------------------------------------
+
+async def test_build_messages_includes_context_block_with_description(extractor: TopicExtractor) -> None:
+    """Context block with show, episode title, and description appears before the transcript."""
+    mock_resp = _make_response()
+    with patch(
+        "components.topic_extractor.litellm.acompletion",
+        new=AsyncMock(return_value=mock_resp),
+    ) as mock_call:
+        await extractor.extract("ep-1", "pod", "Episode One", "Tech Talk Weekly", _TRANSCRIPT, "AI news.")
+    msgs = mock_call.call_args.kwargs["messages"]
+    user_msg = next(m["content"] for m in msgs if m["role"] == "user")
+    assert "Show: Tech Talk Weekly" in user_msg
+    assert "Episode title: Episode One" in user_msg
+    assert "Episode description: AI news." in user_msg
+    assert user_msg.index("Show:") < user_msg.index("Transcript:")
+
+
+async def test_build_messages_omits_description_when_none(extractor: TopicExtractor) -> None:
+    """When description is None, the description line must not appear in the user message."""
+    mock_resp = _make_response()
+    with patch(
+        "components.topic_extractor.litellm.acompletion",
+        new=AsyncMock(return_value=mock_resp),
+    ) as mock_call:
+        await extractor.extract("ep-1", "pod", "Episode One", "Tech Talk Weekly", _TRANSCRIPT)
+    msgs = mock_call.call_args.kwargs["messages"]
+    user_msg = next(m["content"] for m in msgs if m["role"] == "user")
+    assert "Show: Tech Talk Weekly" in user_msg
+    assert "Episode title: Episode One" in user_msg
+    assert "Episode description:" not in user_msg
 
 
 # ---------------------------------------------------------------------------
@@ -206,12 +241,14 @@ async def test_transcript_truncated_when_over_limit() -> None:
         ) as mock_call,
     ):
         ex = TopicExtractor(provider="openai", model="gpt-4o-mini", api_key="sk")
-        await ex.extract("ep-1", "pod", "title", long_transcript)
+        await ex.extract("ep-1", "pod", "title", "My Show", long_transcript)
 
-    # The user message content must be shorter than the original transcript
+    # The transcript portion of the user message must be shorter than the original
     msgs = mock_call.call_args.kwargs["messages"]
     user_content = next(m["content"] for m in msgs if m["role"] == "user")
-    assert len(user_content) < len(long_transcript)
+    assert "Transcript:\n\n" in user_content
+    transcript_part = user_content.split("Transcript:\n\n", 1)[1]
+    assert len(transcript_part) < len(long_transcript)
 
 
 async def test_transcript_not_truncated_when_within_limit() -> None:
@@ -224,7 +261,7 @@ async def test_transcript_not_truncated_when_within_limit() -> None:
             new=AsyncMock(return_value=mock_resp),
         ) as mock_call,
     ):
-        await extractor_with_8192().extract("ep-1", "pod", "title", _TRANSCRIPT)
+        await extractor_with_8192().extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
 
     msgs = mock_call.call_args.kwargs["messages"]
     user_content = next(m["content"] for m in msgs if m["role"] == "user")
@@ -245,7 +282,7 @@ async def test_cost_uses_hidden_params_when_positive(extractor: TopicExtractor) 
         "components.topic_extractor.litellm.acompletion",
         new=AsyncMock(return_value=mock_resp),
     ):
-        _, _, cost = await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        _, _, cost = await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert cost.cost == pytest.approx(0.007)
 
 
@@ -260,7 +297,7 @@ async def test_cost_falls_back_to_completion_cost_when_hidden_params_zero(
         ),
         patch("utils.llm.litellm.completion_cost", return_value=0.003),
     ):
-        _, _, cost = await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        _, _, cost = await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert cost.cost == pytest.approx(0.003)
 
 
@@ -275,7 +312,7 @@ async def test_cost_falls_back_to_completion_cost_when_hidden_params_none(
         ),
         patch("utils.llm.litellm.completion_cost", return_value=0.004),
     ):
-        _, _, cost = await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        _, _, cost = await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert cost.cost == pytest.approx(0.004)
 
 
@@ -291,7 +328,7 @@ async def test_cost_returns_zero_when_completion_cost_raises(extractor: TopicExt
             side_effect=Exception("no pricing"),
         ),
     ):
-        _, _, cost = await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        _, _, cost = await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert cost.cost == 0.0
 
 
@@ -304,7 +341,7 @@ async def test_cost_returns_zero_when_hidden_params_non_numeric(extractor: Topic
         ),
         patch("utils.llm.litellm.completion_cost", side_effect=Exception("no pricing")),
     ):
-        _, _, cost = await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        _, _, cost = await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert cost.cost == 0.0
 
 
@@ -322,7 +359,7 @@ async def test_acompletion_exception_raises_topic_extraction_error(
         ),
         pytest.raises(TopicExtractionError) as exc_info,
     ):
-        await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert "ep-1" in exc_info.value.message
 
 
@@ -335,7 +372,7 @@ async def test_malformed_json_raises_topic_extraction_error(extractor: TopicExtr
         ),
         pytest.raises(TopicExtractionError) as exc_info,
     ):
-        await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert "ep-1" in exc_info.value.message
 
 
@@ -348,7 +385,7 @@ async def test_json_missing_keys_raises_topic_extraction_error(extractor: TopicE
         ),
         pytest.raises(TopicExtractionError) as exc_info,
     ):
-        await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert "ep-1" in exc_info.value.message
 
 
@@ -364,7 +401,7 @@ async def test_extract_succeeds_on_first_attempt_calls_acompletion_once(
         "components.topic_extractor.litellm.acompletion",
         new=AsyncMock(return_value=mock_resp),
     ) as mock_call:
-        await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert mock_call.await_count == 1
 
 
@@ -378,7 +415,7 @@ async def test_extract_retries_on_malformed_json_then_succeeds(
         "components.topic_extractor.litellm.acompletion",
         new=AsyncMock(side_effect=[bad_resp, good_resp]),
     ) as mock_call:
-        _, _, cost = await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        _, _, cost = await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert mock_call.await_count == 2
     assert cost.cost == pytest.approx(0.003)  # costs accumulated
 
@@ -393,7 +430,7 @@ async def test_extract_retries_on_missing_keys_then_succeeds(
         "components.topic_extractor.litellm.acompletion",
         new=AsyncMock(side_effect=[bad_resp, good_resp]),
     ) as mock_call:
-        _, extraction, cost = await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        _, extraction, cost = await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert mock_call.await_count == 2
     assert extraction.hosts == "Alice, Bob"
     assert cost.cost == pytest.approx(0.003)
@@ -408,7 +445,7 @@ async def test_extract_retry_appends_correction_messages(extractor: TopicExtract
         "components.topic_extractor.litellm.acompletion",
         new=AsyncMock(side_effect=[bad_resp, good_resp]),
     ) as mock_call:
-        await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
 
     retry_msgs = mock_call.call_args_list[1].kwargs["messages"]
     roles = [m["role"] for m in retry_msgs]
@@ -429,7 +466,7 @@ async def test_extract_raises_after_max_retries_exhausted(extractor: TopicExtrac
         ) as mock_call,
         pytest.raises(TopicExtractionError) as exc_info,
     ):
-        await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert mock_call.await_count == 3  # default max_retries
     assert "ep-1" in exc_info.value.message
 
@@ -443,7 +480,7 @@ async def test_extract_api_failure_does_not_retry(extractor: TopicExtractor) -> 
         ) as mock_call,
         pytest.raises(TopicExtractionError),
     ):
-        await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert mock_call.await_count == 1
 
 
@@ -458,7 +495,7 @@ async def test_extract_custom_max_retries() -> None:
         ) as mock_call,
         pytest.raises(TopicExtractionError),
     ):
-        await ex.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        await ex.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert mock_call.await_count == 1
 
 
@@ -471,7 +508,7 @@ async def test_extract_cost_accumulates_across_retries(extractor: TopicExtractor
         "components.topic_extractor.litellm.acompletion",
         new=AsyncMock(side_effect=[bad_resp, bad_resp2, good_resp]),
     ):
-        _, _, cost = await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        _, _, cost = await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert cost.cost == pytest.approx(0.007)
 
 
@@ -485,7 +522,7 @@ async def test_extract_api_failure_on_retry_raises_immediately(extractor: TopicE
         ) as mock_call,
         pytest.raises(TopicExtractionError),
     ):
-        await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert mock_call.await_count == 2
 
 
@@ -512,7 +549,7 @@ async def test_finish_reason_length_retries_without_reasoning(extractor: TopicEx
         "components.topic_extractor.litellm.acompletion",
         new=AsyncMock(side_effect=[truncated, good_resp]),
     ) as mock_call:
-        _, extraction, cost = await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        _, extraction, cost = await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert mock_call.await_count == 2
     assert extraction.show == "Tech Talk"
     assert cost.cost == pytest.approx(0.003)
@@ -528,7 +565,7 @@ async def test_finish_reason_length_exhausted_raises(extractor: TopicExtractor) 
         ) as mock_call,
         pytest.raises(TopicExtractionError) as exc_info,
     ):
-        await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert mock_call.await_count == 3
     assert "ep-1" in exc_info.value.message
 
@@ -541,7 +578,7 @@ async def test_json_validate_failed_retries_without_schema(extractor: TopicExtra
         "components.topic_extractor.litellm.acompletion",
         new=AsyncMock(side_effect=[err, good_resp]),
     ) as mock_call:
-        _, extraction, _ = await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        _, extraction, _ = await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert mock_call.await_count == 2
     assert extraction.show == "Tech Talk"
 
@@ -556,7 +593,7 @@ async def test_json_validate_failed_exhausted_raises(extractor: TopicExtractor) 
         ) as mock_call,
         pytest.raises(TopicExtractionError) as exc_info,
     ):
-        await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert mock_call.await_count == 3
     assert "ep-1" in exc_info.value.message
 
@@ -571,7 +608,7 @@ async def test_non_json_validate_bad_request_raises_immediately(extractor: Topic
         ) as mock_call,
         pytest.raises(TopicExtractionError),
     ):
-        await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert mock_call.await_count == 1
 
 
@@ -584,7 +621,7 @@ async def test_json_validate_failed_after_parse_fail_then_succeeds(extractor: To
         "components.topic_extractor.litellm.acompletion",
         new=AsyncMock(side_effect=[bad_parse_resp, err, good_resp]),
     ) as mock_call:
-        _, extraction, cost = await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+        _, extraction, cost = await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert mock_call.await_count == 3
     assert extraction.hosts == "Alice, Bob"
     assert cost.cost == pytest.approx(0.004)  # 0.001 + 0.003 (schema err has no cost)

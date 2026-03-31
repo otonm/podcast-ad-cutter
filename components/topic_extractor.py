@@ -20,14 +20,19 @@ class _JsonValidateFailedError(Exception):
 
 _SYSTEM_PROMPT: str = """You are an assistant to a podcast creator that assists with metadata gathering.
 Your job is to determine the main topic of a podcast from a given trascription segment.
-You are given a transcription of the beggining of a podcast (including possible ad segments etc.).
+
+You are given some context and a transcription of the beggining of a podcast (including possible ad segments etc.).
+
 Analyze the transcript and determine to the best of your ability the main topic of conversation.
-Summarize the topic in five sentences.
-Try to ignore any ads or promotions that are usually inserted at the beginning of an episode.
+
+Summarize the topic in 2-3 sentences.
+
+Ignore any ads or promotions that are usually inserted at the beginning of an episode.
+
 Return information about the topic of the episode as a JSON object containing exactly these keys:
-- "topic": A 3-sentence description of the main topic discussed.
-- "hosts": A comma-separated list of host names as mentioned in the transcript.
-- "show": The name of the podcast show as mentioned in the transcript.
+- "topic": The main topic discussed.
+- "hosts": A comma-separated list of host names.
+- "show": The name of the podcast.
 
 No commentary, no markdown, no preamble.
 """
@@ -86,16 +91,42 @@ class TopicExtractor:
             )
         return 8192
 
-    def _build_messages(self, transcript: str) -> list[dict[str, str]]:
+    def _build_messages(
+        self,
+        transcript: str,
+        *,
+        feed_title: str,
+        episode_title: str,
+        description: str | None,
+    ) -> list[dict[str, str]]:
+        context_lines = [
+            f"Show: {feed_title}",
+            f"Episode title: {episode_title}",
+        ]
+        if description:
+            context_lines.append(f"Episode description: {description}")
+        context_block = "\n".join(context_lines)
         return [
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": f"Transcript:\n\n{transcript}"},
+            {"role": "user", "content": f"{context_block}\n\nTranscript:\n\n{transcript}"},
         ]
 
-    def _truncate_transcript(self, transcript: str) -> str:
+    def _truncate_transcript(
+        self,
+        transcript: str,
+        *,
+        feed_title: str,
+        episode_title: str,
+        description: str | None,
+    ) -> str:
         """Trim the transcript so the full prompt fits within the context window."""
         budget = self._max_input_tokens - _COMPLETION_RESERVE_TOKENS
-        messages = self._build_messages(transcript)
+        messages = self._build_messages(
+            transcript,
+            feed_title=feed_title,
+            episode_title=episode_title,
+            description=description,
+        )
         token_count = litellm.token_counter(model=self._model_id, messages=messages)
         if token_count <= budget:
             return transcript
@@ -161,7 +192,9 @@ class TopicExtractor:
         guid: str,
         podcast: str,
         title: str,
+        feed_title: str,
         transcript: str,
+        description: str | None = None,
     ) -> TopicExtractionResult:
         """Extract topic metadata from one episode transcription.
 
@@ -169,7 +202,9 @@ class TopicExtractor:
             guid: Episode GUID — used in error messages and result objects.
             podcast: Config feed title (logical feed identifier).
             title: Episode title.
+            feed_title: Parsed RSS channel title — passed as LLM context only.
             transcript: Full transcription text.
+            description: Episode description — passed as LLM context when provided.
 
         Returns:
             ``(guid, TopicExtraction, TopicExtractionCost)``.
@@ -179,8 +214,12 @@ class TopicExtractor:
 
         """
         logger.debug(f"Extracting topic for '{guid}' with model {self._model_id}")
-        trimmed = self._truncate_transcript(transcript)
-        messages = self._build_messages(trimmed)
+        trimmed = self._truncate_transcript(
+            transcript, feed_title=feed_title, episode_title=title, description=description
+        )
+        messages = self._build_messages(
+            trimmed, feed_title=feed_title, episode_title=title, description=description
+        )
         total_cost = 0.0
         use_schema = True
         use_reasoning = True

@@ -11,7 +11,7 @@ import pytest
 
 from components.pipeline import Pipeline
 from config.config_loader import FeedConfig
-from models.ad_detection import AdDetectionCost, AdSegment  # noqa: TC002
+from models.ad_detection import AdDetectionCost, AdSegment, AdSegmentDetection  # noqa: TC002
 from models.feed import AudioMetadata, Episode, FeedParseInput, ParsedFeed, PublisherInput
 from models.topic import TopicExtraction, TopicExtractionCost
 from models.transcription import Transcription, TranscriptionCost, TranscriptionSegment
@@ -1601,7 +1601,10 @@ async def test_branch_d_ad_already_detected_loads_from_store() -> None:
     output_file = Path("/out/my-podcast/22.03.2026-my-episode.mp3")
     config, ep, parsed = _branch_config(MagicMock())
     existing_segments = [
-        AdSegment(guid="ep-1", start_ms=0, end_ms=5000, confidence=0.9, sponsor="Acme", ad_topic="Promo")
+        AdSegment(
+            guid="ep-1", start_ms=0, end_ms=5000, confidence=0.9,
+            sponsor="Acme", ad_topic="Promo", indices=[0, 1],
+        )
     ]
 
     with (
@@ -2139,3 +2142,94 @@ async def test_branch_d_deletes_raw_on_audio_editor_error(tmp_path: Path) -> Non
         await Pipeline(config).run()
 
     assert not raw_file.exists()
+
+
+async def test_ad_detection_builds_ad_segment_from_valid_indices() -> None:
+    """Valid indices in segment_map produce an AdSegment with correct time bounds."""
+    config, ep, parsed = _branch_config(MagicMock())
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        # detect returns a block covering index 0 (the only segment in the stub transcription)
+        m_ad_detector.return_value.detect = AsyncMock(return_value=(
+            "ep-1",
+            [AdSegmentDetection(indices=[0], confidence=0.95, sponsor="Acme", ad_topic="promo")],
+            AdDetectionCost(provider="openai", model="gpt-4o-mini", cost=0.0001),
+        ))
+        captured: list[list[AdSegment]] = []
+        original_parse = lambda segs, **_: captured.append(segs) or []  # noqa: E731
+        m_ad_parser.return_value.parse = MagicMock(side_effect=original_parse)
+        await Pipeline(config).run()
+
+    assert len(captured) == 1
+    assert len(captured[0]) == 1
+    assert captured[0][0].start_ms == 0
+    assert captured[0][0].end_ms == 1000
+    assert captured[0][0].sponsor == "Acme"
+
+
+async def test_ad_detection_skips_segment_with_all_out_of_range_indices() -> None:
+    """A detection whose indices are all outside segment_map is silently skipped."""
+    config, ep, parsed = _branch_config(MagicMock())
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        # Return a detection whose indices are all outside the segment_map (only index 0 exists)
+        m_ad_detector.return_value.detect = AsyncMock(return_value=(
+            "ep-1",
+            [AdSegmentDetection(indices=[99, 100], confidence=0.9, sponsor="X", ad_topic="promo")],
+            AdDetectionCost(provider="openai", model="gpt-4o-mini", cost=0.0001),
+        ))
+        m_ad_parser.return_value.parse = MagicMock(return_value=[])
+        await Pipeline(config).run()
+
+    # AudioEditor.edit must still be called — the out-of-range detection is skipped, not an error
+    m_audio_editor.return_value.edit.assert_awaited_once()

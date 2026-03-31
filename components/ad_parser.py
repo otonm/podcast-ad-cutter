@@ -1,79 +1,82 @@
-"""AdParser — groups consecutive ad segment detections into merged time ranges."""
+"""AdParser — groups time-proximity ad segment detections into cut ranges."""
 
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
 
-from models.ad_detection import AdSegment
+from models.ad_detection import CutRange
 
 if TYPE_CHECKING:
-    from models.ad_detection import AdSegmentDetection
-    from models.transcription import TranscriptionSegment
+    from models.ad_detection import AdSegment
 
 logger = logging.getLogger(__name__)
 
+_GAP_THRESHOLD_MS = 10_000
+
 
 class AdParser:
-    """Groups consecutive AdSegmentDetection results into merged AdSegment objects."""
+    """Groups AdSegment objects into CutRange objects for audio editing.
+
+    Receives already-stored :class:`~models.ad_detection.AdSegment` objects
+    (which carry full detection metadata), applies confidence and duration
+    filters, merges segments within :data:`_GAP_THRESHOLD_MS` of each other,
+    and returns only the time ranges that ffmpeg needs to cut.
+    """
 
     def parse(
         self,
-        guid: str,
-        detections: list[AdSegmentDetection],
-        segments: list[TranscriptionSegment],
-    ) -> list[AdSegment]:
-        """Merge consecutive detected ad indexes into time-bounded AdSegment objects.
+        ad_segments: list[AdSegment],
+        min_duration_ms: int,
+        min_confidence: float,
+    ) -> list[CutRange]:
+        """Filter, group, and convert ad segments to cut ranges.
 
         Args:
-            guid: Episode GUID propagated to each returned AdSegment.
-            detections: Raw LLM detections from AdDetector.
-            segments: All transcription segments (used to look up start/end times).
+            ad_segments: Stored ad segments with full detection metadata.
+            min_duration_ms: Minimum merged group duration in milliseconds.
+                Groups shorter than this are discarded.
+            min_confidence: Minimum confidence score.  Segments below this
+                threshold are excluded before grouping.
 
         Returns:
-            List of :class:`AdSegment` objects.  Non-consecutive indexes produce
-            separate segments.  Empty list when ``detections`` is empty or all
-            indexes are out of range.
+            List of :class:`~models.ad_detection.CutRange` objects ready for
+            ffmpeg.  Empty list when no segments qualify.
 
         """
-        if not detections:
+        if not ad_segments:
+            logger.debug("No ad segments provided, returning empty list")
             return []
 
-        segment_map = dict(enumerate(segments))
-
-        valid = []
-        for d in sorted(detections, key=lambda x: x.index):
-            if d.index not in segment_map:
-                logger.warning(f"Ad detection index {d.index} out of range for '{guid}', skipping")
-                continue
-            valid.append(d)
-
-        if not valid:
+        qualifying = [s for s in ad_segments if s.confidence >= min_confidence]
+        if not qualifying:
+            logger.debug("All ad segments below confidence threshold, returning empty list")
             return []
 
-        groups: list[list[AdSegmentDetection]] = []
-        current_group = [valid[0]]
-        for det in valid[1:]:
-            if det.index == current_group[-1].index + 1:
-                current_group.append(det)
+        qualifying.sort(key=lambda s: s.start_ms)
+
+        groups: list[list[AdSegment]] = []
+        current_group: list[AdSegment] = [qualifying[0]]
+        for seg in qualifying[1:]:
+            gap = seg.start_ms - current_group[-1].end_ms
+            if gap <= _GAP_THRESHOLD_MS:
+                current_group.append(seg)
             else:
                 groups.append(current_group)
-                current_group = [det]
+                current_group = [seg]
         groups.append(current_group)
+        logger.debug(f"Grouped {len(qualifying)} qualifying segments into {len(groups)} group(s)")
 
         result = []
         for group in groups:
-            start_ms = min(segment_map[d.index].start_ms for d in group)
-            end_ms = max(segment_map[d.index].end_ms for d in group)
-            confidence = sum(d.confidence for d in group) / len(group)
-            result.append(AdSegment(
-                guid=guid,
-                start_ms=start_ms,
-                end_ms=end_ms,
-                confidence=confidence,
-                sponsor=group[0].sponsor,
-                ad_topic=group[0].ad_topic,
-            ))
+            start_ms = min(s.start_ms for s in group)
+            end_ms = max(s.end_ms for s in group)
+            if end_ms - start_ms < min_duration_ms:
+                logger.debug(
+                    f"Ad group discarded: duration {end_ms - start_ms}ms < min {min_duration_ms}ms"
+                )
+                continue
+            result.append(CutRange(start_ms=start_ms, end_ms=end_ms))
 
-        logger.debug(f"Parsed ad segments: {result}")
+        logger.debug(f"Parsed {len(result)} cut range(s): {result}")
         return result

@@ -31,8 +31,8 @@ _TOPIC = TopicExtraction(
 )
 
 _VALID_DETECTIONS = json.dumps({"ads": [
-    {"index": 1, "confidence": 0.95, "sponsor": "Acme", "ad_topic": "discount code"},
-    {"index": 2, "confidence": 0.99, "sponsor": "Acme", "ad_topic": "promo offer"},
+    {"indices": [1, 2], "confidence": 0.95, "sponsor": "Acme", "ad_topic": "discount code"},
+    {"indices": [5, 6, 7], "confidence": 0.99, "sponsor": "Acme", "ad_topic": "promo offer"},
 ]})
 
 _EMPTY_DETECTIONS = json.dumps({"ads": []})
@@ -88,7 +88,7 @@ async def test_detect_populates_detection_fields(detector: AdDetector) -> None:
         _, detections, _ = await detector.detect("ep-1", _SEGMENTS, _TOPIC)
     assert len(detections) == 2
     assert isinstance(detections[0], AdSegmentDetection)
-    assert detections[0].index == 1
+    assert detections[0].indices == [1, 2]
     assert detections[0].confidence == pytest.approx(0.95)
     assert detections[0].sponsor == "Acme"
     assert detections[0].ad_topic == "discount code"
@@ -249,7 +249,21 @@ async def test_non_list_json_raises_ad_detection_error(detector: AdDetector) -> 
 
 
 async def test_json_missing_keys_raises_ad_detection_error(detector: AdDetector) -> None:
-    mock_resp = _make_response(content=json.dumps({"ads": [{"index": 1}]}))
+    mock_resp = _make_response(content=json.dumps({"ads": [{"indices": [1, 2]}]}))
+    with (
+        patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
+        pytest.raises(AdDetectionError) as exc_info,
+    ):
+        await detector.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert "ep-1" in exc_info.value.message
+
+
+async def test_indices_not_list_raises_ad_detection_error(detector: AdDetector) -> None:
+    """When 'indices' is not a list (e.g. a single int), parse must raise TypeError -> AdDetectionError."""
+    payload = json.dumps({"ads": [
+        {"indices": 1, "confidence": 0.9, "sponsor": "Acme", "ad_topic": "promo"},
+    ]})
+    mock_resp = _make_response(content=payload)
     with (
         patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
         pytest.raises(AdDetectionError) as exc_info,
@@ -456,3 +470,75 @@ async def test_json_validate_failed_after_parse_fail_then_succeeds(detector: AdD
     assert mock_call.await_count == 3
     assert len(detections) == 2
     assert cost.cost == pytest.approx(0.004)  # 0.001 + 0.003 (schema err has no cost)
+
+
+# ---------------------------------------------------------------------------
+# Single-index retry
+# ---------------------------------------------------------------------------
+
+def _single_index_response(response_cost: float = 0.001) -> MagicMock:
+    """Response containing an ad block with only one index."""
+    content = json.dumps({"ads": [
+        {"indices": [2], "confidence": 0.9, "sponsor": "Acme", "ad_topic": "promo"},
+    ]})
+    return _make_response(content=content, response_cost=response_cost)
+
+
+def _multi_index_response(response_cost: float = 0.002) -> MagicMock:
+    """Response containing ad blocks with multiple indices."""
+    return _make_response(content=_VALID_DETECTIONS, response_cost=response_cost)
+
+
+async def test_single_index_detection_retries_once(detector: AdDetector) -> None:
+    """When a detection has only one index, one additional retry is issued."""
+    single = _single_index_response(response_cost=0.001)
+    multi = _multi_index_response(response_cost=0.002)
+    with patch(
+        "components.ad_detector.litellm.acompletion",
+        new=AsyncMock(side_effect=[single, multi]),
+    ) as mock_call:
+        _, detections, cost = await detector.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert mock_call.await_count == 2
+    assert detections[0].indices == [1, 2]
+    assert cost.cost == pytest.approx(0.003)
+
+
+async def test_single_index_retry_appends_specific_prompt(detector: AdDetector) -> None:
+    """The retry message for single-index results must reference 'indices'."""
+    single = _single_index_response()
+    multi = _multi_index_response()
+    with patch(
+        "components.ad_detector.litellm.acompletion",
+        new=AsyncMock(side_effect=[single, multi]),
+    ) as mock_call:
+        await detector.detect("ep-1", _SEGMENTS, _TOPIC)
+    retry_msgs = mock_call.call_args_list[1].kwargs["messages"]
+    user_msgs = [m["content"] for m in retry_msgs if m["role"] == "user"]
+    assert any("indices" in m for m in user_msgs)
+
+
+async def test_single_index_retry_not_repeated(detector: AdDetector) -> None:
+    """If second response still has a single-index block, it is accepted without further retrying."""
+    single1 = _single_index_response(response_cost=0.001)
+    single2 = _single_index_response(response_cost=0.002)
+    with patch(
+        "components.ad_detector.litellm.acompletion",
+        new=AsyncMock(side_effect=[single1, single2]),
+    ) as mock_call:
+        _, detections, cost = await detector.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert mock_call.await_count == 2
+    assert detections[0].indices == [2]
+    assert cost.cost == pytest.approx(0.003)
+
+
+async def test_single_index_no_retry_on_last_attempt(detector: AdDetector) -> None:
+    """With max_retries=1, a single-index result is returned immediately without retrying."""
+    det = _make_detector(max_retries=1)
+    single = _single_index_response(response_cost=0.001)
+    with patch(
+        "components.ad_detector.litellm.acompletion",
+        new=AsyncMock(return_value=single),
+    ) as mock_call:
+        _, detections, _ = await det.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert mock_call.await_count == 1
+    assert detections[0].indices == [2]

@@ -108,8 +108,6 @@ async def main() -> None:
         sys.stderr.write(f"Failed to load config: {exc}\n")
         sys.exit(1)
 
-    # CLI flags supersede config file: -d forces DEBUG regardless of log.level;
-    # --log-to-file forces file output regardless of log.to_file config option.
     effective_level = "DEBUG" if args.debug else cfg.app.log.level
     effective_log_to_file = args.log_to_file or cfg.app.log.to_file
     configure_logging(

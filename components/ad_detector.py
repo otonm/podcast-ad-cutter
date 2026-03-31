@@ -49,50 +49,53 @@ Typical characteristics:
 
 - Duration: typically 15-120 seconds
 - Location: pre-roll (before intro), mid-roll (during episode), end-roll (after outro)
-- Structure: usually spans multiple consecutive transcript segments
+- Structure: always spans multiple consecutive transcript segments — each segment is only a few seconds long
 - Content: usually distinct from the episode's topic, however the theme can be similar
   (economics, politics, entertainment)
 - Other: usually include promo codes, discount URLs or codes, affiliate links or are
   cross-promotion of other network shows
 
-Ignore organic brand mentions that are part of the episode topic.
+A self-promotion by the host for their own show or content is not considered an ad for this purpose,
+and should not be included in the results.
 
 ## Detection workflow
 
-1. Scan the **entire** transcript from the first segment to the last segment before answering.
+1. Review the given transcript segments in order. Always consider neighboring segments as part of the
+same potential ad block, even if they individually seem innocuous.
 2. Identify every candidate ad region, especially:
    - the first 10 segments,
    - segments after an opener or introduction,
    - post-roll content after the outro or credits.
-3. For each candidate, expand backward and forward to capture the full continuous ad block.
-4. Merge only segments from the same continuous occurrence.
-5. If the same sponsor or similar ad copy appears again later, return it as a separate object.
+3. Group all consecutive segments belonging to the same ad into one entry, listing ALL their indices.
+4. If the same sponsor or similar ad copy appears again later, return it as a separate object.
 
 Use the provided episode domain and topic to distinguish ads from content.
 
-**Determine**: segments that construct the ad block (the indices),
-your confidence (0.0 = not at all, 1.0 = completely confident),
-the reason for the message (the content),
-the sponsor itself.
+**Determine**:
+- ALL consecutive segment indices that construct the ad block,
+- your confidence (0.0 = not at all, 1.0 = completely confident),
+- the reason for the message (the content),
+- the sponsor itself.
 
 ## Ad repetition
 
 Repeated ads are common in podcast transcripts.
-If the same sponsor or substantially the same ad copy appears again later, ALWAYS treat it as a new ad block.
+
+If the same sponsor or substantially the same ad copy appears again later, ALWAYS treat it as a separate ad block.
 Return **every** non-contiguous occurrence separately, even if the wording is identical or nearly identical.
 **NEVER deduplicate** repeated ads.
 
 ## Input format
 
 You will receive transcript segments in the format: [index][start_ms][end_ms] text.
-Return the index of the first and last segment that belong to each ad block.
-The included timestamps will be then used in code to determine the lenght of the ad.
+Return ALL consecutive segment indices that belong to each ad block as a list.
+The included timestamps will be then used in code to determine the length of the ad.
 
 ## Output format
 
 Reply with a JSON object with a single key "ads" whose value is an array of objects, no markdown, no preamble.
 Each object must have exactly these keys:
-- "index": integer segment index
+- "indices": list of all consecutive integer segment indices that make up this ad block (e.g. [3, 4, 5])
 - "confidence": float 0.0-1.0
 - "sponsor": advertiser name (empty string if unknown)
 - "ad_topic": brief description of the ad (empty string if unknown)
@@ -103,6 +106,13 @@ If no segments are ads, reply with {{"ads": []}}.
 
 Prefer to over-identify rather than under-identify ads, but try to avoid false positives as much as possible.
 Use the confidence score to indicate your certainty.
+
+## Show title: {show}
+
+## Hosts: {hosts}
+
+## Episode topic: {topic}
+
 """
 
 _RETRY_PROMPT: str = """
@@ -110,12 +120,22 @@ Your previous response was not valid JSON or was missing the required structure.
 
 Reply with a JSON object with a single key "ads" whose value is an array.
 Each element must have exactly these four keys:
-- "index" (integer)
+- "indices" (list of integers — all consecutive segment indices for this ad block)
 - "confidence" (float 0.0-1.0)
 - "sponsor" (string)
 - "ad_topic" (string)
 
 If there are no ads, reply with {"ads": []}. No other text."""
+
+_SINGLE_INDEX_RETRY_PROMPT: str = """
+One or more of your identified ad segments contains only a single transcript index.
+Each ad segment must span multiple consecutive indices - ads are typically 15-120 seconds long
+and each transcript segment is only a few seconds.
+
+For every ad block, list ALL consecutive segment indices that belong to it under the "indices" key.
+Do not return any ad block with only one index.
+
+Reply again with only: {"ads": [...]} - no markdown, no commentary."""
 
 type AdDetectionResult = tuple[str, list[AdSegmentDetection], AdDetectionCost]
 
@@ -124,8 +144,10 @@ class AdDetector:
     """Calls a chat LLM via litellm to identify advertisement segments in a transcript.
 
     Uses topic context (show, hosts, topic) to distinguish ads from content.
-    Retries up to ``max_retries`` times on malformed JSON.  API-level failures
-    are not retried.
+    Retries up to ``max_retries`` times on malformed JSON.  If the LLM returns an
+    ad block with only a single segment index, one additional retry is issued with
+    explicit instructions to return all consecutive indices per block.
+    API-level failures are not retried.
 
     Args:
         provider: Provider name, e.g. ``"openai"`` or ``"groq"``.
@@ -236,17 +258,21 @@ class AdDetector:
         if not isinstance(items, list):
             msg = f"Expected JSON array under 'ads', got {type(items).__name__} for '{guid}'"
             raise TypeError(msg)
-        return [
-            AdSegmentDetection(
-                index=item["index"],
+        detections = []
+        for item in items:
+            indices = item["indices"]
+            if not isinstance(indices, list):
+                msg = f"Expected list for 'indices', got {type(indices).__name__} for '{guid}'"
+                raise TypeError(msg)
+            detections.append(AdSegmentDetection(
+                indices=indices,
                 confidence=item["confidence"],
                 sponsor=item["sponsor"],
                 ad_topic=item["ad_topic"],
-            )
-            for item in items
-        ]
+            ))
+        return detections
 
-    async def detect(
+    async def detect(  # noqa: PLR0915
         self,
         guid: str,
         segments: list[TranscriptionSegment],
@@ -280,6 +306,7 @@ class AdDetector:
         total_cost = 0.0
         use_schema = True
         use_reasoning = True
+        single_index_retry_done = False
 
         for attempt in range(self._max_retries):
             logger.debug(f"Calling LLM (attempt {attempt + 1}): schema={use_schema}, reasoning={use_reasoning}")
@@ -330,6 +357,25 @@ class AdDetector:
                     {"role": "assistant", "content": content},
                     {"role": "user", "content": _RETRY_PROMPT},
                 ]
+                use_schema = False
+                continue
+
+            # If any ad block has only one index, retry once with specific guidance.
+            if (
+                not single_index_retry_done
+                and attempt < self._max_retries - 1
+                and any(len(d.indices) == 1 for d in detections)
+            ):
+                logger.warning(
+                    f"Ad detection for '{guid}' returned single-index block(s) "
+                    f"(attempt {attempt + 1}), retrying with index-expansion prompt"
+                )
+                messages = [
+                    *messages,
+                    {"role": "assistant", "content": content},
+                    {"role": "user", "content": _SINGLE_INDEX_RETRY_PROMPT},
+                ]
+                single_index_retry_done = True
                 use_schema = False
                 continue
 

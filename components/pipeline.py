@@ -28,6 +28,7 @@ from database.cost_tracking_store import CostTrackingStore
 from database.episode_store import EpisodeStore
 from database.topic_store import TopicStore
 from database.transcription_store import TranscriptionStore
+from models.ad_detection import AdSegment
 from models.feed import Episode, FeedParseInput, ParsedFeed, PublisherInput
 
 if TYPE_CHECKING:
@@ -204,7 +205,7 @@ class Pipeline:
 
         return parsed_feeds
 
-    async def _process_episode(  # noqa: PLR0912, PLR0915
+    async def _process_episode(  # noqa: C901, PLR0912, PLR0915
         self,
         *,
         episode: Episode,
@@ -257,7 +258,7 @@ class Pipeline:
         if output_exists:
             # Branch A: output already produced — reconstruct URL from existing file.
             logger.debug(
-                f"Episode '{episode.guid}': branch A — output already exists at {existing_audio}, skipping"
+                f"Episode '{episode.guid}': output already exists at {existing_audio}, skipping"
             )
             ext = existing_audio.suffix.lstrip(".")
             new_url = FeedPublisher.episode_url(
@@ -272,7 +273,7 @@ class Pipeline:
             if transcription_exists:
                 # Branch B: transcription OK, no output — re-download and probe; skip preprocess (D-05).
                 logger.debug(
-                    f"Episode '{episode.guid}': branch B — transcription cached, no output; re-downloading"
+                    f"Episode '{episode.guid}': transcription cached, no output; re-downloading"
                 )
                 raw_path = await self._episode_downloader.download(
                     episode.guid, episode.url, on_progress=self._on_download_progress
@@ -290,7 +291,7 @@ class Pipeline:
             elif cached_audio_exists:
                 # Branch C: cached audio present, transcription missing — transcribe from cached file.
                 logger.debug(
-                    f"Episode '{episode.guid}': branch C — cached audio found, transcription missing"
+                    f"Episode '{episode.guid}': cached audio found, transcription missing"
                 )
                 raw_path = cached_audio
                 meta = await self._audio_prober.probe(episode.guid, raw_path)
@@ -311,7 +312,12 @@ class Pipeline:
                 transcribed_guids.add(episode.guid)
                 if episode.guid not in extracted_guids:
                     _, topic_obj, topic_cost = await self._topic_extractor.extract(
-                        episode.guid, feed.config_title, episode.title, transcription.text
+                        episode.guid,
+                        feed.config_title,
+                        episode.title,
+                        feed.title,
+                        transcription.text,
+                        episode.description,
                     )
                     await topic_store.save_topic(topic_obj)
                     await cost_store.save_cost(topic_cost)
@@ -321,7 +327,7 @@ class Pipeline:
                     topic = await topic_store.get_topic_for_guid(episode.guid)
             else:
                 # Branch D: nothing exists — run the full pipeline.
-                logger.debug(f"Episode '{episode.guid}': branch D — full pipeline (nothing cached)")
+                logger.debug(f"Episode '{episode.guid}': full pipeline (nothing cached)")
                 raw_path = await self._episode_downloader.download(
                     episode.guid, episode.url, on_progress=self._on_download_progress
                 )
@@ -343,7 +349,12 @@ class Pipeline:
                 transcribed_guids.add(episode.guid)
                 if episode.guid not in extracted_guids:
                     _, topic_obj, topic_cost = await self._topic_extractor.extract(
-                        episode.guid, feed.config_title, episode.title, transcription.text
+                        episode.guid,
+                        feed.config_title,
+                        episode.title,
+                        feed.title,
+                        transcription.text,
+                        episode.description,
                     )
                     await topic_store.save_topic(topic_obj)
                     await cost_store.save_cost(topic_cost)
@@ -353,30 +364,48 @@ class Pipeline:
                     topic = await topic_store.get_topic_for_guid(episode.guid)
 
             # Ad detection tail (Branches B, C, D)
+            segment_map = dict(enumerate(t_segments))
             if episode.guid not in ad_detected_guids:
                 _, detections, ad_cost = await self._ad_detector.detect(
                     episode.guid, t_segments, topic
                 )
-                segments = self._ad_parser.parse(episode.guid, detections, t_segments)
-                await ad_store.save_segments(episode.guid, segments)
+                ad_segments = []
+                for d in detections:
+                    valid_indices = [i for i in d.indices if i in segment_map]
+                    if not valid_indices:
+                        continue
+                    ad_segments.append(AdSegment(
+                        guid=episode.guid,
+                        start_ms=min(segment_map[i].start_ms for i in valid_indices),
+                        end_ms=max(segment_map[i].end_ms for i in valid_indices),
+                        confidence=d.confidence,
+                        sponsor=d.sponsor,
+                        ad_topic=d.ad_topic,
+                        indices=valid_indices,
+                    ))
+                await ad_store.save_segments(episode.guid, ad_segments)
                 await ad_store.mark_detected(episode.guid)
                 await cost_store.save_cost(ad_cost)
                 ad_detected_guids.add(episode.guid)
             else:
-                segments = await ad_store.get_segments_for_guid(episode.guid)
+                ad_segments = await ad_store.get_segments_for_guid(episode.guid)
                 logger.debug(
-                    f"Episode '{episode.guid}': ad detection cached, loading {len(segments)} segment(s) from DB"
+                    f"Episode '{episode.guid}': ad detection cached, loading {len(ad_segments)} segment(s) from DB"
                 )
+
+            cut_ranges = self._ad_parser.parse(
+                ad_segments,
+                min_duration_ms=self._config.app.ad_detection.min_duration,
+                min_confidence=self._config.app.ad_detection.min_confidence,
+            )
 
             output_path = await self._audio_editor.edit(
                 episode.guid,
                 raw_path,
-                segments,
+                cut_ranges,
                 feed_slug,
                 episode.pub_date,
                 episode.title,
-                min_duration_ms=self._config.app.ad_detection.min_duration,
-                min_confidence=self._config.app.ad_detection.min_confidence,
                 total_duration_s=meta.duration,
             )
 

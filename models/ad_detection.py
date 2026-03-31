@@ -10,7 +10,7 @@ from pydantic import BaseModel
 class AdSegmentDetectionSchema(BaseModel):
     """Single ad segment as returned by the LLM."""
 
-    index: int
+    indices: list[int]
     confidence: float
     sponsor: str
     ad_topic: str
@@ -24,9 +24,9 @@ class AdDetectionResponseSchema(BaseModel):
 
 @dataclass
 class AdSegmentDetection:
-    """Raw LLM output for a single segment identified as an advertisement."""
+    """Raw LLM output for a single ad block identified by the LLM."""
 
-    index: int
+    indices: list[int]
     confidence: float
     sponsor: str
     ad_topic: str
@@ -42,6 +42,15 @@ class AdSegment:
     confidence: float
     sponsor: str
     ad_topic: str
+    indices: list[int]
+
+
+@dataclass
+class CutRange:
+    """A time range to cut from audio, containing only what ffmpeg needs."""
+
+    start_ms: int
+    end_ms: int
 
 
 @dataclass

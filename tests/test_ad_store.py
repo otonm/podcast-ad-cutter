@@ -34,6 +34,7 @@ def _seg(guid: str, start_ms: int = 60000, end_ms: int = 90000) -> AdSegment:
         confidence=0.95,
         sponsor="Acme",
         ad_topic="widget app",
+        indices=[1, 2, 3],
     )
 
 
@@ -105,15 +106,16 @@ async def test_save_segments_stores_correct_values(db_path: Path) -> None:
         store = AdStore(db.conn)
         await store.save_segments("ep-1", [
             AdSegment(guid="ep-1", start_ms=60000, end_ms=90000,
-                      confidence=0.95, sponsor="Acme", ad_topic="widget app"),
+                      confidence=0.95, sponsor="Acme", ad_topic="widget app",
+                      indices=[2, 3, 4]),
         ])
 
     async with aiosqlite.connect(db_path) as conn:
         cursor = await conn.execute(
-            "SELECT guid, start_ms, end_ms, confidence, sponsor, ad_topic FROM ad_segments"
+            "SELECT guid, start_ms, end_ms, confidence, sponsor, ad_topic, indices FROM ad_segments"
         )
         row = await cursor.fetchone()
-    assert row == ("ep-1", 60000, 90000, 0.95, "Acme", "widget app")
+    assert row == ("ep-1", 60000, 90000, 0.95, "Acme", "widget app", "[2, 3, 4]")
 
 
 async def test_save_segments_empty_list_is_noop(db_path: Path) -> None:
@@ -179,7 +181,8 @@ async def test_get_segments_for_guid_correct_fields(db_path: Path) -> None:
         store = AdStore(db.conn)
         await store.save_segments("ep-1", [
             AdSegment(guid="ep-1", start_ms=60000, end_ms=90000,
-                      confidence=0.95, sponsor="Acme", ad_topic="widget app"),
+                      confidence=0.95, sponsor="Acme", ad_topic="widget app",
+                      indices=[5, 6]),
         ])
         result = await store.get_segments_for_guid("ep-1")
 
@@ -190,6 +193,7 @@ async def test_get_segments_for_guid_correct_fields(db_path: Path) -> None:
     assert seg.confidence == pytest.approx(0.95)
     assert seg.sponsor == "Acme"
     assert seg.ad_topic == "widget app"
+    assert seg.indices == [5, 6]
 
 
 async def test_get_segments_for_guid_unknown_guid(db_path: Path) -> None:

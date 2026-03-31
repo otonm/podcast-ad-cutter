@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -72,12 +73,12 @@ class AdStore:
         await self._conn.execute("DELETE FROM ad_segments WHERE guid = ?", (guid,))
         if segments:
             rows = [
-                (s.guid, s.start_ms, s.end_ms, s.confidence, s.sponsor, s.ad_topic)
+                (s.guid, s.start_ms, s.end_ms, s.confidence, s.sponsor, s.ad_topic, json.dumps(s.indices))
                 for s in segments
             ]
             await self._conn.executemany(
-                "INSERT INTO ad_segments (guid, start_ms, end_ms, confidence, sponsor, ad_topic) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO ad_segments (guid, start_ms, end_ms, confidence, sponsor, ad_topic, indices) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
         await self._conn.commit()
@@ -95,7 +96,7 @@ class AdStore:
 
         """
         async with self._conn.execute(
-            "SELECT guid, start_ms, end_ms, confidence, sponsor, ad_topic "
+            "SELECT guid, start_ms, end_ms, confidence, sponsor, ad_topic, indices "
             "FROM ad_segments WHERE guid = ? ORDER BY start_ms ASC",
             (guid,),
         ) as cursor:
@@ -108,6 +109,7 @@ class AdStore:
                 confidence=row[3],
                 sponsor=row[4],
                 ad_topic=row[5],
+                indices=json.loads(row[6]),
             )
             for row in rows
         ]

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
 
-    from models.ad_detection import AdSegment
+    from models.ad_detection import CutRange
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +30,8 @@ _CODEC_MAP: dict[str, str] = {
 class AudioEditor:
     """Cuts ad segments from audio files using ffmpeg atrim+concat.
 
-    Returns ``None`` when there are no qualifying ads (below threshold or
-    all-audio-is-ads).  Returns the output ``Path`` when ads were cut.
+    Returns ``None`` when there are no cut ranges or all audio is ads.
+    Returns the output ``Path`` when ads were cut.
 
     Args:
         output_dir: Base output directory.
@@ -54,46 +54,34 @@ class AudioEditor:
         self,
         guid: str,
         input_path: Path,
-        ad_segments: list[AdSegment],
+        cut_ranges: list[CutRange],
         feed_slug: str,
         pub_date: datetime,
         title: str,
-        min_duration_ms: int,
-        min_confidence: float,
         total_duration_s: float = 3600.0,
     ) -> Path | None:
-        """Cut qualifying ad segments from audio and produce the output file.
+        """Cut ad time ranges from audio and produce the output file.
 
         Args:
             guid: Episode GUID (used for log messages).
             input_path: Raw downloaded audio file.
-            ad_segments: Detected ad segments (may be empty).
+            cut_ranges: Time ranges to cut (may be empty).
             feed_slug: Slugified feed title for output subdirectory.
             pub_date: Episode publication date.
             title: Episode title.
-            min_duration_ms: Minimum ad duration in milliseconds to qualify for cutting.
-            min_confidence: Minimum confidence score to qualify for cutting.
             total_duration_s: Total audio duration in seconds for ffmpeg progress.
 
         Returns:
-            Output file path when ads were cut; ``None`` when no qualifying ads exist
+            Output file path when ads were cut; ``None`` when no cut ranges exist
             (caller should keep the original episode URL unchanged).
 
         """
-        qualifying = [
-            s for s in ad_segments
-            if (s.end_ms - s.start_ms) >= min_duration_ms and s.confidence >= min_confidence
-        ]
-
-        logger.debug(
-            f"Episode '{guid}': {len(qualifying)} of {len(ad_segments)} ad segment(s) qualify "
-            f"(min_dur={min_duration_ms}ms, min_conf={min_confidence:.0%})"
-        )
-        if not qualifying:
+        logger.debug(f"Episode '{guid}': {len(cut_ranges)} cut range(s) to apply")
+        if not cut_ranges:
             return None
 
-        qualifying = self._merge_overlapping(qualifying)
-        keep_segments = self._build_keep_segments(qualifying, total_duration_s)
+        merged = self._merge_overlapping(cut_ranges)
+        keep_segments = self._build_keep_segments(merged, total_duration_s)
 
         if not keep_segments:
             logger.warning(
@@ -134,10 +122,10 @@ class AudioEditor:
         return dest
 
     @staticmethod
-    def _merge_overlapping(segments: list[AdSegment]) -> list[AdSegment]:
-        """Sort and merge any overlapping ad segments."""
+    def _merge_overlapping(segments: list[CutRange]) -> list[CutRange]:
+        """Sort and merge any overlapping cut ranges."""
         sorted_segs = sorted(segments, key=lambda s: s.start_ms)
-        merged: list[AdSegment] = [sorted_segs[0]]
+        merged: list[CutRange] = [sorted_segs[0]]
         for seg in sorted_segs[1:]:
             prev = merged[-1]
             if seg.start_ms <= prev.end_ms:
@@ -148,7 +136,7 @@ class AudioEditor:
 
     @staticmethod
     def _build_keep_segments(
-        qualifying: list[AdSegment],
+        qualifying: list[CutRange],
         total_duration_s: float,
     ) -> list[tuple[float, float | None]]:
         """Build list of (start_s, end_s|None) time ranges to keep."""
