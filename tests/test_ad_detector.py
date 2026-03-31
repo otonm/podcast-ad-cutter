@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import litellm
 import pytest
 
 from components.ad_detector import AdDetector
@@ -29,12 +30,12 @@ _TOPIC = TopicExtraction(
     show="Tech Talk",
 )
 
-_VALID_DETECTIONS = json.dumps([
+_VALID_DETECTIONS = json.dumps({"ads": [
     {"index": 1, "confidence": 0.95, "sponsor": "Acme", "ad_topic": "discount code"},
     {"index": 2, "confidence": 0.99, "sponsor": "Acme", "ad_topic": "promo offer"},
-])
+]})
 
-_EMPTY_DETECTIONS = json.dumps([])
+_EMPTY_DETECTIONS = json.dumps({"ads": []})
 
 
 def _make_response(
@@ -238,7 +239,7 @@ async def test_malformed_json_raises_ad_detection_error(detector: AdDetector) ->
 
 
 async def test_non_list_json_raises_ad_detection_error(detector: AdDetector) -> None:
-    mock_resp = _make_response(content=json.dumps({"index": 1}))
+    mock_resp = _make_response(content=json.dumps({"ads": "not_a_list"}))
     with (
         patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
         pytest.raises(AdDetectionError) as exc_info,
@@ -248,7 +249,7 @@ async def test_non_list_json_raises_ad_detection_error(detector: AdDetector) -> 
 
 
 async def test_json_missing_keys_raises_ad_detection_error(detector: AdDetector) -> None:
-    mock_resp = _make_response(content=json.dumps([{"index": 1}]))
+    mock_resp = _make_response(content=json.dumps({"ads": [{"index": 1}]}))
     with (
         patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
         pytest.raises(AdDetectionError) as exc_info,
@@ -354,3 +355,104 @@ async def test_cost_handles_type_error_in_float_conversion(detector: AdDetector)
     ):
         _, _, cost = await detector.detect("ep-1", _SEGMENTS, _TOPIC)
     assert cost.cost == pytest.approx(0.001)
+
+
+def _make_truncated_response(response_cost: float = 0.001) -> MagicMock:
+    """Simulate a response where the model ran out of tokens (finish_reason='length')."""
+    resp = _make_response(content="", response_cost=response_cost)
+    resp.choices[0].finish_reason = "length"
+    return resp
+
+
+def _make_bad_request_error(message: str) -> litellm.BadRequestError:
+    return litellm.BadRequestError(message=message, model="groq/model", llm_provider="groq")
+
+
+# ---------------------------------------------------------------------------
+# BadRequestError / json_validate_failed retry
+# ---------------------------------------------------------------------------
+
+async def test_finish_reason_length_retries_without_reasoning(detector: AdDetector) -> None:
+    """finish_reason=length on first attempt retries without reasoning and succeeds."""
+    truncated = _make_truncated_response(response_cost=0.001)
+    good_resp = _make_response(content=_VALID_DETECTIONS, response_cost=0.002)
+    with patch(
+        "components.ad_detector.litellm.acompletion",
+        new=AsyncMock(side_effect=[truncated, good_resp]),
+    ) as mock_call:
+        _, detections, cost = await detector.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert mock_call.await_count == 2
+    assert len(detections) == 2
+    assert cost.cost == pytest.approx(0.003)
+
+
+async def test_finish_reason_length_exhausted_raises(detector: AdDetector) -> None:
+    """finish_reason=length on every attempt raises AdDetectionError after max_retries."""
+    truncated = _make_truncated_response()
+    with (
+        patch(
+            "components.ad_detector.litellm.acompletion",
+            new=AsyncMock(side_effect=[truncated, truncated, truncated]),
+        ) as mock_call,
+        pytest.raises(AdDetectionError) as exc_info,
+    ):
+        await detector.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert mock_call.await_count == 3
+    assert "ep-1" in exc_info.value.message
+
+
+async def test_json_validate_failed_retries_without_schema(detector: AdDetector) -> None:
+    """json_validate_failed on first attempt retries and succeeds on second."""
+    err = _make_bad_request_error("GroqException - json_validate_failed")
+    good_resp = _make_response(content=_VALID_DETECTIONS, response_cost=0.002)
+    with patch(
+        "components.ad_detector.litellm.acompletion",
+        new=AsyncMock(side_effect=[err, good_resp]),
+    ) as mock_call:
+        _, detections, _ = await detector.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert mock_call.await_count == 2
+    assert len(detections) == 2
+
+
+async def test_json_validate_failed_exhausted_raises(detector: AdDetector) -> None:
+    """json_validate_failed on every attempt raises AdDetectionError after max_retries."""
+    err = _make_bad_request_error("GroqException - json_validate_failed")
+    with (
+        patch(
+            "components.ad_detector.litellm.acompletion",
+            new=AsyncMock(side_effect=[err, err, err]),
+        ) as mock_call,
+        pytest.raises(AdDetectionError) as exc_info,
+    ):
+        await detector.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert mock_call.await_count == 3
+    assert "ep-1" in exc_info.value.message
+
+
+async def test_non_json_validate_bad_request_raises_immediately(detector: AdDetector) -> None:
+    """A BadRequestError that is NOT json_validate_failed raises immediately without retrying."""
+    err = _make_bad_request_error("invalid_api_key")
+    with (
+        patch(
+            "components.ad_detector.litellm.acompletion",
+            new=AsyncMock(side_effect=err),
+        ) as mock_call,
+        pytest.raises(AdDetectionError),
+    ):
+        await detector.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert mock_call.await_count == 1
+
+
+async def test_json_validate_failed_after_parse_fail_then_succeeds(detector: AdDetector) -> None:
+    """Parse failure on attempt 0, json_validate_failed on attempt 1, success on attempt 2."""
+    bad_parse_resp = _make_response(content="not json", response_cost=0.001)
+    err = _make_bad_request_error("GroqException - json_validate_failed")
+    good_resp = _make_response(content=_VALID_DETECTIONS, response_cost=0.003)
+    with patch(
+        "components.ad_detector.litellm.acompletion",
+        new=AsyncMock(side_effect=[bad_parse_resp, err, good_resp]),
+    ) as mock_call:
+        _, detections, cost = await detector.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert mock_call.await_count == 3
+    assert len(detections) == 2
+    assert cost.cost == pytest.approx(0.004)  # 0.001 + 0.003 (schema err has no cost)

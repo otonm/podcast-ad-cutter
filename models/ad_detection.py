@@ -1,8 +1,25 @@
-"""Ad detection dataclasses."""
+"""Ad detection dataclasses and LLM response schemas."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from pydantic import BaseModel
+
+
+class AdSegmentDetectionSchema(BaseModel):
+    """Single ad segment as returned by the LLM."""
+
+    index: int
+    confidence: float
+    sponsor: str
+    ad_topic: str
+
+
+class AdDetectionResponseSchema(BaseModel):
+    """Top-level LLM response schema for ad detection."""
+
+    ads: list[AdSegmentDetectionSchema]
 
 
 @dataclass

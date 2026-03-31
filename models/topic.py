@@ -4,6 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pydantic import BaseModel
+
+
+class TopicExtractionSchema(BaseModel):
+    """LLM response schema for topic extraction."""
+
+    topic: str
+    hosts: str
+    show: str
+
 
 @dataclass
 class TopicExtraction:

@@ -7,41 +7,38 @@ import logging
 
 import litellm
 
-from models.topic import TopicExtraction, TopicExtractionCost
+from models.topic import TopicExtraction, TopicExtractionCost, TopicExtractionSchema
 from utils.exceptions import TopicExtractionError
 from utils.llm import compute_completion_cost
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_PROMPT = (
-    "You are a podcast metadata assistant. Given a podcast episode transcript, "
-    "extract the following and reply with a JSON object containing exactly these keys:\n"
-    '- "topic": A 3-sentence description of the main topic discussed.\n'
-    '- "hosts": A comma-separated list of host names as mentioned in the transcript.\n'
-    '- "show": The name of the podcast show as mentioned in the transcript.\n'
-    "If information is not found in the transcript, use an empty string for that field."
-)
 
-TOPIC_EXTRACTION_SYSTEM_PROMPT: str = """\
+class _JsonValidateFailedError(Exception):
+    """Internal sentinel: Groq rejected the JSON schema — the call should be retried without schema."""
+
+
+_SYSTEM_PROMPT: str = """You are an assistant to a podcast creator that assists with metadata gathering.
 Your job is to determine the main topic of a podcast from a given trascription segment.
 You are given a transcription of the beggining of a podcast (including possible ad segments etc.).
 Analyze the transcript and determine to the best of your ability the main topic of conversation.
 Summarize the topic in five sentences.
 Try to ignore any ads or promotions that are usually inserted at the beginning of an episode.
-Return information about the topic of the episode as a JSON object. No commentary, no markdown, no preamble.
+Return information about the topic of the episode as a JSON object containing exactly these keys:
+- "topic": A 3-sentence description of the main topic discussed.
+- "hosts": A comma-separated list of host names as mentioned in the transcript.
+- "show": The name of the podcast show as mentioned in the transcript.
 
-Structure of the JSON object:
-    'Schema: {"domain": str, "topic": str, "hosts": list[str], "notes": str}'
+No commentary, no markdown, no preamble.
 """
-
 
 _COMPLETION_RESERVE_TOKENS = 512
 
-_RETRY_PROMPT = (
-    "Your previous response was not valid JSON or was missing required keys. "
-    "Reply with only a JSON object containing exactly these three keys: "
-    '"topic", "hosts", "show". No other text.'
-)
+_RETRY_PROMPT: str = """
+Your previous response was not valid JSON or was missing required keys.
+Reply with only a JSON object containing exactly these three keys:
+"topic", "hosts", "show". No other text, no commentary, no markdown, no preamble.
+"""
 
 type TopicExtractionResult = tuple[str, TopicExtraction, TopicExtractionCost]
 
@@ -112,6 +109,41 @@ class TopicExtractor:
         )
         return trimmed
 
+    async def _call_llm(
+        self,
+        guid: str,
+        messages: list[dict[str, str]],
+        *,
+        use_schema: bool,
+        use_reasoning: bool,
+    ) -> litellm.ModelResponse:
+        """Call litellm.acompletion; translate retryable API errors into internal sentinels.
+
+        Raises:
+            _JsonValidateFailedError: When Groq rejects the JSON schema (retryable).
+            TopicExtractionError: On any other API-level failure (non-retryable).
+
+        """
+        response_format = TopicExtractionSchema if use_schema else None
+        reasoning_effort = "high" if use_reasoning else None
+        try:
+            return await litellm.acompletion(
+                model=self._model_id,
+                messages=messages,
+                response_format=response_format,
+                api_key=self._api_key,
+                reasoning_effort=reasoning_effort,
+                drop_params=True,
+            )
+        except litellm.BadRequestError as exc:
+            if "json_validate_failed" in str(exc):
+                raise _JsonValidateFailedError from exc
+            msg = f"litellm.acompletion failed for '{guid}': {exc}"
+            raise TopicExtractionError(msg) from exc
+        except Exception as exc:
+            msg = f"litellm.acompletion failed for '{guid}': {exc}"
+            raise TopicExtractionError(msg) from exc
+
     def _parse_response(self, content: str, guid: str, podcast: str, title: str) -> TopicExtraction:
         """Parse an LLM JSON response into a TopicExtraction; raises JSONDecodeError or KeyError on failure."""
         data = json.loads(content)
@@ -149,25 +181,44 @@ class TopicExtractor:
         logger.debug(f"Extracting topic for '{guid}' with model {self._model_id}")
         trimmed = self._truncate_transcript(transcript)
         messages = self._build_messages(trimmed)
-
-        try:
-            response = await litellm.acompletion(
-                model=self._model_id,
-                messages=messages,
-                response_format={"type": "json_object"},
-                api_key=self._api_key,
-                reasoning_effort="high",
-                drop_params=True
-            )
-        except Exception as exc:
-            msg = f"litellm.acompletion failed for '{guid}': {exc}"
-            logger.error(f"Skipping topic extraction for '{guid}': {msg}")
-            raise TopicExtractionError(msg) from exc
-
-        total_cost = compute_completion_cost(response, self._model_id)
-        content = response.choices[0].message.content
+        total_cost = 0.0
+        use_schema = True
+        use_reasoning = True
 
         for attempt in range(self._max_retries):
+            logger.debug(f"Calling LLM (attempt {attempt + 1}): schema={use_schema}, reasoning={use_reasoning}")
+            try:
+                response = await self._call_llm(
+                    guid, messages, use_schema=use_schema, use_reasoning=use_reasoning
+                )
+                logger.debug(f"LLM response: {response}")
+            except _JsonValidateFailedError as exc:
+                if attempt == self._max_retries - 1:
+                    msg = f"JSON schema validation failed for '{guid}' after {self._max_retries} attempts"
+                    logger.error(f"Skipping topic extraction for '{guid}': {msg}")
+                    raise TopicExtractionError(msg) from exc
+                logger.warning(
+                    f"JSON schema validation failed for '{guid}' (attempt {attempt + 1}), retrying without schema"
+                )
+                messages = [*messages, {"role": "user", "content": _RETRY_PROMPT}]
+                use_schema = False
+                continue
+
+            total_cost += compute_completion_cost(response, self._model_id)
+            content = response.choices[0].message.content
+
+            if response.choices[0].finish_reason == "length":
+                if attempt == self._max_retries - 1:
+                    msg = f"Completion truncated for '{guid}' after {self._max_retries} attempts"
+                    logger.error(f"Skipping topic extraction for '{guid}': {msg}")
+                    raise TopicExtractionError(msg)
+                logger.warning(
+                    f"Completion truncated (finish_reason=length) for '{guid}' "
+                    f"(attempt {attempt + 1}), retrying without reasoning"
+                )
+                use_reasoning = False
+                continue
+
             try:
                 extraction = self._parse_response(content, guid, podcast, title)
             except (json.JSONDecodeError, KeyError) as exc:
@@ -175,7 +226,6 @@ class TopicExtractor:
                     msg = f"Failed to parse LLM response for '{guid}' after {self._max_retries} attempts: {exc!r}"
                     logger.error(msg)
                     raise TopicExtractionError(msg) from exc
-
                 logger.warning(
                     f"Topic extraction response parse failed for '{guid}' (attempt {attempt + 1}): {exc!r}"
                 )
@@ -184,28 +234,16 @@ class TopicExtractor:
                     {"role": "assistant", "content": content},
                     {"role": "user", "content": _RETRY_PROMPT},
                 ]
-                try:
-                    response = await litellm.acompletion(
-                        model=self._model_id,
-                        messages=messages,
-                        response_format={"type": "json_object"},
-                        api_key=self._api_key,
-                        reasoning_effort="high",
-                        drop_params=True
-                    )
-                except Exception as retry_exc:
-                    msg = f"litellm.acompletion failed for '{guid}' on retry: {retry_exc}"
-                    raise TopicExtractionError(msg) from retry_exc
-                total_cost += compute_completion_cost(response, self._model_id)
-                content = response.choices[0].message.content
-            else:
-                cost_record = TopicExtractionCost(
-                    provider=self._provider,
-                    model=self._model,
-                    cost=total_cost,
-                )
-                logger.info(f"Extracted topic for '{guid}': show={extraction.show!r}, hosts={extraction.hosts!r}")
-                return (guid, extraction, cost_record)
+                use_schema = False
+                continue
+
+            cost_record = TopicExtractionCost(
+                provider=self._provider,
+                model=self._model,
+                cost=total_cost,
+            )
+            logger.info(f"Extracted topic for '{guid}': show={extraction.show!r}, hosts={extraction.hosts!r}")
+            return (guid, extraction, cost_record)
 
         msg = f"Topic extraction failed for '{guid}': exhausted retries"  # pragma: no cover
         raise TopicExtractionError(msg)  # pragma: no cover

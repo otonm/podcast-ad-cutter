@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import litellm
 
-from models.ad_detection import AdDetectionCost, AdSegmentDetection
+from models.ad_detection import AdDetectionCost, AdDetectionResponseSchema, AdSegmentDetection
 from utils.exceptions import AdDetectionError
 from utils.llm import compute_completion_cost
 
@@ -17,6 +17,11 @@ if TYPE_CHECKING:
     from models.transcription import TranscriptionSegment
 
 logger = logging.getLogger(__name__)
+
+
+class _JsonValidateFailedError(Exception):
+    """Internal sentinel: Groq rejected the JSON schema — the call should be retried without schema."""
+
 
 _COMPLETION_RESERVE_TOKENS = 512
 
@@ -85,13 +90,14 @@ The included timestamps will be then used in code to determine the lenght of the
 
 ## Output format
 
-Reply with a JSON array of objects, each with exactly these keys, no markdown, no preamble:
+Reply with a JSON object with a single key "ads" whose value is an array of objects, no markdown, no preamble.
+Each object must have exactly these keys:
 - "index": integer segment index
 - "confidence": float 0.0-1.0
 - "sponsor": advertiser name (empty string if unknown)
 - "ad_topic": brief description of the ad (empty string if unknown)
 
-If no segments are ads, reply with [].
+If no segments are ads, reply with {{"ads": []}}.
 
 ## Final notes
 
@@ -100,15 +106,16 @@ Use the confidence score to indicate your certainty.
 """
 
 _RETRY_PROMPT: str = """
-Your previous response was not valid JSON or was not a JSON array with required keys.
+Your previous response was not valid JSON or was missing the required structure.
 
-Reply with only a JSON array. Each element must have exactly these four keys:
+Reply with a JSON object with a single key "ads" whose value is an array.
+Each element must have exactly these four keys:
 - "index" (integer)
 - "confidence" (float 0.0-1.0)
 - "sponsor" (string)
 - "ad_topic" (string)
 
-If there are no ads, reply with []. No other text."""
+If there are no ads, reply with {"ads": []}. No other text."""
 
 type AdDetectionResult = tuple[str, list[AdSegmentDetection], AdDetectionCost]
 
@@ -188,10 +195,46 @@ class AdDetector:
         )
         return trimmed
 
+    async def _call_llm(
+        self,
+        guid: str,
+        messages: list[dict[str, str]],
+        *,
+        use_schema: bool,
+        use_reasoning: bool,
+    ) -> litellm.ModelResponse:
+        """Call litellm.acompletion; translate retryable API errors into internal sentinels.
+
+        Raises:
+            _JsonValidateFailedError: When Groq rejects the JSON schema (retryable).
+            AdDetectionError: On any other API-level failure (non-retryable).
+
+        """
+        response_format = AdDetectionResponseSchema if use_schema else None
+        reasoning_effort = "high" if use_reasoning else None
+        try:
+            return await litellm.acompletion(
+                model=self._model_id,
+                messages=messages,
+                response_format=response_format,
+                api_key=self._api_key,
+                reasoning_effort=reasoning_effort,
+                drop_params=True,
+            )
+        except litellm.BadRequestError as exc:
+            if "json_validate_failed" in str(exc):
+                raise _JsonValidateFailedError from exc
+            msg = f"litellm.acompletion failed for '{guid}': {exc}"
+            raise AdDetectionError(msg) from exc
+        except Exception as exc:
+            msg = f"litellm.acompletion failed for '{guid}': {exc}"
+            raise AdDetectionError(msg) from exc
+
     def _parse_response(self, content: str, guid: str) -> list[AdSegmentDetection]:
         data = json.loads(content)
-        if not isinstance(data, list):
-            msg = f"Expected JSON array, got {type(data).__name__} for '{guid}'"
+        items = data["ads"]
+        if not isinstance(items, list):
+            msg = f"Expected JSON array under 'ads', got {type(items).__name__} for '{guid}'"
             raise TypeError(msg)
         return [
             AdSegmentDetection(
@@ -200,7 +243,7 @@ class AdDetector:
                 sponsor=item["sponsor"],
                 ad_topic=item["ad_topic"],
             )
-            for item in data
+            for item in items
         ]
 
     async def detect(
@@ -234,25 +277,44 @@ class AdDetector:
         formatted = self._format_segments(segments)
         formatted = self._truncate_segments(formatted, system_prompt)
         messages = self._build_messages(system_prompt, formatted)
-
-        try:
-            response = await litellm.acompletion(
-                model=self._model_id,
-                messages=messages,
-                response_format={"type": "json_object"},
-                api_key=self._api_key,
-                reasoning_effort="high",
-                drop_params=True
-            )
-        except Exception as exc:
-            msg = f"litellm.acompletion failed for '{guid}': {exc}"
-            logger.error(f"Skipping ad detection for '{guid}': {msg}")
-            raise AdDetectionError(msg) from exc
-
-        total_cost = compute_completion_cost(response, self._model_id)
-        content = response.choices[0].message.content
+        total_cost = 0.0
+        use_schema = True
+        use_reasoning = True
 
         for attempt in range(self._max_retries):
+            logger.debug(f"Calling LLM (attempt {attempt + 1}): schema={use_schema}, reasoning={use_reasoning}")
+            try:
+                response = await self._call_llm(
+                    guid, messages, use_schema=use_schema, use_reasoning=use_reasoning
+                )
+                logger.debug(f"LLM Response: {response}")
+            except _JsonValidateFailedError as exc:
+                if attempt == self._max_retries - 1:
+                    msg = f"JSON schema validation failed for '{guid}' after {self._max_retries} attempts"
+                    logger.error(f"Skipping ad detection for '{guid}': {msg}")
+                    raise AdDetectionError(msg) from exc
+                logger.warning(
+                    f"JSON schema validation failed for '{guid}' (attempt {attempt + 1}), retrying without schema"
+                )
+                messages = [*messages, {"role": "user", "content": _RETRY_PROMPT}]
+                use_schema = False
+                continue
+
+            total_cost += compute_completion_cost(response, self._model_id)
+            content = response.choices[0].message.content
+
+            if response.choices[0].finish_reason == "length":
+                if attempt == self._max_retries - 1:
+                    msg = f"Completion truncated for '{guid}' after {self._max_retries} attempts"
+                    logger.error(f"Skipping ad detection for '{guid}': {msg}")
+                    raise AdDetectionError(msg)
+                logger.warning(
+                    f"Completion truncated (finish_reason=length) for '{guid}' "
+                    f"(attempt {attempt + 1}), retrying without reasoning"
+                )
+                use_reasoning = False
+                continue
+
             try:
                 detections = self._parse_response(content, guid)
             except (json.JSONDecodeError, KeyError, TypeError) as exc:
@@ -260,7 +322,6 @@ class AdDetector:
                     msg = f"Failed to parse LLM response for '{guid}' after {self._max_retries} attempts: {exc!r}"
                     logger.error(msg)
                     raise AdDetectionError(msg) from exc
-
                 logger.warning(
                     f"Ad detection response parse failed for '{guid}' (attempt {attempt + 1}): {exc!r}"
                 )
@@ -269,31 +330,19 @@ class AdDetector:
                     {"role": "assistant", "content": content},
                     {"role": "user", "content": _RETRY_PROMPT},
                 ]
-                try:
-                    response = await litellm.acompletion(
-                        model=self._model_id,
-                        messages=messages,
-                        response_format={"type": "json_object"},
-                        api_key=self._api_key,
-                        reasoning_effort="high",
-                        drop_params=True
-                    )
-                except Exception as retry_exc:
-                    msg = f"litellm.acompletion failed for '{guid}' on retry: {retry_exc}"
-                    raise AdDetectionError(msg) from retry_exc
-                total_cost += compute_completion_cost(response, self._model_id)
-                content = response.choices[0].message.content
+                use_schema = False
+                continue
+
+            cost_record = AdDetectionCost(
+                provider=self._provider,
+                model=self._model,
+                cost=total_cost,
+            )
+            if detections:
+                logger.info(f"Detected {len(detections)} ad segment(s) for '{guid}'")
             else:
-                cost_record = AdDetectionCost(
-                    provider=self._provider,
-                    model=self._model,
-                    cost=total_cost,
-                )
-                if detections:
-                    logger.info(f"Detected {len(detections)} ad segment(s) for '{guid}'")
-                else:
-                    logger.info(f"No ads detected for '{guid}'")
-                return (guid, detections, cost_record)
+                logger.info(f"No ads detected for '{guid}'")
+            return (guid, detections, cost_record)
 
         msg = f"Ad detection failed for '{guid}': exhausted retries"  # pragma: no cover
         raise AdDetectionError(msg)  # pragma: no cover

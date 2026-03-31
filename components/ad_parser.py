@@ -15,11 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class AdParser:
-    """Groups consecutive AdSegmentDetection results into merged AdSegment objects.
-
-    Pure logic — no I/O, no LLM, no database.
-
-    """
+    """Groups consecutive AdSegmentDetection results into merged AdSegment objects."""
 
     def parse(
         self,
@@ -79,4 +75,5 @@ class AdParser:
                 ad_topic=group[0].ad_topic,
             ))
 
+        logger.debug(f"Parsed ad segments: {result}")
         return result

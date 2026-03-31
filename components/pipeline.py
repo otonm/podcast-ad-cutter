@@ -204,7 +204,7 @@ class Pipeline:
 
         return parsed_feeds
 
-    async def _process_episode(  # noqa: PLR0915
+    async def _process_episode(  # noqa: PLR0912, PLR0915
         self,
         *,
         episode: Episode,
@@ -266,118 +266,133 @@ class Pipeline:
             await store.update_episode_url(episode.guid, new_url)
             await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url)
             return  # short-circuit — no further processing
-        if transcription_exists:
-            # Branch B: transcription OK, no output — re-download and probe; skip preprocess (D-05).
-            logger.debug(
-                f"Episode '{episode.guid}': branch B — transcription cached, no output; re-downloading"
-            )
-            raw_path = await self._episode_downloader.download(
-                episode.guid, episode.url, on_progress=self._on_download_progress
-            )
-            meta = await self._audio_prober.probe(episode.guid, raw_path)
-            await audio_metadata_store.save_all([meta])
-            t_segments = await transcription_store.get_segments_for_guid(episode.guid)
-            logger.debug(
-                f"Episode '{episode.guid}': loaded {len(t_segments)} transcription segment(s) from DB"
-            )
-            topic = await topic_store.get_topic_for_guid(episode.guid)
-            logger.debug(
-                f"Episode '{episode.guid}': topic context {'available' if topic else 'unavailable'}"
-            )
-        elif cached_audio_exists:
-            # Branch C: cached audio present, transcription missing — transcribe from cached file.
-            logger.debug(
-                f"Episode '{episode.guid}': branch C — cached audio found, transcription missing"
-            )
-            meta = await self._audio_prober.probe(episode.guid, cached_audio)
-            await audio_metadata_store.save_all([meta])
-            mono_path = await self._audio_preprocessor.preprocess(
-                episode.guid, cached_audio, meta.duration, on_progress=self._on_preprocess_progress
-            )
-            _, transcription, t_segments, cost = await self._transcriptor.transcribe(
-                episode.guid, mono_path
-            )
-            await transcription_store.save_transcription(transcription)
-            await transcription_store.save_segments(t_segments)
-            await cost_store.save_cost(cost)
-            transcribed_guids.add(episode.guid)
-            if episode.guid not in extracted_guids:
-                _, topic_obj, topic_cost = await self._topic_extractor.extract(
-                    episode.guid, feed.config_title, episode.title, transcription.text
+
+        raw_path: Path | None = None
+        try:
+            if transcription_exists:
+                # Branch B: transcription OK, no output — re-download and probe; skip preprocess (D-05).
+                logger.debug(
+                    f"Episode '{episode.guid}': branch B — transcription cached, no output; re-downloading"
                 )
-                await topic_store.save_topic(topic_obj)
-                await cost_store.save_cost(topic_cost)
-                extracted_guids.add(episode.guid)
-                topic = topic_obj
-            else:
-                topic = await topic_store.get_topic_for_guid(episode.guid)
-            raw_path = cached_audio  # AudioEditor receives the cached audio path in Branch C
-        else:
-            # Branch D: nothing exists — run the full pipeline.
-            logger.debug(f"Episode '{episode.guid}': branch D — full pipeline (nothing cached)")
-            raw_path = await self._episode_downloader.download(
-                episode.guid, episode.url, on_progress=self._on_download_progress
-            )
-            meta = await self._audio_prober.probe(episode.guid, raw_path)
-            await audio_metadata_store.save_all([meta])
-            mono_path = await self._audio_preprocessor.preprocess(
-                episode.guid, raw_path, meta.duration, on_progress=self._on_preprocess_progress
-            )
-            _, transcription, t_segments, cost = await self._transcriptor.transcribe(
-                episode.guid, mono_path
-            )
-            await transcription_store.save_transcription(transcription)
-            await transcription_store.save_segments(t_segments)
-            await cost_store.save_cost(cost)
-            transcribed_guids.add(episode.guid)
-            if episode.guid not in extracted_guids:
-                _, topic_obj, topic_cost = await self._topic_extractor.extract(
-                    episode.guid, feed.config_title, episode.title, transcription.text
+                raw_path = await self._episode_downloader.download(
+                    episode.guid, episode.url, on_progress=self._on_download_progress
                 )
-                await topic_store.save_topic(topic_obj)
-                await cost_store.save_cost(topic_cost)
-                extracted_guids.add(episode.guid)
-                topic = topic_obj
-            else:
+                meta = await self._audio_prober.probe(episode.guid, raw_path)
+                await audio_metadata_store.save_all([meta])
+                t_segments = await transcription_store.get_segments_for_guid(episode.guid)
+                logger.debug(
+                    f"Episode '{episode.guid}': loaded {len(t_segments)} transcription segment(s) from DB"
+                )
                 topic = await topic_store.get_topic_for_guid(episode.guid)
+                logger.debug(
+                    f"Episode '{episode.guid}': topic context {'available' if topic else 'unavailable'}"
+                )
+            elif cached_audio_exists:
+                # Branch C: cached audio present, transcription missing — transcribe from cached file.
+                logger.debug(
+                    f"Episode '{episode.guid}': branch C — cached audio found, transcription missing"
+                )
+                raw_path = cached_audio
+                meta = await self._audio_prober.probe(episode.guid, raw_path)
+                await audio_metadata_store.save_all([meta])
+                mono_path = await self._audio_preprocessor.preprocess(
+                    episode.guid, raw_path, meta.duration, on_progress=self._on_preprocess_progress
+                )
+                try:
+                    _, transcription, t_segments, cost = await self._transcriptor.transcribe(
+                        episode.guid, mono_path
+                    )
+                finally:
+                    mono_path.unlink(missing_ok=True)
+                    logger.debug(f"Episode '{episode.guid}': removed mono file {mono_path}")
+                await transcription_store.save_transcription(transcription)
+                await transcription_store.save_segments(t_segments)
+                await cost_store.save_cost(cost)
+                transcribed_guids.add(episode.guid)
+                if episode.guid not in extracted_guids:
+                    _, topic_obj, topic_cost = await self._topic_extractor.extract(
+                        episode.guid, feed.config_title, episode.title, transcription.text
+                    )
+                    await topic_store.save_topic(topic_obj)
+                    await cost_store.save_cost(topic_cost)
+                    extracted_guids.add(episode.guid)
+                    topic = topic_obj
+                else:
+                    topic = await topic_store.get_topic_for_guid(episode.guid)
+            else:
+                # Branch D: nothing exists — run the full pipeline.
+                logger.debug(f"Episode '{episode.guid}': branch D — full pipeline (nothing cached)")
+                raw_path = await self._episode_downloader.download(
+                    episode.guid, episode.url, on_progress=self._on_download_progress
+                )
+                meta = await self._audio_prober.probe(episode.guid, raw_path)
+                await audio_metadata_store.save_all([meta])
+                mono_path = await self._audio_preprocessor.preprocess(
+                    episode.guid, raw_path, meta.duration, on_progress=self._on_preprocess_progress
+                )
+                try:
+                    _, transcription, t_segments, cost = await self._transcriptor.transcribe(
+                        episode.guid, mono_path
+                    )
+                finally:
+                    mono_path.unlink(missing_ok=True)
+                    logger.debug(f"Episode '{episode.guid}': removed mono file {mono_path}")
+                await transcription_store.save_transcription(transcription)
+                await transcription_store.save_segments(t_segments)
+                await cost_store.save_cost(cost)
+                transcribed_guids.add(episode.guid)
+                if episode.guid not in extracted_guids:
+                    _, topic_obj, topic_cost = await self._topic_extractor.extract(
+                        episode.guid, feed.config_title, episode.title, transcription.text
+                    )
+                    await topic_store.save_topic(topic_obj)
+                    await cost_store.save_cost(topic_cost)
+                    extracted_guids.add(episode.guid)
+                    topic = topic_obj
+                else:
+                    topic = await topic_store.get_topic_for_guid(episode.guid)
 
-        # Ad detection tail (Branches B, C, D)
-        if episode.guid not in ad_detected_guids:
-            _, detections, ad_cost = await self._ad_detector.detect(
-                episode.guid, t_segments, topic
-            )
-            segments = self._ad_parser.parse(episode.guid, detections, t_segments)
-            await ad_store.save_segments(episode.guid, segments)
-            await ad_store.mark_detected(episode.guid)
-            await cost_store.save_cost(ad_cost)
-            ad_detected_guids.add(episode.guid)
-        else:
-            segments = await ad_store.get_segments_for_guid(episode.guid)
-            logger.debug(
-                f"Episode '{episode.guid}': ad detection cached, loading {len(segments)} segment(s) from DB"
+            # Ad detection tail (Branches B, C, D)
+            if episode.guid not in ad_detected_guids:
+                _, detections, ad_cost = await self._ad_detector.detect(
+                    episode.guid, t_segments, topic
+                )
+                segments = self._ad_parser.parse(episode.guid, detections, t_segments)
+                await ad_store.save_segments(episode.guid, segments)
+                await ad_store.mark_detected(episode.guid)
+                await cost_store.save_cost(ad_cost)
+                ad_detected_guids.add(episode.guid)
+            else:
+                segments = await ad_store.get_segments_for_guid(episode.guid)
+                logger.debug(
+                    f"Episode '{episode.guid}': ad detection cached, loading {len(segments)} segment(s) from DB"
+                )
+
+            output_path = await self._audio_editor.edit(
+                episode.guid,
+                raw_path,
+                segments,
+                feed_slug,
+                episode.pub_date,
+                episode.title,
+                min_duration_ms=self._config.app.ad_detection.min_duration,
+                min_confidence=self._config.app.ad_detection.min_confidence,
+                total_duration_s=meta.duration,
             )
 
-        output_path = await self._audio_editor.edit(
-            episode.guid,
-            raw_path,
-            segments,
-            feed_slug,
-            episode.pub_date,
-            episode.title,
-            min_duration_ms=self._config.app.ad_detection.min_duration,
-            min_confidence=self._config.app.ad_detection.min_confidence,
-            total_duration_s=meta.duration,
-        )
-
-        if output_path is not None:
-            new_url = FeedPublisher.episode_url(
-                self._config.app.base_url, feed_slug, episode.pub_date, episode.title,
-                self._config.app.output.file_type,
-            )
-            await store.update_episode_url(episode.guid, new_url)
-            await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url)
-        else:
-            logger.info(f"Episode '{episode.guid}': no qualifying ads — original audio unchanged")
+            if output_path is not None:
+                new_url = FeedPublisher.episode_url(
+                    self._config.app.base_url, feed_slug, episode.pub_date, episode.title,
+                    self._config.app.output.file_type,
+                )
+                await store.update_episode_url(episode.guid, new_url)
+                await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url)
+            else:
+                logger.info(f"Episode '{episode.guid}': no qualifying ads — original audio unchanged")
+        finally:
+            if raw_path is not None:
+                raw_path.unlink(missing_ok=True)
+                logger.debug(f"Episode '{episode.guid}': removed cached audio {raw_path}")
 
     def _output_rss_path(self, feed: ParsedFeed) -> Path:
         """Return the expected RSS output path for a parsed feed.

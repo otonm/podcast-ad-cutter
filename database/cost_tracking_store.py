@@ -3,24 +3,14 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import aiosqlite
 
+    from models.cost import CostRecord
+
 logger = logging.getLogger(__name__)
-
-
-class CostRecord(Protocol):
-    """Structural type accepted by :meth:`CostTrackingStore.save_cost`.
-
-    Any dataclass with ``provider``, ``model``, and ``cost`` fields satisfies
-    this protocol (e.g. ``TranscriptionCost``, ``TopicExtractionCost``).
-    """
-
-    provider: str
-    model: str
-    cost: float
 
 
 class CostTrackingStore:

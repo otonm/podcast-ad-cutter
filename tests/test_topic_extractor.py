@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import litellm
 import pytest
 
 from components.topic_extractor import TopicExtractor
-from models.topic import TopicExtraction, TopicExtractionCost
+from models.topic import TopicExtraction, TopicExtractionCost, TopicExtractionSchema
 from utils.exceptions import TopicExtractionError
 
 _VALID_JSON = json.dumps({
@@ -143,7 +144,7 @@ async def test_extract_passes_json_response_format(extractor: TopicExtractor) ->
         new=AsyncMock(return_value=mock_resp),
     ) as mock_call:
         await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
-    assert mock_call.call_args.kwargs["response_format"] == {"type": "json_object"}
+    assert mock_call.call_args.kwargs["response_format"] is TopicExtractionSchema
 
 
 async def test_extract_passes_messages_list(extractor: TopicExtractor) -> None:
@@ -486,3 +487,104 @@ async def test_extract_api_failure_on_retry_raises_immediately(extractor: TopicE
     ):
         await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
     assert mock_call.await_count == 2
+
+
+def _make_truncated_response(response_cost: float = 0.001) -> MagicMock:
+    """Simulate a response where the model ran out of tokens (finish_reason='length')."""
+    resp = _make_response(content="", response_cost=response_cost)
+    resp.choices[0].finish_reason = "length"
+    return resp
+
+
+def _make_bad_request_error(message: str) -> litellm.BadRequestError:
+    return litellm.BadRequestError(message=message, model="groq/model", llm_provider="groq")
+
+
+# ---------------------------------------------------------------------------
+# BadRequestError / json_validate_failed retry
+# ---------------------------------------------------------------------------
+
+async def test_finish_reason_length_retries_without_reasoning(extractor: TopicExtractor) -> None:
+    """finish_reason=length on first attempt retries without reasoning and succeeds."""
+    truncated = _make_truncated_response(response_cost=0.001)
+    good_resp = _make_response(content=_VALID_JSON, response_cost=0.002)
+    with patch(
+        "components.topic_extractor.litellm.acompletion",
+        new=AsyncMock(side_effect=[truncated, good_resp]),
+    ) as mock_call:
+        _, extraction, cost = await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+    assert mock_call.await_count == 2
+    assert extraction.show == "Tech Talk"
+    assert cost.cost == pytest.approx(0.003)
+
+
+async def test_finish_reason_length_exhausted_raises(extractor: TopicExtractor) -> None:
+    """finish_reason=length on every attempt raises TopicExtractionError after max_retries."""
+    truncated = _make_truncated_response()
+    with (
+        patch(
+            "components.topic_extractor.litellm.acompletion",
+            new=AsyncMock(side_effect=[truncated, truncated, truncated]),
+        ) as mock_call,
+        pytest.raises(TopicExtractionError) as exc_info,
+    ):
+        await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+    assert mock_call.await_count == 3
+    assert "ep-1" in exc_info.value.message
+
+
+async def test_json_validate_failed_retries_without_schema(extractor: TopicExtractor) -> None:
+    """json_validate_failed on first attempt retries and succeeds on second."""
+    err = _make_bad_request_error("GroqException - json_validate_failed")
+    good_resp = _make_response(content=_VALID_JSON, response_cost=0.002)
+    with patch(
+        "components.topic_extractor.litellm.acompletion",
+        new=AsyncMock(side_effect=[err, good_resp]),
+    ) as mock_call:
+        _, extraction, _ = await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+    assert mock_call.await_count == 2
+    assert extraction.show == "Tech Talk"
+
+
+async def test_json_validate_failed_exhausted_raises(extractor: TopicExtractor) -> None:
+    """json_validate_failed on every attempt raises TopicExtractionError after max_retries."""
+    err = _make_bad_request_error("GroqException - json_validate_failed")
+    with (
+        patch(
+            "components.topic_extractor.litellm.acompletion",
+            new=AsyncMock(side_effect=[err, err, err]),
+        ) as mock_call,
+        pytest.raises(TopicExtractionError) as exc_info,
+    ):
+        await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+    assert mock_call.await_count == 3
+    assert "ep-1" in exc_info.value.message
+
+
+async def test_non_json_validate_bad_request_raises_immediately(extractor: TopicExtractor) -> None:
+    """A BadRequestError that is NOT json_validate_failed raises immediately without retrying."""
+    err = _make_bad_request_error("invalid_api_key")
+    with (
+        patch(
+            "components.topic_extractor.litellm.acompletion",
+            new=AsyncMock(side_effect=err),
+        ) as mock_call,
+        pytest.raises(TopicExtractionError),
+    ):
+        await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+    assert mock_call.await_count == 1
+
+
+async def test_json_validate_failed_after_parse_fail_then_succeeds(extractor: TopicExtractor) -> None:
+    """Parse failure on attempt 0, json_validate_failed on attempt 1, success on attempt 2."""
+    bad_parse_resp = _make_response(content="not json", response_cost=0.001)
+    err = _make_bad_request_error("GroqException - json_validate_failed")
+    good_resp = _make_response(content=_VALID_JSON, response_cost=0.003)
+    with patch(
+        "components.topic_extractor.litellm.acompletion",
+        new=AsyncMock(side_effect=[bad_parse_resp, err, good_resp]),
+    ) as mock_call:
+        _, extraction, cost = await extractor.extract("ep-1", "pod", "title", _TRANSCRIPT)
+    assert mock_call.await_count == 3
+    assert extraction.hosts == "Alice, Bob"
+    assert cost.cost == pytest.approx(0.004)  # 0.001 + 0.003 (schema err has no cost)

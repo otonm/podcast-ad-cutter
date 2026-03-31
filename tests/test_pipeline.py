@@ -15,6 +15,7 @@ from models.ad_detection import AdDetectionCost, AdSegment  # noqa: TC002
 from models.feed import AudioMetadata, Episode, FeedParseInput, ParsedFeed, PublisherInput
 from models.topic import TopicExtraction, TopicExtractionCost
 from models.transcription import Transcription, TranscriptionCost, TranscriptionSegment
+from utils.exceptions import FfmpegError, TranscriptionError
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -1904,3 +1905,237 @@ async def test_branch_d_topic_already_extracted_loads_from_store() -> None:
 
     m_topic_ext.return_value.extract.assert_not_called()
     m_topic_store.return_value.get_topic_for_guid.assert_awaited_once_with("ep-1")
+
+# ---------------------------------------------------------------------------
+# Cache cleanup tests
+# ---------------------------------------------------------------------------
+
+_PATCHES = (
+    "components.pipeline.FeedDownloader",
+    "components.pipeline.FeedParser",
+    "components.pipeline.FeedPublisher",
+    "components.pipeline.Database",
+    "components.pipeline.EpisodeStore",
+    "components.pipeline.TranscriptionStore",
+    "components.pipeline.AudioMetadataStore",
+    "components.pipeline.CostTrackingStore",
+    "components.pipeline.EpisodeDownloader",
+    "components.pipeline.AudioProber",
+    "components.pipeline.AudioPreprocessor",
+    "components.pipeline.EpisodeTranscriptor",
+    "components.pipeline.AdStore",
+    "components.pipeline.TopicExtractor",
+    "components.pipeline.TopicStore",
+    "components.pipeline.AdDetector",
+    "components.pipeline.AdParser",
+    "components.pipeline.AudioEditor",
+)
+
+
+async def test_branch_c_deletes_mono_after_transcription(tmp_path: Path) -> None:
+    """Branch C: mono file is deleted after successful transcription."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    (cache_dir / "ep-1.mp3").write_bytes(b"audio")
+    mono_file = tmp_path / "ep-1.mono.m4a"
+    mono_file.write_bytes(b"mono")
+
+    config, ep, parsed = _branch_config(MagicMock())
+    config.app.paths.cache_dir = cache_dir
+
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        m_prep.return_value.preprocess = AsyncMock(return_value=mono_file)
+        await Pipeline(config).run()
+
+    assert not mono_file.exists()
+
+
+async def test_branch_d_deletes_mono_after_transcription(tmp_path: Path) -> None:
+    """Branch D: mono file is deleted after successful transcription."""
+    raw_file = tmp_path / "ep-1.mp3"
+    raw_file.write_bytes(b"audio")
+    mono_file = tmp_path / "ep-1.mono.m4a"
+    mono_file.write_bytes(b"mono")
+
+    config, ep, parsed = _branch_config(MagicMock())
+
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        m_ep_dl.return_value.download = AsyncMock(return_value=raw_file)
+        m_prep.return_value.preprocess = AsyncMock(return_value=mono_file)
+        await Pipeline(config).run()
+
+    assert not mono_file.exists()
+
+
+async def test_branch_c_deletes_mono_on_transcription_error(tmp_path: Path) -> None:
+    """Branch C: mono file is deleted even when transcription raises."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    (cache_dir / "ep-1.mp3").write_bytes(b"audio")
+    mono_file = tmp_path / "ep-1.mono.m4a"
+    mono_file.write_bytes(b"mono")
+
+    config, ep, parsed = _branch_config(MagicMock())
+    config.app.paths.cache_dir = cache_dir
+
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        m_prep.return_value.preprocess = AsyncMock(return_value=mono_file)
+        m_trans.return_value.transcribe = AsyncMock(side_effect=TranscriptionError("STT failure"))
+        await Pipeline(config).run()  # exception swallowed at episode loop level
+
+    assert not mono_file.exists()
+
+
+async def test_branch_d_deletes_mono_on_transcription_error(tmp_path: Path) -> None:
+    """Branch D: mono file is deleted even when transcription raises."""
+    raw_file = tmp_path / "ep-1.mp3"
+    raw_file.write_bytes(b"audio")
+    mono_file = tmp_path / "ep-1.mono.m4a"
+    mono_file.write_bytes(b"mono")
+
+    config, ep, parsed = _branch_config(MagicMock())
+
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        m_ep_dl.return_value.download = AsyncMock(return_value=raw_file)
+        m_prep.return_value.preprocess = AsyncMock(return_value=mono_file)
+        m_trans.return_value.transcribe = AsyncMock(side_effect=TranscriptionError("STT failure"))
+        await Pipeline(config).run()
+
+    assert not mono_file.exists()
+
+
+async def test_branch_b_deletes_raw_after_pipeline(tmp_path: Path) -> None:
+    """Branch B: re-downloaded audio is deleted after the pipeline completes."""
+    raw_file = tmp_path / "ep-1.mp3"
+    raw_file.write_bytes(b"audio")
+
+    config, ep, parsed = _branch_config(MagicMock())
+
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids={"ep-1"},
+        )
+        m_ep_dl.return_value.download = AsyncMock(return_value=raw_file)
+        await Pipeline(config).run()
+
+    assert not raw_file.exists()
+
+
+async def test_branch_c_deletes_raw_after_pipeline(tmp_path: Path) -> None:
+    """Branch C: cached audio is deleted after the pipeline completes."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    raw_file = cache_dir / "ep-1.mp3"
+    raw_file.write_bytes(b"audio")
+    mono_file = tmp_path / "ep-1.mono.m4a"
+    mono_file.write_bytes(b"mono")
+
+    config, ep, parsed = _branch_config(MagicMock())
+    config.app.paths.cache_dir = cache_dir
+
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        m_prep.return_value.preprocess = AsyncMock(return_value=mono_file)
+        await Pipeline(config).run()
+
+    assert not raw_file.exists()
+
+
+async def test_branch_d_deletes_raw_after_pipeline(tmp_path: Path) -> None:
+    """Branch D: downloaded audio is deleted after the pipeline completes."""
+    raw_file = tmp_path / "ep-1.mp3"
+    raw_file.write_bytes(b"audio")
+    mono_file = tmp_path / "ep-1.mono.m4a"
+    mono_file.write_bytes(b"mono")
+
+    config, ep, parsed = _branch_config(MagicMock())
+
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        m_ep_dl.return_value.download = AsyncMock(return_value=raw_file)
+        m_prep.return_value.preprocess = AsyncMock(return_value=mono_file)
+        await Pipeline(config).run()
+
+    assert not raw_file.exists()
+
+
+async def test_branch_d_deletes_raw_on_preprocessing_error(tmp_path: Path) -> None:
+    """Branch D: raw file is deleted even when preprocessing raises (download succeeded)."""
+    raw_file = tmp_path / "ep-1.mp3"
+    raw_file.write_bytes(b"audio")
+
+    config, ep, parsed = _branch_config(MagicMock())
+
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        m_ep_dl.return_value.download = AsyncMock(return_value=raw_file)
+        m_prep.return_value.preprocess = AsyncMock(side_effect=FfmpegError("ffmpeg failed"))
+        await Pipeline(config).run()
+
+    assert not raw_file.exists()
+
+
+async def test_branch_d_deletes_raw_on_audio_editor_error(tmp_path: Path) -> None:
+    """Branch D: raw file is deleted even when the audio editor raises."""
+    raw_file = tmp_path / "ep-1.mp3"
+    raw_file.write_bytes(b"audio")
+    mono_file = tmp_path / "ep-1.mono.m4a"
+    mono_file.write_bytes(b"mono")
+
+    config, ep, parsed = _branch_config(MagicMock())
+
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        m_ep_dl.return_value.download = AsyncMock(return_value=raw_file)
+        m_prep.return_value.preprocess = AsyncMock(return_value=mono_file)
+        m_audio_editor.return_value.edit = AsyncMock(side_effect=RuntimeError("edit failed"))
+        await Pipeline(config).run()
+
+    assert not raw_file.exists()
