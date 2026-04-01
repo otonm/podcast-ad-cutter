@@ -1,0 +1,34 @@
+# Version control
+.git/
+.gitignore
+
+# Tests (not needed at runtime)
+tests/
+
+# Runtime directories (mounted as volumes)
+output/
+data/
+logs/
+cache/
+
+# Configuration (must be mounted externally)
+config.yaml
+.env
+.env.*
+
+# Python bytecode and tool caches
+.venv/
+.uv/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+
+# Documentation
+docs/
+
+# Editor and OS artifacts
+.DS_Store
+*.swp

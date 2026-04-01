@@ -1,0 +1,56 @@
+# docker-compose.example.yml — copy to docker-compose.yml on your VPS and edit.
+#
+# BEFORE STARTING:
+#   1. Copy config.example.yaml → config.yaml and configure your feeds and models.
+#      Set paths to the container mount points:
+#        paths:
+#          output_dir: /output
+#          cache_dir:  /cache
+#          data_dir:   /data
+#          log_dir:    /logs
+#   2. Set base_url to your public hostname — this is embedded in RSS episode links
+#      and must be reachable by podcast clients (Overcast, Pocket Casts, etc.):
+#        base_url: https://podcasts.example.com
+#   3. Fill in at least one API key for the provider(s) used in config.yaml.
+#   4. Pull and start:
+#        docker compose pull && docker compose up -d
+
+services:
+  podcast-ad-cutter:
+    image: ghcr.io/otonm/podcast-ad-cutter:latest
+    restart: unless-stopped
+
+    environment:
+      # Cron schedule (standard crontab syntax: minute hour dom month dow).
+      # Default: run at the top of every hour.
+      CRON_SCHEDULE: "0 * * * *"
+
+      # API keys — set the one(s) used by your config.yaml models.*.provider values
+      GROQ_API_KEY: ""
+      OPENAI_API_KEY: ""
+      OPENROUTER_API_KEY: ""
+
+      # Optional CLI overrides (leave empty to use config.yaml defaults)
+      APP_FEED: ""                  # process only this feed by its title; empty = all feeds
+      APP_MIN_CONFIDENCE: ""        # float 0.0–1.0, overrides ad_detection.min_confidence
+      APP_FORCE_AI_DETECTION: ""    # set to "true" to force AI-based ad detection
+      APP_LOG_TO_FILE: ""           # set to "true" to write timestamped logs to /logs
+      APP_DEBUG: ""                 # set to "true" for debug-level logging
+
+    volumes:
+      # config.yaml is bind-mounted read-only from the host.
+      # The container always reads config from /config/config.yaml.
+      - ./config.yaml:/config/config.yaml:ro
+
+      # Named volumes for runtime data. Docker manages ownership.
+      # These paths must match the paths.* section in your config.yaml.
+      - output:/output   # RSS feeds (.rss) and processed audio files (.mp3)
+      - data:/data       # SQLite database (data.db)
+      - logs:/logs       # timestamped log files (when APP_LOG_TO_FILE=true)
+      - cache:/cache     # temporary audio files during processing
+
+volumes:
+  output:
+  data:
+  logs:
+  cache:
