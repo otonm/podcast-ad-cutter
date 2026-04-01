@@ -92,7 +92,7 @@ def configure_logging(*, level: str, log_to_file: bool, log_dir: Path = Path("lo
     if log_to_file:
         log_dir.mkdir(parents=True, exist_ok=True)
         # Use local timezone for the filename timestamp
-        timestamp = datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+        timestamp = datetime.now().astimezone().strftime("%d.%m.%Y-%H.%M.%S")
         file_handler = logging.FileHandler(log_dir / f"{timestamp}.log", encoding="utf-8")
         file_handler.setFormatter(formatter)
         root.addHandler(file_handler)

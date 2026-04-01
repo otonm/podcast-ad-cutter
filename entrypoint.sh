@@ -3,22 +3,16 @@ set -eu
 
 CRON_SCHEDULE="${CRON_SCHEDULE:-0 * * * *}"
 
-# Write the run script dynamically so it always exists in /tmp.
-# Single-quoted heredoc: $ and $@ are literal (not expanded here).
-cat > /tmp/run.sh << 'SCRIPT'
-#!/bin/sh
-set -- --config /config/config.yaml
-[ -n "${APP_FEED:-}" ]               && set -- "$@" --feed "${APP_FEED}"
-[ -n "${APP_MIN_CONFIDENCE:-}" ]     && set -- "$@" --min-confidence "${APP_MIN_CONFIDENCE}"
-[ -n "${APP_FORCE_AI_DETECTION:-}" ] && set -- "$@" --force-ai-detection
-[ -n "${APP_LOG_TO_FILE:-}" ]        && set -- "$@" --log-to-file
-[ -n "${APP_DEBUG:-}" ]              && set -- "$@" --debug
-echo "run: python main.py $*"
-exec /app/.venv/bin/python /app/main.py "$@"
-SCRIPT
-chmod +x /tmp/run.sh
+# Fix ownership of bind-mounted volumes — runs as root before privilege drop
+chown -R app:app /output /data /logs /cache /config 2>/dev/null || true
 
-printf '%s /bin/sh /tmp/run.sh\n' "${CRON_SCHEDULE}" > /tmp/crontab
+if [ ! -f /app/run.sh ]; then
+    echo "ERROR: /app/run.sh not found in container image" >&2
+    exit 1
+fi
+
+# Use explicit interpreter — avoids shebang exec issues in some container runtimes
+printf '%s /bin/sh /app/run.sh\n' "${CRON_SCHEDULE}" > /tmp/crontab
 
 echo "entrypoint: schedule=${CRON_SCHEDULE}"
-exec /usr/local/bin/supercronic /tmp/crontab
+exec gosu app /usr/local/bin/supercronic /tmp/crontab

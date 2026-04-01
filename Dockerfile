@@ -4,6 +4,7 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         curl \
+        gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # supercronic — pin version for reproducible builds
@@ -34,5 +35,4 @@ RUN chmod +x /app/entrypoint.sh /app/run.sh
 RUN mkdir -p /output /data /logs /cache /config \
     && chown -R app:app /output /data /logs /cache /config
 
-USER app
 ENTRYPOINT ["/app/entrypoint.sh"]
