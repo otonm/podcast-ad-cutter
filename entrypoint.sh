@@ -21,4 +21,4 @@ chmod +x /tmp/run.sh
 printf '%s /bin/sh /tmp/run.sh\n' "${CRON_SCHEDULE}" > /tmp/crontab
 
 echo "entrypoint: schedule=${CRON_SCHEDULE}"
-exec supercronic /tmp/crontab
+exec /usr/local/bin/supercronic /tmp/crontab
