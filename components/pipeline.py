@@ -137,7 +137,11 @@ class Pipeline:
                 existing_guids = await store.get_guids_for_feed(feed.config_title)
                 new_guids = {ep.guid for ep in feed.episodes} - existing_guids
 
-                if rss_path.exists() and not new_guids:
+                feed_guids = {ep.guid for ep in feed.episodes}
+                ad_detected_guids = await AdStore(db.conn).get_detected_guids()
+                unprocessed_guids = feed_guids - ad_detected_guids
+
+                if rss_path.exists() and not new_guids and not unprocessed_guids:
                     logger.info(f"[{feed.config_title}] no new items — skipping feed")
                     continue
 

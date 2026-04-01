@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -1308,11 +1308,13 @@ async def test_run_loads_ad_detected_guids_before_episode_loop() -> None:
         pipeline = Pipeline(config)
         await pipeline.run()
 
-    # AdStore must be instantiated with the db connection object
+    # AdStore must be instantiated with the db connection object.
+    # Called twice per feed: once for the skip-check, once for the processing block.
     mock_db_obj = m_db.return_value.__aenter__.return_value
-    m_ad_store.assert_called_once_with(mock_db_obj.conn)
-    # get_detected_guids must be awaited once
-    m_ad_store.return_value.get_detected_guids.assert_awaited_once()
+    assert m_ad_store.call_count == 2
+    assert all(c == call(mock_db_obj.conn) for c in m_ad_store.call_args_list)
+    # get_detected_guids must be awaited at least once
+    m_ad_store.return_value.get_detected_guids.assert_awaited()
 
 
 async def test_branch_b_audio_editor_returns_path_uses_computed_url() -> None:
@@ -1736,14 +1738,62 @@ async def test_feed_rss_exists_no_new_items_skips_feed(tmp_path: Path) -> None:
             m_ad_detector, m_ad_parser, m_audio_editor,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
-        # All feed episodes already known to the DB — no new items.
+        # All feed episodes already known to the DB and all have completed ad detection.
         m_store.return_value.get_guids_for_feed = AsyncMock(return_value={"ep-1"})
+        m_ad_store.return_value.get_detected_guids = AsyncMock(return_value={"ep-1"})
         pipeline = Pipeline(config)
         await pipeline.run()
 
     m_store.return_value.save_episodes.assert_not_called()
     m_pub.return_value.publish.assert_not_called()
     m_ep_dl.return_value.download.assert_not_called()
+
+
+async def test_feed_rss_exists_undetected_episodes_does_not_skip(tmp_path: Path) -> None:
+    """RSS file exists, no new GUIDs from RSS, but episode has not been through ad detection.
+
+    The undetected episode is not skipped and enters the state machine.
+    """
+    rss_file = tmp_path / "my-podcast.rss"
+    rss_file.write_text("<rss/>")
+
+    config, ep, parsed = _branch_config(tmp_path)
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        # Episode already in DB (not new) but never through ad detection.
+        m_store.return_value.get_guids_for_feed = AsyncMock(return_value={"ep-1"})
+        m_ad_store.return_value.get_detected_guids = AsyncMock(return_value=set())
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    # Feed was not skipped — save_episodes and publish were called for the undetected episode.
+    m_store.return_value.save_episodes.assert_awaited_once()
+    m_pub.return_value.publish.assert_awaited_once()
 
 
 async def test_feed_rss_missing_publishes_new_feed(tmp_path: Path) -> None:
