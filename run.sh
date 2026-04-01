@@ -9,4 +9,4 @@ set -- --config /config/config.yaml
 [ -n "${APP_DEBUG:-}" ]              && set -- "$@" --debug
 
 echo "run.sh: python main.py $*"
-exec python /app/main.py "$@"
+exec /app/.venv/bin/python /app/main.py "$@"
