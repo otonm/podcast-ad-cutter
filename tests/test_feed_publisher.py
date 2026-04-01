@@ -144,7 +144,7 @@ async def test_published_feed_channel_title(tmp_path: Path, feed_input: Publishe
     path = await publisher.publish(feed_input)
     channel = ET.parse(str(path)).getroot().find("channel")
     assert channel is not None
-    assert channel.findtext("title") == "My Podcast"
+    assert channel.findtext("title") == "My Podcast (Ad-Free)"
 
 
 async def test_published_feed_has_atom_self_link(tmp_path: Path, feed_input: PublisherInput) -> None:
@@ -234,7 +234,20 @@ async def test_published_feed_episode_guid(tmp_path: Path, feed_input: Publisher
     channel = ET.parse(str(path)).getroot().find("channel")
     assert channel is not None
     items = channel.findall("item")
-    assert items[0].findtext("guid") == "guid-1"
+    assert items[0].findtext("guid") == "adfree-guid-1"
+
+
+async def test_published_feed_has_adfree_title_and_guid_prefix(
+    tmp_path: Path, feed_input: PublisherInput
+) -> None:
+    """Channel title must carry the '(Ad-Free)' suffix and every episode GUID the 'adfree-' prefix."""
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    assert channel.findtext("title") == "My Podcast (Ad-Free)"
+    items = channel.findall("item")
+    assert all(item.findtext("guid", "").startswith("adfree-") for item in items)
 
 
 async def test_published_feed_episode_enclosure_url(tmp_path: Path, feed_input: PublisherInput) -> None:
@@ -354,7 +367,7 @@ async def test_update_episode_url_changes_enclosure(
 
     channel = ET.parse(str(tmp_path / "my-podcast.rss")).getroot().find("channel")
     assert channel is not None
-    item = next(i for i in channel.findall("item") if i.findtext("guid") == "guid-1")
+    item = next(i for i in channel.findall("item") if i.findtext("guid") == "adfree-guid-1")
     assert item.find("enclosure") is not None
     assert item.find("enclosure").get("url") == "https://local/processed.mp3"  # type: ignore[union-attr]
 
@@ -369,7 +382,7 @@ async def test_update_episode_url_updates_mime_type(
 
     channel = ET.parse(str(tmp_path / "my-podcast.rss")).getroot().find("channel")
     assert channel is not None
-    item = next(i for i in channel.findall("item") if i.findtext("guid") == "guid-1")
+    item = next(i for i in channel.findall("item") if i.findtext("guid") == "adfree-guid-1")
     enclosure = item.find("enclosure")
     assert enclosure is not None
     assert enclosure.get("type") == "audio/x-m4a"
@@ -384,7 +397,7 @@ async def test_update_episode_url_leaves_other_items_unchanged(
 
     channel = ET.parse(str(tmp_path / "my-podcast.rss")).getroot().find("channel")
     assert channel is not None
-    item2 = next(i for i in channel.findall("item") if i.findtext("guid") == "guid-2")
+    item2 = next(i for i in channel.findall("item") if i.findtext("guid") == "adfree-guid-2")
     assert item2.find("enclosure") is not None
     assert item2.find("enclosure").get("url") == "https://origin.com/ep2.mp3"  # type: ignore[union-attr]
 
@@ -432,7 +445,7 @@ async def test_update_episode_url_creates_enclosure_when_missing(tmp_path: Path)
         '<?xml version="1.0" encoding="utf-8"?>'
         '<rss version="2.0"><channel>'
         "<title>Test</title>"
-        '<item><title>Ep</title><guid isPermaLink="false">g1</guid></item>'
+        '<item><title>Ep</title><guid isPermaLink="false">adfree-g1</guid></item>'
         "</channel></rss>",
         encoding="utf-8",
     )

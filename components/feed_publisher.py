@@ -28,6 +28,10 @@ _ITUNES = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 _ATOM = "http://www.w3.org/2005/Atom"
 _CONTENT = "http://purl.org/rss/1.0/modules/content/"
 
+# Applied to the published RSS to distinguish it from the original feed.
+_TITLE_SUFFIX = " (Ad-Free)"
+_GUID_PREFIX = "adfree-"
+
 # Map common audio file extensions to MIME types for the enclosure element.
 _MIME_MAP: dict[str, str] = {
     "mp3": "audio/mpeg",
@@ -159,7 +163,7 @@ class FeedPublisher:
             raise KeyError(guid)
 
         for item in channel.findall("item"):
-            if item.findtext("guid") == guid:
+            if item.findtext("guid") == _GUID_PREFIX + guid:
                 enclosure = item.find("enclosure")
                 if enclosure is None:
                     logger.debug(f"No existing <enclosure> for guid={guid!r}; creating one")
@@ -191,7 +195,7 @@ class FeedPublisher:
         rss = ET.Element("rss", {"version": "2.0"})
         channel = ET.SubElement(rss, "channel")
 
-        self._add_text(channel, "title", feed_input.title)
+        self._add_text(channel, "title", feed_input.title + _TITLE_SUFFIX)
 
         if feed_input.link:
             self._add_text(channel, "link", feed_input.link)
@@ -292,7 +296,7 @@ class FeedPublisher:
 
         guid_el = ET.SubElement(item, "guid")
         guid_el.set("isPermaLink", "false")
-        guid_el.text = episode.guid
+        guid_el.text = _GUID_PREFIX + episode.guid
 
         self._add_text(item, "pubDate", format_datetime(episode.pub_date))
 
