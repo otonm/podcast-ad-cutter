@@ -135,6 +135,7 @@ def _wire_branch_mocks(
     m_ts.return_value.save_transcription = AsyncMock()
     m_ts.return_value.save_segments = AsyncMock()
     m_ts.return_value.get_segments_for_guid = AsyncMock(return_value=[])
+    m_ts.return_value.get_transcription_text = AsyncMock(return_value="Hello world")
 
     m_ams.return_value.save_all = AsyncMock()
     m_cs.return_value.save_cost = AsyncMock()
@@ -856,9 +857,8 @@ async def test_branch_b_transcription_exists_no_audio_redownloads_and_copies(
     )
     m_prober.return_value.probe.assert_awaited_once()
     m_ams.return_value.save_all.assert_awaited_once()
-    m_prep.return_value.preprocess.assert_not_called()  # D-05: no preprocess in Branch B
+    m_prep.return_value.preprocess.assert_not_called()  # no preprocess when transcript cached
     m_trans.return_value.transcribe.assert_not_called()
-    m_topic_ext.return_value.extract.assert_not_called()
 
 
 async def test_branch_c_audio_exists_no_transcription_transcribes_from_output(
@@ -2180,6 +2180,18 @@ async def test_ad_detection_builds_ad_segment_from_valid_indices() -> None:
             [AdSegmentDetection(indices=[0], confidence=0.95, sponsor="Acme", ad_topic="promo")],
             AdDetectionCost(provider="openai", model="gpt-4o-mini", cost=0.0001),
         ))
+        # Guard 3 fetches transcription segments from DB — match what transcribe produced
+        m_ts.return_value.get_segments_for_guid = AsyncMock(
+            return_value=[TranscriptionSegment(guid="ep-1", start_ms=0, end_ms=1000, text="Hello")]
+        )
+        # Guard 3 saves ad_segments; Guard 2 re-fetches them — connect the two mocks
+        _saved_ad_segs: list[AdSegment] = []
+        m_ad_store.return_value.save_segments = AsyncMock(
+            side_effect=lambda _guid, segs: _saved_ad_segs.extend(segs)
+        )
+        m_ad_store.return_value.get_segments_for_guid = AsyncMock(
+            side_effect=lambda _guid: _saved_ad_segs
+        )
         captured: list[list[AdSegment]] = []
         original_parse = lambda segs, **_: captured.append(segs) or []  # noqa: E731
         m_ad_parser.return_value.parse = MagicMock(side_effect=original_parse)
