@@ -48,7 +48,7 @@ class _EpisodeExtras(TypedDict):
 
 
 class FeedParser:
-    """Stateless RSS/Atom XML parser. No constructor args."""
+    """Stateless RSS/Atom XML parser."""
 
     # ------------------------------------------------------------------
     # Public API
@@ -83,7 +83,7 @@ class FeedParser:
 
         Returns ``None`` if the XML is malformed or has no ``<channel>`` element.
         """
-        logger.debug(f"Parsing feed '{feed_input.config_title}'")
+        logger.info(f"Parsing feed '{feed_input.config_title}'")
         try:
             root = ET.fromstring(feed_input.xml_text)  # noqa: S314 — feed XML is from configured trusted sources
         except ET.ParseError:

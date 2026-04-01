@@ -118,6 +118,7 @@ async def main() -> None:
 
     pipeline = Pipeline(cfg, feed_name=args.feed)
     try:
+        logger.info("Starting...")
         await pipeline.run()
     except ValueError as exc:
         sys.stderr.write(f"Error: {exc}\n")

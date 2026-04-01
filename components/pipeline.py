@@ -268,7 +268,7 @@ class Pipeline:
                     None,
                 )
                 if existing_audio is not None:
-                    logger.debug(
+                    logger.info(
                         f"Episode '{episode.guid}': output already exists at {existing_audio}, skipping"
                     )
                     ext = existing_audio.suffix.lstrip(".")
@@ -282,7 +282,7 @@ class Pipeline:
                 # Guard 2: ad segments detected → export edited audio.
                 if episode.guid in stores.ad_detected_guids:
                     ad_segments = await stores.ad.get_segments_for_guid(episode.guid)
-                    logger.debug(
+                    logger.info(
                         f"Episode '{episode.guid}': ad detection cached, "
                         f"loading {len(ad_segments)} segment(s) from DB"
                     )
@@ -293,7 +293,7 @@ class Pipeline:
                     )
                     if raw_path is None:
                         # Transcript was cached from a previous run — download now.
-                        logger.debug(
+                        logger.info(
                             f"Episode '{episode.guid}': transcription cached, no output; re-downloading"
                         )
                         raw_path = await self._episode_downloader.download(
@@ -327,10 +327,10 @@ class Pipeline:
                 if episode.guid in stores.extracted_guids:
                     topic = await stores.topic.get_topic_for_guid(episode.guid)
                     t_segments = await stores.transcription.get_segments_for_guid(episode.guid)
-                    logger.debug(
+                    logger.info(
                         f"Episode '{episode.guid}': loaded {len(t_segments)} transcription segment(s) from DB"
                     )
-                    logger.debug(
+                    logger.info(
                         f"Episode '{episode.guid}': topic context "
                         f"{'available' if topic else 'unavailable'}"
                     )
@@ -379,12 +379,12 @@ class Pipeline:
                     None,
                 )
                 if cached_audio is not None:
-                    logger.debug(
+                    logger.info(
                         f"Episode '{episode.guid}': cached audio found, transcription missing"
                     )
                     raw_path = cached_audio
                 else:
-                    logger.debug(f"Episode '{episode.guid}': full pipeline (nothing cached)")
+                    logger.info(f"Episode '{episode.guid}' is new")
                     raw_path = await self._episode_downloader.download(
                         episode.guid, episode.url, on_progress=self._on_download_progress
                     )
@@ -442,12 +442,12 @@ class Pipeline:
                 available = [f.title for f in all_feeds]
                 msg = f"No feed titled {self._feed_name!r}. Available titles: {available}"
                 raise ValueError(msg)
-            logger.info(f"Pipeline starting: forcing feed '{self._feed_name}' (enabled override)")
+            logger.info(f"Forcing feed '{self._feed_name}' (enabled override)")
             return selected
 
         selected = [f for f in all_feeds if f.enabled]
         logger.info(
-            f"Pipeline starting: {len(selected)} enabled feed(s) of {len(all_feeds)} total"
+            f"Processing {len(selected)} enabled feed(s) of {len(all_feeds)} total"
         )
         return selected
 

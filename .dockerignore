@@ -32,3 +32,10 @@ docs/
 # Editor and OS artifacts
 .DS_Store
 *.swp
+
+# Other
+.claude
+.github
+AGENTS.md
+CLAUDE.md
+TODO.md
