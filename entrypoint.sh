@@ -15,4 +15,4 @@ fi
 printf '%s /bin/sh /app/run.sh\n' "${CRON_SCHEDULE}" > /tmp/crontab
 
 echo "entrypoint: schedule=${CRON_SCHEDULE}"
-exec gosu app /usr/local/bin/supercronic /tmp/crontab
+exec gosu app /usr/local/bin/supercronic -passthrough-logs /tmp/crontab

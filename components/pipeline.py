@@ -510,10 +510,11 @@ class Pipeline:
         if percent == 0.0:
             logger.debug(f"Downloading episode '{guid}' \u2026")
         elif percent == 1.0:
-            sys.stderr.write("\n")
-            sys.stderr.flush()
+            if sys.stderr.isatty():
+                sys.stderr.write("\n")
+                sys.stderr.flush()
             logger.debug(f"Episode '{guid}' downloaded.")
-        else:
+        elif sys.stderr.isatty():
             sys.stderr.write(f"\r  Episode '{guid}': {percent:.0%}")
             sys.stderr.flush()
 
@@ -529,9 +530,10 @@ class Pipeline:
         if percent == 0.0:
             logger.debug(f"Preprocessing episode '{guid}' \u2026")
         elif percent == 1.0:
-            sys.stderr.write("\n")
-            sys.stderr.flush()
+            if sys.stderr.isatty():
+                sys.stderr.write("\n")
+                sys.stderr.flush()
             logger.debug(f"Episode '{guid}' preprocessed.")
-        else:
+        elif sys.stderr.isatty():
             sys.stderr.write(f"\r  Episode '{guid}': {percent:.0%}")
             sys.stderr.flush()

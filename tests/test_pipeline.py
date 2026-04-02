@@ -579,8 +579,8 @@ async def test_on_download_progress_complete(caplog: pytest.LogCaptureFixture) -
     assert "Episode 'ep-001' downloaded." in caplog.text
 
 
-async def test_on_download_progress_intermediate() -> None:
-    """Progress callback at an intermediate value writes percentage in-place to stderr."""
+async def test_on_download_progress_complete_tty() -> None:
+    """Progress callback at 1.0 writes a newline to stderr when stdout is a TTY."""
     config = MagicMock()
     config.app.paths.data_dir = MagicMock()
     config.app.paths.output_dir = MagicMock()
@@ -607,10 +607,81 @@ async def test_on_download_progress_intermediate() -> None:
         pipeline = Pipeline(config)
 
     with patch("sys.stderr") as mock_stderr:
+        mock_stderr.isatty.return_value = True
+        await pipeline._on_download_progress("ep-001", 1.0)
+
+    mock_stderr.write.assert_called_once_with("\n")
+    mock_stderr.flush.assert_called_once()
+
+
+async def test_on_download_progress_intermediate_tty() -> None:
+    """Progress callback at an intermediate value writes percentage in-place when TTY."""
+    config = MagicMock()
+    config.app.paths.data_dir = MagicMock()
+    config.app.paths.output_dir = MagicMock()
+    config.app.paths.cache_dir = MagicMock()
+    config.app.models.transcription.provider = "groq"
+    config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.app.models.context_extraction.provider = "openai"
+    config.app.models.context_extraction.model = "gpt-4o-mini"
+    config.app.models.ad_detection.provider = "openai"
+    config.app.models.ad_detection.model = "gpt-4o-mini"
+    config.app.output.file_type = "mp3"
+    config.app.output.bitrate = "128k"
+    config.credentials.groq_api_key = "sk-test"
+    config.credentials.openai_api_key = "sk-openai-test"
+
+    with (
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
+    ):
+        pipeline = Pipeline(config)
+
+    with patch("sys.stderr") as mock_stderr:
+        mock_stderr.isatty.return_value = True
         await pipeline._on_download_progress("ep-001", 0.5)
 
     mock_stderr.write.assert_called_once_with("\r  Episode 'ep-001': 50%")
     mock_stderr.flush.assert_called_once()
+
+
+async def test_on_download_progress_intermediate_non_tty() -> None:
+    """Progress callback at an intermediate value writes nothing when not a TTY."""
+    config = MagicMock()
+    config.app.paths.data_dir = MagicMock()
+    config.app.paths.output_dir = MagicMock()
+    config.app.paths.cache_dir = MagicMock()
+    config.app.models.transcription.provider = "groq"
+    config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.app.models.context_extraction.provider = "openai"
+    config.app.models.context_extraction.model = "gpt-4o-mini"
+    config.app.models.ad_detection.provider = "openai"
+    config.app.models.ad_detection.model = "gpt-4o-mini"
+    config.app.output.file_type = "mp3"
+    config.app.output.bitrate = "128k"
+    config.credentials.groq_api_key = "sk-test"
+    config.credentials.openai_api_key = "sk-openai-test"
+
+    with (
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
+    ):
+        pipeline = Pipeline(config)
+
+    with patch("sys.stderr") as mock_stderr:
+        mock_stderr.isatty.return_value = False
+        await pipeline._on_download_progress("ep-001", 0.5)
+
+    mock_stderr.write.assert_not_called()
+    mock_stderr.flush.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -686,8 +757,44 @@ async def test_on_preprocess_progress_complete(caplog: pytest.LogCaptureFixture)
     assert "Episode 'ep-001' preprocessed." in caplog.text
 
 
-async def test_on_preprocess_progress_intermediate() -> None:
-    """Progress callback at an intermediate value writes percentage in-place to stderr."""
+async def test_on_preprocess_progress_complete_tty() -> None:
+    """Progress callback at 1.0 writes a newline to stderr when stdout is a TTY."""
+    config = MagicMock()
+    config.app.paths.data_dir = MagicMock()
+    config.app.paths.output_dir = MagicMock()
+    config.app.paths.cache_dir = MagicMock()
+    config.app.models.transcription.provider = "groq"
+    config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.app.models.context_extraction.provider = "openai"
+    config.app.models.context_extraction.model = "gpt-4o-mini"
+    config.app.models.ad_detection.provider = "openai"
+    config.app.models.ad_detection.model = "gpt-4o-mini"
+    config.app.output.file_type = "mp3"
+    config.app.output.bitrate = "128k"
+    config.credentials.groq_api_key = "sk-test"
+    config.credentials.openai_api_key = "sk-openai-test"
+
+    with (
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.AudioPreprocessor"),
+        patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
+    ):
+        pipeline = Pipeline(config)
+
+    with patch("sys.stderr") as mock_stderr:
+        mock_stderr.isatty.return_value = True
+        await pipeline._on_preprocess_progress("ep-001", 1.0)
+
+    mock_stderr.write.assert_called_once_with("\n")
+    mock_stderr.flush.assert_called_once()
+
+
+async def test_on_preprocess_progress_intermediate_tty() -> None:
+    """Progress callback at an intermediate value writes percentage in-place when TTY."""
     config = MagicMock()
     config.app.paths.data_dir = MagicMock()
     config.app.paths.output_dir = MagicMock()
@@ -716,10 +823,48 @@ async def test_on_preprocess_progress_intermediate() -> None:
         pipeline = Pipeline(config)
 
     with patch("sys.stderr") as mock_stderr:
+        mock_stderr.isatty.return_value = True
         await pipeline._on_preprocess_progress("ep-001", 0.5)
 
     mock_stderr.write.assert_called_once_with("\r  Episode 'ep-001': 50%")
     mock_stderr.flush.assert_called_once()
+
+
+async def test_on_preprocess_progress_intermediate_non_tty() -> None:
+    """Progress callback at an intermediate value writes nothing when not a TTY."""
+    config = MagicMock()
+    config.app.paths.data_dir = MagicMock()
+    config.app.paths.output_dir = MagicMock()
+    config.app.paths.cache_dir = MagicMock()
+    config.app.models.transcription.provider = "groq"
+    config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.app.models.context_extraction.provider = "openai"
+    config.app.models.context_extraction.model = "gpt-4o-mini"
+    config.app.models.ad_detection.provider = "openai"
+    config.app.models.ad_detection.model = "gpt-4o-mini"
+    config.app.output.file_type = "mp3"
+    config.app.output.bitrate = "128k"
+    config.credentials.groq_api_key = "sk-test"
+    config.credentials.openai_api_key = "sk-openai-test"
+
+    with (
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.AudioPreprocessor"),
+        patch("components.pipeline.EpisodeTranscriptor"),
+        patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
+    ):
+        pipeline = Pipeline(config)
+
+    with patch("sys.stderr") as mock_stderr:
+        mock_stderr.isatty.return_value = False
+        await pipeline._on_preprocess_progress("ep-001", 0.5)
+
+    mock_stderr.write.assert_not_called()
+    mock_stderr.flush.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
