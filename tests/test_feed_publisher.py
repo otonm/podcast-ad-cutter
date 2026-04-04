@@ -783,12 +783,45 @@ async def test_content_encoded_channel_written(tmp_path: Path, feed_input: Publi
 
 
 async def test_itunes_new_feed_url_written(tmp_path: Path, feed_input: PublisherInput) -> None:
-    """<itunes:new-feed-url> must appear in channel when set."""
+    """<itunes:new-feed-url> must appear in channel when set, pointing to the generated feed URL."""
     publisher = FeedPublisher(tmp_path)
     path = await publisher.publish(feed_input)
     channel = ET.parse(str(path)).getroot().find("channel")
     assert channel is not None
-    assert channel.findtext(f"{{{_ITUNES}}}new-feed-url") == "https://new.example.com/feed.rss"
+    # feed_input has base_url="https://podcasts.example.com" and title="My Podcast" → slug "my-podcast"
+    assert channel.findtext(f"{{{_ITUNES}}}new-feed-url") == "https://podcasts.example.com/my-podcast.rss"
+
+
+async def test_itunes_new_feed_url_replaced_with_generated_url(tmp_path: Path) -> None:
+    """<itunes:new-feed-url> must be replaced with the generated feed URL, not the original value."""
+    feed = PublisherInput(
+        base_url="https://myhost.com",
+        title="Great Show",
+        episodes=[],
+        itunes_new_feed_url="https://original-host.com/old-feed.rss",
+    )
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    new_feed_url = channel.findtext(f"{{{_ITUNES}}}new-feed-url")
+    assert new_feed_url == "https://myhost.com/great-show.rss"
+    assert new_feed_url != "https://original-host.com/old-feed.rss"
+
+
+async def test_itunes_new_feed_url_absent_when_not_in_original(tmp_path: Path) -> None:
+    """<itunes:new-feed-url> must be absent when the original feed did not have it."""
+    feed = PublisherInput(
+        base_url="https://myhost.com",
+        title="Great Show",
+        episodes=[],
+        itunes_new_feed_url=None,
+    )
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    assert channel.findtext(f"{{{_ITUNES}}}new-feed-url") is None
 
 
 async def test_itunes_complete_written_when_true(tmp_path: Path) -> None:

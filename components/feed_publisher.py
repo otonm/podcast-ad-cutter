@@ -235,7 +235,7 @@ class FeedPublisher:
         self._add_text(channel, "pubDate", format_datetime(feed_input.pub_date))
         self._add_text(channel, "lastBuildDate", format_datetime(feed_input.last_build_date))
 
-        self._add_channel_extended_fields(channel, feed_input)
+        self._add_channel_extended_fields(channel, feed_input, feed_url)
 
         for episode in feed_input.episodes:
             self._add_item(channel, episode)
@@ -243,7 +243,7 @@ class FeedPublisher:
         ET.indent(rss, space="  ")
         return ET.tostring(rss, encoding="unicode", xml_declaration=True)
 
-    def _add_channel_extended_fields(self, channel: ET.Element, feed_input: PublisherInput) -> None:
+    def _add_channel_extended_fields(self, channel: ET.Element, feed_input: PublisherInput, feed_url: str) -> None:
         """Write extended iTunes and content namespace channel fields."""
         populated = [
             name
@@ -265,7 +265,7 @@ class FeedPublisher:
             (f"{{{_ITUNES}}}subtitle", feed_input.itunes_subtitle),
             (f"{{{_ITUNES}}}summary", feed_input.itunes_summary),
             (f"{{{_CONTENT}}}encoded", feed_input.content_encoded),
-            (f"{{{_ITUNES}}}new-feed-url", feed_input.itunes_new_feed_url),
+            (f"{{{_ITUNES}}}new-feed-url", feed_url if feed_input.itunes_new_feed_url else None),
         ):
             if value:
                 self._add_text(channel, tag, value)
