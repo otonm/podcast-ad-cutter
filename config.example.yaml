@@ -42,6 +42,11 @@ output:
 log:
   level: "ERROR"
   to_file: false
+  # Log level written to the file (only applies when to_file: true). Default: DEBUG.
+  file_level: "DEBUG"
+  # When true, old .log files in log_dir are deleted after each run, keeping only keep_last.
+  rotate: false
+  keep_last: 10
 
 # Base URL for the final rss feed that will be generated (used for constructing episode URLs)
 base_url: "http://localhost:8080"

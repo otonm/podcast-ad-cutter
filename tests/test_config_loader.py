@@ -171,3 +171,24 @@ def test_path_coercion(config_file, monkeypatch):
     with patch("config.config_loader.load_dotenv"):
         cfg = load_config(config_file)
     assert isinstance(cfg.app.paths.output_dir, Path)
+
+
+def test_logging_config_rotate_defaults_false(config_file, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+    with patch("config.config_loader.load_dotenv"):
+        cfg = load_config(config_file)
+    assert cfg.app.log.rotate is False
+
+
+def test_logging_config_keep_last_defaults_10(config_file, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+    with patch("config.config_loader.load_dotenv"):
+        cfg = load_config(config_file)
+    assert cfg.app.log.keep_last == 10
+
+
+def test_logging_config_file_level_defaults_debug(config_file, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+    with patch("config.config_loader.load_dotenv"):
+        cfg = load_config(config_file)
+    assert cfg.app.log.file_level == "DEBUG"

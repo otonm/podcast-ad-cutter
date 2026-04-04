@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from main import configure_logging, main, parse_args
+from main import _rotate_logs, configure_logging, main, parse_args
 from utils.exceptions import ConfigError
 
 # ---------------------------------------------------------------------------
@@ -103,6 +103,99 @@ class TestConfigureLogging:
         assert root.level == logging.DEBUG
         file_handlers = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
         assert len(file_handlers) == 1
+
+    def test_file_level_applied_to_file_handler(self, tmp_path: Path) -> None:
+        configure_logging(level="WARNING", log_to_file=True, log_dir=tmp_path, file_level="DEBUG")
+        file_handlers = [h for h in logging.getLogger().handlers if isinstance(h, logging.FileHandler)]
+        assert file_handlers[0].level == logging.DEBUG
+
+    def test_stream_handler_level_matches_level_arg(self, tmp_path: Path) -> None:
+        configure_logging(level="WARNING", log_to_file=True, log_dir=tmp_path, file_level="DEBUG")
+        stream_only = [
+            h for h in logging.getLogger().handlers
+            if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)
+        ]
+        assert stream_only[0].level == logging.WARNING
+
+    def test_root_level_is_min_of_level_and_file_level(self, tmp_path: Path) -> None:
+        configure_logging(level="ERROR", log_to_file=True, log_dir=tmp_path, file_level="DEBUG")
+        assert logging.getLogger().level == logging.DEBUG
+
+    def test_root_level_when_file_level_higher_than_level(self, tmp_path: Path) -> None:
+        configure_logging(level="DEBUG", log_to_file=True, log_dir=tmp_path, file_level="ERROR")
+        assert logging.getLogger().level == logging.DEBUG
+
+    def test_file_level_ignored_when_log_to_file_false(self, tmp_path: Path) -> None:
+        configure_logging(level="WARNING", log_to_file=False, log_dir=tmp_path, file_level="DEBUG")
+        assert logging.getLogger().level == logging.WARNING
+
+    def test_file_level_default_is_debug(self, tmp_path: Path) -> None:
+        configure_logging(level="INFO", log_to_file=True, log_dir=tmp_path)
+        file_handlers = [h for h in logging.getLogger().handlers if isinstance(h, logging.FileHandler)]
+        assert file_handlers[0].level == logging.DEBUG
+
+    def test_rotation_called_when_rotate_true(self, tmp_path: Path) -> None:
+        with patch("main._rotate_logs") as mock_rotate:
+            configure_logging(level="INFO", log_to_file=True, log_dir=tmp_path, rotate=True, keep_last=5)
+        mock_rotate.assert_called_once_with(tmp_path, 5)
+
+    def test_rotation_not_called_when_rotate_false(self, tmp_path: Path) -> None:
+        with patch("main._rotate_logs") as mock_rotate:
+            configure_logging(level="INFO", log_to_file=True, log_dir=tmp_path, rotate=False)
+        mock_rotate.assert_not_called()
+
+    def test_rotation_not_called_when_log_to_file_false(self, tmp_path: Path) -> None:
+        with patch("main._rotate_logs") as mock_rotate:
+            configure_logging(level="INFO", log_to_file=False, log_dir=tmp_path, rotate=True)
+        mock_rotate.assert_not_called()
+
+    def test_rotation_default_keep_last_is_10(self, tmp_path: Path) -> None:
+        with patch("main._rotate_logs") as mock_rotate:
+            configure_logging(level="INFO", log_to_file=True, log_dir=tmp_path, rotate=True)
+        mock_rotate.assert_called_once_with(tmp_path, 10)
+
+
+# ---------------------------------------------------------------------------
+# _rotate_logs tests
+# ---------------------------------------------------------------------------
+
+
+class TestRotateLogs:
+    def test_no_files_deleted_when_count_lte_keep_last(self, tmp_path: Path) -> None:
+        for i in range(3):
+            (tmp_path / f"2026-01-0{i + 1}T10:00:00.log").write_text("")
+        _rotate_logs(tmp_path, keep_last=5)
+        assert len(list(tmp_path.glob("*.log"))) == 3
+
+    def test_deletes_oldest_by_mtime(self, tmp_path: Path) -> None:
+        import time
+        files = []
+        for i in range(5):
+            f = tmp_path / f"f{i}.log"
+            f.write_text("")
+            time.sleep(0.01)
+            files.append(f)
+        _rotate_logs(tmp_path, keep_last=3)
+        assert set(tmp_path.glob("*.log")) == {files[2], files[3], files[4]}
+
+    def test_non_log_files_untouched(self, tmp_path: Path) -> None:
+        (tmp_path / "2026-01-01T10:00:00.log").write_text("")
+        (tmp_path / "2026-01-02T10:00:00.log").write_text("")
+        (tmp_path / "notes.txt").write_text("")
+        _rotate_logs(tmp_path, keep_last=1)
+        assert (tmp_path / "notes.txt").exists()
+
+    def test_exactly_keep_last_deletes_nothing(self, tmp_path: Path) -> None:
+        for i in range(3):
+            (tmp_path / f"f{i}.log").write_text("")
+        _rotate_logs(tmp_path, keep_last=3)
+        assert len(list(tmp_path.glob("*.log"))) == 3
+
+    def test_keep_last_zero_deletes_all(self, tmp_path: Path) -> None:
+        for i in range(3):
+            (tmp_path / f"f{i}.log").write_text("")
+        _rotate_logs(tmp_path, keep_last=0)
+        assert len(list(tmp_path.glob("*.log"))) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -211,3 +304,30 @@ class TestMain:
             mock_pipeline_cls.return_value.run = AsyncMock(return_value=[])
             await main()
         mock_pipeline_cls.return_value.run.assert_awaited_once()
+
+    async def test_configure_logging_receives_rotation_fields(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        mock_cfg = MagicMock()
+        mock_cfg.app.log.level = "INFO"
+        mock_cfg.app.log.to_file = True
+        mock_cfg.app.log.rotate = True
+        mock_cfg.app.log.keep_last = 7
+        mock_cfg.app.log.file_level = "DEBUG"
+        mock_cfg.app.paths.log_dir = tmp_path
+        with (
+            patch("main.load_config", return_value=mock_cfg),
+            patch("main.configure_logging") as mock_logging,
+            patch("main.Pipeline") as mock_pipeline_cls,
+        ):
+            mock_pipeline_cls.return_value.run = AsyncMock(return_value=[])
+            await main()
+        mock_logging.assert_called_once_with(
+            level="INFO",
+            log_to_file=True,
+            log_dir=tmp_path,
+            file_level="DEBUG",
+            rotate=True,
+            keep_last=7,
+        )
