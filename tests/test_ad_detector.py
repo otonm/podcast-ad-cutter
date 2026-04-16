@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import litellm
@@ -41,9 +42,11 @@ _EMPTY_DETECTIONS = json.dumps({"ads": []})
 def _make_response(
     content: str = _VALID_DETECTIONS,
     response_cost: float | None = 0.002,
+    reasoning_content: str | None = None,
 ) -> MagicMock:
     msg = MagicMock()
     msg.content = content
+    msg.reasoning_content = reasoning_content
     choice = MagicMock()
     choice.message = msg
     resp = MagicMock()
@@ -542,3 +545,89 @@ async def test_single_index_no_retry_on_last_attempt(detector: AdDetector) -> No
         _, detections, _ = await det.detect("ep-1", _SEGMENTS, _TOPIC)
     assert mock_call.await_count == 1
     assert detections[0].indices == [2]
+
+
+# ---------------------------------------------------------------------------
+# LLM reasoning logging
+# ---------------------------------------------------------------------------
+
+_INBOUNDS_DETECTIONS = json.dumps({"ads": [
+    {"indices": [1, 2], "confidence": 0.95, "sponsor": "Acme", "ad_topic": "discount code"},
+]})
+
+
+async def test_log_llm_reasoning_emits_debug_when_present(
+    detector: AdDetector,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When reasoning_content is set, a DEBUG message containing the reasoning is logged."""
+    mock_resp = _make_response(
+        content=_INBOUNDS_DETECTIONS,
+        reasoning_content="Segment 1 mentions a sponsor discount code — this is an ad.",
+    )
+    with (
+        patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
+        caplog.at_level(logging.DEBUG, logger="components.ad_detector"),
+    ):
+        await detector.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert any(
+        "Segment 1 mentions a sponsor discount code" in r.message
+        for r in caplog.records
+    )
+
+
+async def test_log_llm_reasoning_silent_when_absent(
+    detector: AdDetector,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When reasoning_content is None, no reasoning DEBUG message is logged."""
+    mock_resp = _make_response(content=_INBOUNDS_DETECTIONS, reasoning_content=None)
+    with (
+        patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
+        caplog.at_level(logging.DEBUG, logger="components.ad_detector"),
+    ):
+        await detector.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert not any("LLM reasoning" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Detection summary logging
+# ---------------------------------------------------------------------------
+
+async def test_log_detection_summary_logs_each_detection(
+    detector: AdDetector,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """After successful parse, one DEBUG line per detection is logged with key fields."""
+    mock_resp = _make_response(content=_INBOUNDS_DETECTIONS)
+    with (
+        patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
+        caplog.at_level(logging.DEBUG, logger="components.ad_detector"),
+    ):
+        await detector.detect("ep-1", _SEGMENTS, _TOPIC)
+    ad_logs = [r.message for r in caplog.records if r.message.startswith("AD ")]
+    assert len(ad_logs) == 1
+    assert "[1, 2]" in ad_logs[0]
+    assert "4500ms" in ad_logs[0]
+    assert "35000ms" in ad_logs[0]
+    assert "95%" in ad_logs[0]
+    assert "Acme" in ad_logs[0]
+    assert "discount code" in ad_logs[0]
+
+
+async def test_log_detection_summary_logs_non_ad_indices(
+    detector: AdDetector,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """After successful parse, non-ad segment indices are logged."""
+    mock_resp = _make_response(content=_INBOUNDS_DETECTIONS)
+    with (
+        patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
+        caplog.at_level(logging.DEBUG, logger="components.ad_detector"),
+    ):
+        await detector.detect("ep-1", _SEGMENTS, _TOPIC)
+    non_ad_logs = [r.message for r in caplog.records if "Non-ad segment" in r.message]
+    assert len(non_ad_logs) == 1
+    # _SEGMENTS has 4 segments (0-3); detection covers [1,2] → non-ad are [0, 3]
+    assert "0" in non_ad_logs[0]
+    assert "3" in non_ad_logs[0]

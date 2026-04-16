@@ -129,7 +129,7 @@ def configure_logging(
     if log_to_file:
         log_dir.mkdir(parents=True, exist_ok=True)
         # Use local timezone for the filename timestamp (ISO 8601)
-        timestamp = datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+        timestamp = datetime.now().astimezone().strftime("%Y-%m-%dT%H-%M-%S")
         file_handler = logging.FileHandler(log_dir / f"{timestamp}.log", encoding="utf-8")
         file_handler.setLevel(getattr(logging, file_level))
         file_handler.setFormatter(formatter)

@@ -55,7 +55,7 @@ class TestOpenEpisodeLog:
         close_episode_log(handler)
         files = list((tmp_path / "episodes").glob("*.log"))
         assert len(files) == 1
-        pattern = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.my-podcast\.my-episode\.log$"
+        pattern = r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.my-podcast\.my-episode\.log$"
         assert re.match(pattern, files[0].name), f"Unexpected filename: {files[0].name}"
 
     def test_handler_attached_to_root_logger(self, tmp_path: Path) -> None:

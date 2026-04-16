@@ -26,7 +26,7 @@ def open_episode_log(
     be written to the episode log file.  The caller is responsible for calling
     :func:`close_episode_log` when episode processing is done, even on exception.
 
-    Log path: ``<log_dir>/episodes/<YYYY-MM-DDTHH:MM:SS>.<podcast-slug>.<episode-slug>.log``
+    Log path: ``<log_dir>/episodes/<YYYY-MM-DDTHH-MM-SS>.<podcast-slug>.<episode-slug>.log``
 
     Args:
         guid: Episode GUID, used to name the returned ``episode_logger``.
@@ -45,7 +45,7 @@ def open_episode_log(
     episodes_dir = log_dir / "episodes"
     episodes_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S")
+    timestamp = datetime.now().astimezone().strftime("%Y-%m-%dT%H-%M-%S")
     podcast_slug = slugify(podcast_title)
     episode_slug = slugify(episode_title)
     log_path = episodes_dir / f"{timestamp}.{podcast_slug}.{episode_slug}.log"

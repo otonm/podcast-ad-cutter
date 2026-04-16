@@ -94,8 +94,8 @@ class TestConfigureLogging:
         configure_logging(level="INFO", log_to_file=True, log_dir=tmp_path)
         file_handlers = [h for h in logging.getLogger().handlers if isinstance(h, logging.FileHandler)]
         filename = Path(file_handlers[0].baseFilename).name
-        # Expected: YYYY-MM-DDTHH:MM:SS.log (local timezone, ISO 8601)
-        assert re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.log$", filename), f"Unexpected filename: {filename}"
+        # Expected: YYYY-MM-DDTHH-MM-SS.log (local timezone, no shell-special characters)
+        assert re.match(r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.log$", filename), f"Unexpected filename: {filename}"
 
     def test_debug_level_with_log_to_file(self, tmp_path: Path) -> None:
         configure_logging(level="DEBUG", log_to_file=True, log_dir=tmp_path)

@@ -217,6 +217,31 @@ class AdDetector:
         )
         return trimmed
 
+    def _log_llm_reasoning(self, response: litellm.ModelResponse, guid: str) -> None:
+        reasoning = getattr(response.choices[0].message, "reasoning_content", None)
+        if reasoning:
+            logger.debug(f"LLM reasoning for '{guid}':\n{reasoning}")
+
+    def _log_detection_summary(
+        self,
+        guid: str,
+        segments: list[TranscriptionSegment],
+        detections: list[AdSegmentDetection],
+    ) -> None:
+        ad_indices: set[int] = set()
+        for d in detections:
+            ad_indices.update(d.indices)
+            start_ms = segments[d.indices[0]].start_ms if d.indices and d.indices[0] < len(segments) else 0
+            end_ms = segments[d.indices[-1]].end_ms if d.indices and d.indices[-1] < len(segments) else 0
+            logger.debug(
+                f"AD '{guid}' indices={d.indices} "
+                f"time={start_ms}ms-{end_ms}ms "
+                f"confidence={d.confidence:.0%} "
+                f"sponsor={d.sponsor!r} topic={d.ad_topic!r}"
+            )
+        non_ad = [i for i in range(len(segments)) if i not in ad_indices]
+        logger.debug(f"Non-ad segment indices for '{guid}': {non_ad}")
+
     async def _call_llm(
         self,
         guid: str,
@@ -314,7 +339,7 @@ class AdDetector:
                 response = await self._call_llm(
                     guid, messages, use_schema=use_schema, use_reasoning=use_reasoning
                 )
-                logger.debug(f"LLM Response: {response}")
+                self._log_llm_reasoning(response, guid)
             except _JsonValidateFailedError as exc:
                 if attempt == self._max_retries - 1:
                     msg = f"JSON schema validation failed for '{guid}' after {self._max_retries} attempts"
@@ -329,6 +354,7 @@ class AdDetector:
 
             total_cost += compute_completion_cost(response, self._model_id)
             content = response.choices[0].message.content
+            logger.debug(f"LLM raw response content for '{guid}': {content}")
 
             if response.choices[0].finish_reason == "length":
                 if attempt == self._max_retries - 1:
@@ -344,6 +370,7 @@ class AdDetector:
 
             try:
                 detections = self._parse_response(content, guid)
+                self._log_detection_summary(guid, segments, detections)
             except (json.JSONDecodeError, KeyError, TypeError) as exc:
                 if attempt == self._max_retries - 1:
                     msg = f"Failed to parse LLM response for '{guid}' after {self._max_retries} attempts: {exc!r}"
