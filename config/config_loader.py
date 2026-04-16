@@ -75,6 +75,7 @@ class LoggingConfig(BaseModel):
     file_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "DEBUG"
     rotate: bool = False
     keep_last: int = 10
+    per_episode: bool = False
 
 
 class AppConfig(BaseModel):

@@ -192,3 +192,23 @@ def test_logging_config_file_level_defaults_debug(config_file, monkeypatch):
     with patch("config.config_loader.load_dotenv"):
         cfg = load_config(config_file)
     assert cfg.app.log.file_level == "DEBUG"
+
+
+def test_logging_config_per_episode_defaults_false(config_file, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+    with patch("config.config_loader.load_dotenv"):
+        cfg = load_config(config_file)
+    assert cfg.app.log.per_episode is False
+
+
+def test_logging_config_per_episode_can_be_set_true(tmp_path, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+    yaml_with_per_episode = VALID_YAML.replace(
+        'log:\n  level: "ERROR"\n  to_file: false',
+        'log:\n  level: "ERROR"\n  to_file: false\n  per_episode: true',
+    )
+    p = tmp_path / "config.yaml"
+    p.write_text(yaml_with_per_episode)
+    with patch("config.config_loader.load_dotenv"):
+        cfg = load_config(p)
+    assert cfg.app.log.per_episode is True

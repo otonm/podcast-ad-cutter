@@ -44,6 +44,8 @@ def make_config(feeds: list[FeedConfig]) -> MagicMock:
     cfg.app.output.bitrate = "128k"
     cfg.credentials.groq_api_key = "sk-test"
     cfg.credentials.openai_api_key = "sk-openai-test"
+    cfg.app.log.per_episode = False
+    cfg.app.log.file_level = "DEBUG"
     return cfg
 
 
@@ -79,6 +81,8 @@ def _branch_config(output_dir: Path | MagicMock) -> tuple[MagicMock, Episode, Pa
     config.app.models.ad_detection.model = "gpt-4o-mini"
     config.app.output.file_type = "mp3"
     config.app.output.bitrate = "128k"
+    config.app.log.per_episode = False
+    config.app.log.file_level = "DEBUG"
     parsed = ParsedFeed(
         config_title="My Podcast",
         feed_url="http://x.com/feed",
@@ -2440,3 +2444,139 @@ async def test_ad_detection_skips_segment_with_all_out_of_range_indices() -> Non
 
     # AudioEditor.edit must still be called — the out-of-range detection is skipped, not an error
     m_audio_editor.return_value.edit.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Per-episode log lifecycle tests
+# ---------------------------------------------------------------------------
+
+
+def _make_per_episode_config(tmp_path: Path, *, per_episode: bool) -> tuple[MagicMock, Episode, ParsedFeed]:
+    """Build config/episode/parsed-feed with per_episode log settings."""
+    config, ep, parsed = _branch_config(MagicMock())
+    config.app.log.per_episode = per_episode
+    config.app.log.file_level = "DEBUG"
+    config.app.paths.log_dir = tmp_path
+    return config, ep, parsed
+
+
+async def test_per_episode_log_open_called_once_per_episode(tmp_path: Path) -> None:
+    """When per_episode=True, open_episode_log is called once for each episode."""
+    config, ep, parsed = _make_per_episode_config(tmp_path, per_episode=True)
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.open_episode_log") as m_open,
+        patch("components.pipeline.close_episode_log"),
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
+            m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        m_open.return_value = (MagicMock(), MagicMock())
+        await Pipeline(config).run()
+
+    m_open.assert_called_once_with(
+        guid=ep.guid,
+        podcast_title="My Podcast",
+        episode_title=ep.title,
+        log_dir=tmp_path,
+        file_level="DEBUG",
+    )
+
+
+async def test_per_episode_log_not_opened_when_disabled(tmp_path: Path) -> None:
+    """When per_episode=False, open_episode_log is never called."""
+    config, ep, parsed = _make_per_episode_config(tmp_path, per_episode=False)
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.open_episode_log") as m_open,
+        patch("components.pipeline.close_episode_log"),
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
+            m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        await Pipeline(config).run()
+
+    m_open.assert_not_called()
+
+
+async def test_per_episode_log_closed_even_on_exception(tmp_path: Path) -> None:
+    """close_episode_log is called even when episode processing raises."""
+    config, ep, parsed = _make_per_episode_config(tmp_path, per_episode=True)
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.open_episode_log") as m_open,
+        patch("components.pipeline.close_episode_log") as m_close,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
+            m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        fake_handler = MagicMock()
+        m_open.return_value = (MagicMock(), fake_handler)
+        # Force episode processing to raise
+        m_ep_dl.return_value.download = AsyncMock(side_effect=RuntimeError("boom"))
+        await Pipeline(config).run()
+
+    m_close.assert_called_once_with(fake_handler)

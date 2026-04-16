@@ -31,6 +31,7 @@ from database.topic_store import TopicStore
 from database.transcription_store import TranscriptionStore
 from models.ad_detection import AdSegment
 from models.feed import AudioMetadata, Episode, FeedParseInput, ParsedFeed, PublisherInput
+from utils.episode_log import close_episode_log, open_episode_log
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -107,6 +108,9 @@ class Pipeline:
             file_type=config.app.output.file_type,
             bitrate=config.app.output.bitrate,
         )
+        self._per_episode_log: bool = config.app.log.per_episode
+        self._log_dir: Path = config.app.paths.log_dir
+        self._log_file_level: str = config.app.log.file_level
 
     async def run(self) -> list[ParsedFeed]:
         """Execute the pipeline for the selected feeds.
@@ -176,6 +180,15 @@ class Pipeline:
                 )
 
                 for episode in episodes:
+                    handler = None
+                    if self._per_episode_log:
+                        _, handler = open_episode_log(
+                            guid=episode.guid,
+                            podcast_title=feed.config_title,
+                            episode_title=episode.title,
+                            log_dir=self._log_dir,
+                            file_level=self._log_file_level,
+                        )
                     try:
                         await self._process_episode_until_final(
                             episode=episode,
@@ -186,6 +199,9 @@ class Pipeline:
                         )
                     except Exception:
                         logger.exception(f"Episode '{episode.guid}': error, skipping")
+                    finally:
+                        if handler is not None:
+                            close_episode_log(handler)
 
         return parsed_feeds
 
