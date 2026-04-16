@@ -125,6 +125,18 @@ class EpisodeDownloader:
         for attempt in range(self._max_retries + 1):
             try:
                 return await self._download_episode(session, guid, url, on_progress)
+            except aiohttp.ClientResponseError as exc:
+                # 4xx errors are permanent for a given URL — never retry.
+                # 5xx errors are server-side transient — retry with back-off.
+                if exc.status < http.HTTPStatus.INTERNAL_SERVER_ERROR or attempt >= self._max_retries:
+                    raise
+                delay = self._retry_delay * (2**attempt)
+                logger.warning(
+                    f"Download failed for '{guid}' "
+                    f"(attempt {attempt + 1}/{self._max_retries + 1}): {exc}. "
+                    f"Retrying in {delay:.1f}s."
+                )
+                await asyncio.sleep(delay)
             except (TimeoutError, aiohttp.ClientError) as exc:
                 if attempt < self._max_retries:
                     delay = self._retry_delay * (2**attempt)

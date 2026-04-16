@@ -405,8 +405,12 @@ class Pipeline:
                     raw_path = cached_audio
                 else:
                     logger.info(f"Episode '{episode.guid}' is new")
+                    # Prefer the URL from the current-run RSS parse (fresh signed URL)
+                    # over the potentially stale URL stored in the database.
+                    fresh_urls = {ep.guid: ep.url for ep in feed.episodes}
+                    url = fresh_urls.get(episode.guid, episode.url)
                     raw_path = await self._episode_downloader.download(
-                        episode.guid, episode.url, on_progress=self._on_download_progress
+                        episode.guid, url, on_progress=self._on_download_progress
                     )
                 meta = await self._audio_prober.probe(episode.guid, raw_path)
                 await stores.audio_metadata.save_all([meta])

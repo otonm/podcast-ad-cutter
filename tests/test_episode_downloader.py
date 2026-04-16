@@ -183,7 +183,7 @@ async def test_retries_on_http_error_then_succeeds(
     downloader: EpisodeDownloader,
     cache_dir: Path,
 ) -> None:
-    """Non-200 responses are retried; succeeds on the final attempt."""
+    """5xx responses are retried; succeeds on the final attempt."""
     with aioresponses() as m:
         m.get(URL, status=503)  # attempt 0: fail
         m.get(URL, status=503)  # attempt 1: fail
@@ -232,6 +232,49 @@ async def test_timeout_error_triggers_retry(
         path = await downloader.download(GUID, URL)
 
     assert path.exists()
+
+
+@pytest.mark.parametrize("status", [400, 403, 404, 410, 422])
+async def test_4xx_does_not_retry(
+    downloader: EpisodeDownloader,
+    cache_dir: Path,
+    status: int,
+) -> None:
+    """4xx responses are permanent — no retries, raises immediately after one attempt."""
+    with aioresponses() as m:
+        m.get(URL, status=status)
+        # Only one mock registered; a retry would cause aioresponses to raise
+        # ConnectionError (no more registered responses), exposing any retry.
+        with pytest.raises(_aiohttp.ClientResponseError) as exc_info:
+            await downloader.download(GUID, URL)
+
+    assert exc_info.value.status == status
+
+
+async def test_5xx_retries(
+    downloader: EpisodeDownloader,
+    cache_dir: Path,
+) -> None:
+    """5xx responses are retried; succeeds on the next attempt."""
+    with aioresponses() as m:
+        m.get(URL, status=503)
+        m.get(URL, status=200, body=AUDIO_DATA, headers={"Content-Type": "audio/mpeg"})
+        path = await downloader.download(GUID, URL)
+
+    assert path.read_bytes() == AUDIO_DATA
+
+
+async def test_client_connection_error_exhausts_retries_raises(
+    downloader: EpisodeDownloader,
+    cache_dir: Path,
+) -> None:
+    """ClientConnectionError (non-HTTP) raises after all retries are exhausted."""
+    with aioresponses() as m:
+        m.get(URL, exception=_aiohttp.ClientConnectionError("refused"))
+        m.get(URL, exception=_aiohttp.ClientConnectionError("refused"))
+        m.get(URL, exception=_aiohttp.ClientConnectionError("refused"))
+        with pytest.raises(_aiohttp.ClientError):
+            await downloader.download(GUID, URL)
 
 
 async def test_cancelled_error_deletes_partial_file_and_propagates(

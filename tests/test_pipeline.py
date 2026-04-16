@@ -1111,6 +1111,72 @@ async def test_branch_d_no_transcription_no_audio_full_pipeline() -> None:
     assert m_cs.return_value.save_cost.await_count == 3  # transcription cost + topic cost + ad cost
 
 
+async def test_download_uses_fresh_feed_url_over_stale_db_url() -> None:
+    """Download uses the URL from the current-run RSS parse, not the potentially stale DB URL.
+
+    The DB may hold a signed URL from a previous run that has since expired.
+    The fresh URL parsed from the RSS feed on this run should be preferred.
+    """
+    stale_url = "https://cdn.example.com/ep.mp3?Expires=1000&Signature=OLD"
+    fresh_url = "https://cdn.example.com/ep.mp3?Expires=9999999999&Signature=NEW"
+
+    # DB episode carries the stale URL.
+    db_ep = Episode(
+        guid="ep-1",
+        url=stale_url,
+        title="My Episode",
+        pub_date=datetime(2026, 3, 22, tzinfo=UTC),
+    )
+    # The parsed feed for this run carries the fresh URL for the same GUID.
+    fresh_ep = Episode(
+        guid="ep-1",
+        url=fresh_url,
+        title="My Episode",
+        pub_date=datetime(2026, 3, 22, tzinfo=UTC),
+    )
+    config, _, _ = _branch_config(MagicMock())
+    parsed = ParsedFeed(
+        config_title="My Podcast",
+        feed_url="http://x.com/feed",
+        title="My Podcast",
+        episodes=[fresh_ep],
+    )
+
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            # DB returns the stale-URL episode; parsed feed has the fresh URL.
+            episodes=[db_ep], parsed=parsed, transcribed_guids=set(),
+        )
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    m_ep_dl.return_value.download.assert_awaited_once_with(
+        "ep-1", fresh_url, on_progress=pipeline._on_download_progress
+    )
+
+
 # ---------------------------------------------------------------------------
 # Error handling — loop independence
 # ---------------------------------------------------------------------------
