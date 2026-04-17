@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import TYPE_CHECKING, Self
 
@@ -35,7 +36,8 @@ CREATE TABLE IF NOT EXISTS episodes (
     itunes_title    TEXT,
     episode_number  INTEGER,
     season_number   INTEGER,
-    itunes_block    INTEGER NOT NULL DEFAULT 0
+    itunes_block    INTEGER NOT NULL DEFAULT 0,
+    length          INTEGER NOT NULL DEFAULT 0
 )
 """
 
@@ -154,6 +156,10 @@ class Database:
         await self.conn.execute(_AD_DETECTION_RUNS_SCHEMA)
         await self.conn.execute(_TRANSCRIPTION_SEGMENTS_GUID_INDEX)
         await self.conn.execute(_AD_SEGMENTS_GUID_INDEX)
+        with contextlib.suppress(aiosqlite.OperationalError):
+            await self.conn.execute(
+                "ALTER TABLE episodes ADD COLUMN length INTEGER NOT NULL DEFAULT 0"
+            )
         await self.conn.commit()
         logger.debug(f"Database opened: {self._db_path}")
         return self

@@ -473,7 +473,7 @@ async def test_run_passes_new_channel_fields_to_publisher() -> None:
     assert pi.itunes_subtitle == "A short subtitle"
     assert pi.itunes_summary == "A long summary"
     assert pi.owner_name == "Test Owner"
-    assert pi.owner_email == "owner@test.com"
+    assert pi.owner_email is None  # email is scrubbed to prevent podcast directory matching
     assert pi.image_title == "My Podcast Image"
     assert pi.image_link == "https://example.com"
     assert pi.content_encoded == "<p>Encoded content</p>"
@@ -1535,7 +1535,8 @@ async def test_run_loads_ad_detected_guids_before_episode_loop() -> None:
 async def test_branch_b_audio_editor_returns_path_uses_computed_url() -> None:
     """Branch B: when AudioEditor.edit() returns a path, the URL is derived from it."""
     config, ep, parsed = _branch_config(MagicMock())
-    output_file = Path("/out/my-podcast/22.03.2026-my-episode.mp3")
+    output_file = MagicMock()
+    output_file.stat.return_value.st_size = 0
 
     with (
         patch("components.pipeline.FeedDownloader") as m_dl,
@@ -1575,7 +1576,8 @@ async def test_branch_b_audio_editor_returns_path_uses_computed_url() -> None:
 async def test_branch_d_audio_editor_returns_path_uses_computed_url() -> None:
     """Branch D: when AudioEditor.edit() returns a path, the URL is derived from it."""
     config, ep, parsed = _branch_config(MagicMock())
-    output_file = Path("/out/my-podcast/22.03.2026-my-episode.mp3")
+    output_file = MagicMock()
+    output_file.stat.return_value.st_size = 0
 
     with (
         patch("components.pipeline.FeedDownloader") as m_dl,
@@ -1667,7 +1669,8 @@ async def test_branch_a_output_exists_short_circuits(tmp_path: Path) -> None:
 
 async def test_branch_b_transcription_exists_no_output_with_ads() -> None:
     """Branch B: transcription exists, no output — download, probe (no preprocess), ad tail, URL updated."""
-    output_file = Path("/out/my-podcast/22.03.2026-my-episode.mp3")
+    output_file = MagicMock()
+    output_file.stat.return_value.st_size = 0
     config, ep, parsed = _branch_config(MagicMock())  # MagicMock -> glob empty -> no audio
 
     with (
@@ -1767,7 +1770,8 @@ async def test_branch_b_transcription_exists_no_output_no_ads_keeps_original_url
 
 async def test_branch_d_full_pipeline_with_ad_detection() -> None:
     """Branch D: full pipeline — download, probe, preprocess, transcribe, ad detect, edit, URL update."""
-    output_file = Path("/out/my-podcast/22.03.2026-my-episode.mp3")
+    output_file = MagicMock()
+    output_file.stat.return_value.st_size = 0
     config, ep, parsed = _branch_config(MagicMock())
 
     with (
@@ -1815,7 +1819,8 @@ async def test_branch_d_full_pipeline_with_ad_detection() -> None:
 
 async def test_branch_d_ad_already_detected_loads_from_store() -> None:
     """Branch D: ad already detected — skips AdDetector, loads segments from AdStore."""
-    output_file = Path("/out/my-podcast/22.03.2026-my-episode.mp3")
+    output_file = MagicMock()
+    output_file.stat.return_value.st_size = 0
     config, ep, parsed = _branch_config(MagicMock())
     existing_segments = [
         AdSegment(

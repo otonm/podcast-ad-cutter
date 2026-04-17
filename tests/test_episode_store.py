@@ -367,3 +367,89 @@ async def test_new_fields_default_null_round_trip(db_path: Path) -> None:
     assert got.episode_number is None
     assert got.season_number is None
     assert got.itunes_block is False
+
+
+# ---------------------------------------------------------------------------
+# Tests: enclosure length field (Fix 3)
+# ---------------------------------------------------------------------------
+
+
+async def test_episode_length_defaults_to_zero(db_path: Path) -> None:
+    """Episode.length must default to 0 and round-trip through save/retrieve."""
+    ep = Episode(guid="len-default", url="https://example.com/ep.mp3")
+    async with Database(db_path) as db:
+        store = EpisodeStore(db.conn)
+        await store.save_episodes("Length Podcast", [ep])
+        result = await store.get_episodes_for_feed("Length Podcast", limit=10)
+
+    assert result[0].length == 0
+
+
+async def test_update_episode_url_updates_length_in_db(
+    db_path: Path, episodes: list[Episode]
+) -> None:
+    """update_episode_url must persist the length value so get_episodes_for_feed returns it."""
+    async with Database(db_path) as db:
+        store = EpisodeStore(db.conn)
+        await store.save_episodes("My Podcast", episodes)
+        await store.update_episode_url("guid-1", "https://local/processed.mp3", length=5432100)
+        result = await store.get_episodes_for_feed("My Podcast", limit=10)
+
+    ep1 = next(e for e in result if e.guid == "guid-1")
+    assert ep1.length == 5432100
+
+
+async def test_update_episode_url_without_length_keeps_zero(
+    db_path: Path, episodes: list[Episode]
+) -> None:
+    """Calling update_episode_url without length leaves length=0 (default)."""
+    async with Database(db_path) as db:
+        store = EpisodeStore(db.conn)
+        await store.save_episodes("My Podcast", episodes)
+        await store.update_episode_url("guid-1", "https://local/processed.mp3")
+        result = await store.get_episodes_for_feed("My Podcast", limit=10)
+
+    ep1 = next(e for e in result if e.guid == "guid-1")
+    assert ep1.length == 0
+
+
+async def test_episodes_length_column_exists(db_path: Path) -> None:
+    """The episodes table must have a length column after Database.__aenter__."""
+    async with Database(db_path):
+        pass
+    async with aiosqlite.connect(db_path) as conn:
+        cursor = await conn.execute("PRAGMA table_info(episodes)")
+        rows = await cursor.fetchall()
+    column_names = {row[1] for row in rows}
+    assert "length" in column_names
+
+
+async def test_length_column_migration_on_existing_db(db_path: Path) -> None:
+    """Database.__aenter__ must add the length column to a pre-existing episodes table."""
+    # Create db without length column (simulate old schema)
+    async with aiosqlite.connect(db_path) as conn:
+        await conn.execute(
+            "CREATE TABLE episodes ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "podcast TEXT NOT NULL, "
+            "title TEXT NOT NULL, "
+            "pubdate TEXT, "
+            "guid TEXT NOT NULL UNIQUE, "
+            "url TEXT NOT NULL DEFAULT '', "
+            "description TEXT, explicit INTEGER, duration TEXT, image_url TEXT, "
+            "episode_type TEXT, itunes_author TEXT, itunes_subtitle TEXT, "
+            "itunes_summary TEXT, content_encoded TEXT, link TEXT, author TEXT, "
+            "itunes_title TEXT, episode_number INTEGER, season_number INTEGER, "
+            "itunes_block INTEGER NOT NULL DEFAULT 0"
+            ")"
+        )
+        await conn.commit()
+
+    async with Database(db_path):
+        pass
+
+    async with aiosqlite.connect(db_path) as conn:
+        cursor = await conn.execute("PRAGMA table_info(episodes)")
+        rows = await cursor.fetchall()
+    column_names = {row[1] for row in rows}
+    assert "length" in column_names

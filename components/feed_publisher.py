@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 _ITUNES = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 _ATOM = "http://www.w3.org/2005/Atom"
 _CONTENT = "http://purl.org/rss/1.0/modules/content/"
+_PODCAST = "https://podcastindex.org/namespace/1.0"
 
 # Applied to the published RSS to distinguish it from the original feed.
 _TITLE_SUFFIX = " (Ad-Free)"
@@ -45,6 +46,7 @@ _MIME_MAP: dict[str, str] = {
 ET.register_namespace("itunes", _ITUNES)
 ET.register_namespace("atom", _ATOM)
 ET.register_namespace("content", _CONTENT)
+ET.register_namespace("podcast", _PODCAST)
 
 
 class FeedPublisher:
@@ -134,17 +136,20 @@ class FeedPublisher:
         )
         return output_path
 
-    async def update_episode_url(self, feed_title: str, guid: str, new_url: str) -> Path:
-        """Update the enclosure URL for a single episode in an already-published feed.
+    async def update_episode_url(
+        self, feed_title: str, guid: str, new_url: str, length: int = 0
+    ) -> Path:
+        """Update the enclosure URL and file size for a single episode in an already-published feed.
 
-        Reads the existing ``.rss`` file, patches the ``<enclosure url>`` and
-        ``type`` attributes on the matching ``<item>``, and writes the file back.
-        The rest of the feed is left untouched.
+        Reads the existing ``.rss`` file, patches the ``<enclosure url>``,
+        ``type``, and ``length`` attributes on the matching ``<item>``, and
+        writes the file back.  The rest of the feed is left untouched.
 
         Args:
             feed_title: Title of the feed (slugified internally to locate the file).
             guid: ``<guid>`` value that identifies the episode to update.
             new_url: New enclosure URL (e.g. the local processed-file URL).
+            length: File size in bytes for the enclosure length attribute.
 
         Returns:
             Path to the updated ``.rss`` file.
@@ -168,9 +173,9 @@ class FeedPublisher:
                 if enclosure is None:
                     logger.debug(f"No existing <enclosure> for guid={guid!r}; creating one")
                     enclosure = ET.SubElement(item, "enclosure")
-                    enclosure.set("length", "0")
                 enclosure.set("url", new_url)
                 enclosure.set("type", self._mime_type(new_url))
+                enclosure.set("length", str(length))
                 ET.indent(root, space="  ")
                 updated_xml = ET.tostring(root, encoding="unicode", xml_declaration=True)
                 await asyncio.to_thread(feed_path.write_text, updated_xml, encoding="utf-8")
@@ -207,6 +212,10 @@ class FeedPublisher:
         atom_link.set("rel", "self")
         atom_link.set("href", feed_url)
         atom_link.set("type", "application/rss+xml")
+
+        # podcast:guid — Podcast 2.0 unique show identifier; prevents directory matching.
+        if feed_input.podcast_guid:
+            self._add_text(channel, f"{{{_PODCAST}}}guid", feed_input.podcast_guid)
 
         for tag, value in (
             ("description", feed_input.description),
@@ -270,16 +279,12 @@ class FeedPublisher:
             if value:
                 self._add_text(channel, tag, value)
 
-        # <itunes:owner> block — written when at least one of name or email is present.
-        logger.debug(
-            f"Owner block: name={feed_input.owner_name!r}, email={feed_input.owner_email!r}"
-        )
-        if feed_input.owner_name or feed_input.owner_email:
+        # <itunes:owner> block — name only; email is intentionally omitted to prevent podcast
+        # directory services from matching this produced feed against the original show.
+        logger.debug(f"Owner block: name={feed_input.owner_name!r}")
+        if feed_input.owner_name:
             owner_el = ET.SubElement(channel, f"{{{_ITUNES}}}owner")
-            if feed_input.owner_name:
-                self._add_text(owner_el, f"{{{_ITUNES}}}name", feed_input.owner_name)
-            if feed_input.owner_email:
-                self._add_text(owner_el, f"{{{_ITUNES}}}email", feed_input.owner_email)
+            self._add_text(owner_el, f"{{{_ITUNES}}}name", feed_input.owner_name)
 
         if feed_input.itunes_complete:
             self._add_text(channel, f"{{{_ITUNES}}}complete", "yes")
@@ -303,7 +308,7 @@ class FeedPublisher:
         enclosure = ET.SubElement(item, "enclosure")
         enclosure.set("url", episode.url)
         enclosure.set("type", self._mime_type(episode.url))
-        enclosure.set("length", "0")
+        enclosure.set("length", str(episode.length))
 
         if episode.description:
             self._add_text(item, "description", episode.description)

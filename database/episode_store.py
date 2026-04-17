@@ -93,6 +93,7 @@ class EpisodeStore:
                 ep.episode_number,          # int or None — stored directly
                 ep.season_number,           # int or None — stored directly
                 int(ep.itunes_block),       # bool → 0/1; column is NOT NULL DEFAULT 0
+                ep.length,
             )
             for ep in episodes
         ]
@@ -100,8 +101,8 @@ class EpisodeStore:
             "INSERT OR IGNORE INTO episodes "
             "(podcast, title, pubdate, guid, url, description, explicit, duration, image_url, "
             "episode_type, itunes_author, itunes_subtitle, itunes_summary, content_encoded, "
-            "link, author, itunes_title, episode_number, season_number, itunes_block) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "link, author, itunes_title, episode_number, season_number, itunes_block, length) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         await self._conn.commit()
@@ -130,7 +131,7 @@ class EpisodeStore:
         async with self._conn.execute(
             "SELECT guid, url, title, pubdate, description, explicit, duration, image_url, "
             "episode_type, itunes_author, itunes_subtitle, itunes_summary, content_encoded, "
-            "link, author, itunes_title, episode_number, season_number, itunes_block "
+            "link, author, itunes_title, episode_number, season_number, itunes_block, length "
             "FROM episodes WHERE podcast = ? ORDER BY pubdate DESC LIMIT ?",
             (podcast, limit),
         ) as cursor:
@@ -162,8 +163,8 @@ class EpisodeStore:
             rows = await cursor.fetchall()
         return {row[0] for row in rows}
 
-    async def update_episode_url(self, guid: str, new_url: str) -> None:
-        """Replace the enclosure URL for a specific episode.
+    async def update_episode_url(self, guid: str, new_url: str, length: int = 0) -> None:
+        """Replace the enclosure URL and file size for a specific episode.
 
         Called by the pipeline after a processed audio file has been created,
         so the next feed publication uses the local file URL instead of the
@@ -172,11 +173,12 @@ class EpisodeStore:
         Args:
             guid: The episode's unique identifier.
             new_url: URL of the locally processed audio file.
+            length: File size in bytes of the processed audio file.
 
         """
         await self._conn.execute(
-            "UPDATE episodes SET url = ? WHERE guid = ?",
-            (new_url, guid),
+            "UPDATE episodes SET url = ?, length = ? WHERE guid = ?",
+            (new_url, length, guid),
         )
         await self._conn.commit()
         logger.info(f"Episode '{guid}': enclosure URL updated to {new_url!r}")
@@ -205,6 +207,7 @@ def _row_to_episode(row: _EpisodeRow) -> Episode:
         16 episode_number
         17 season_number
         18 itunes_block
+        19 length
     """
     (
         guid,
@@ -226,6 +229,7 @@ def _row_to_episode(row: _EpisodeRow) -> Episode:
         episode_number,
         season_number,
         itunes_block_int,
+        length,
     ) = row
 
     # pubdate is stored as an ISO-8601 string; fall back to now() if missing.
@@ -256,4 +260,5 @@ def _row_to_episode(row: _EpisodeRow) -> Episode:
         season_number=season_number,
         # Bool stored as 0/1 integer; always present (NOT NULL DEFAULT 0).
         itunes_block=bool(itunes_block_int),
+        length=length,
     )

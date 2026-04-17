@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 _ITUNES = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 _ATOM = "http://www.w3.org/2005/Atom"
 _CONTENT = "http://purl.org/rss/1.0/modules/content/"
+_PODCAST = "https://podcastindex.org/namespace/1.0"
 
 
 # ---------------------------------------------------------------------------
@@ -707,8 +708,8 @@ async def test_itunes_summary_written(tmp_path: Path, feed_input: PublisherInput
     assert channel.findtext(f"{{{_ITUNES}}}summary") == "A test summary"
 
 
-async def test_owner_block_written_with_name_and_email(tmp_path: Path, feed_input: PublisherInput) -> None:
-    """<itunes:owner> must contain both <itunes:name> and <itunes:email> when both are set."""
+async def test_owner_block_written_with_name_only(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """<itunes:owner> must contain <itunes:name> but never <itunes:email> in produced feeds."""
     publisher = FeedPublisher(tmp_path)
     path = await publisher.publish(feed_input)
     channel = ET.parse(str(path)).getroot().find("channel")
@@ -716,7 +717,7 @@ async def test_owner_block_written_with_name_and_email(tmp_path: Path, feed_inpu
     owner = channel.find(f"{{{_ITUNES}}}owner")
     assert owner is not None
     assert owner.findtext(f"{{{_ITUNES}}}name") == "Test Owner"
-    assert owner.findtext(f"{{{_ITUNES}}}email") == "owner@example.com"
+    assert owner.find(f"{{{_ITUNES}}}email") is None
 
 
 async def test_owner_block_name_only(tmp_path: Path) -> None:
@@ -738,8 +739,8 @@ async def test_owner_block_name_only(tmp_path: Path) -> None:
     assert owner.find(f"{{{_ITUNES}}}email") is None
 
 
-async def test_owner_block_email_only(tmp_path: Path) -> None:
-    """<itunes:owner> with only owner_email set must omit <itunes:name>."""
+async def test_owner_block_absent_when_only_email_set(tmp_path: Path) -> None:
+    """<itunes:owner> must be absent when only owner_email is set (email is never written)."""
     feed = PublisherInput(
         base_url="https://x.com",
         title="Pod",
@@ -751,10 +752,7 @@ async def test_owner_block_email_only(tmp_path: Path) -> None:
     path = await publisher.publish(feed)
     channel = ET.parse(str(path)).getroot().find("channel")
     assert channel is not None
-    owner = channel.find(f"{{{_ITUNES}}}owner")
-    assert owner is not None
-    assert owner.find(f"{{{_ITUNES}}}name") is None
-    assert owner.findtext(f"{{{_ITUNES}}}email") == "only@example.com"
+    assert channel.find(f"{{{_ITUNES}}}owner") is None
 
 
 async def test_owner_block_not_written_when_both_absent(tmp_path: Path) -> None:
@@ -1038,3 +1036,108 @@ async def test_image_block_absent_when_image_url_none(tmp_path: Path) -> None:
     channel = ET.parse(str(path)).getroot().find("channel")
     assert channel is not None
     assert channel.find("image") is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: owner email scrubbing (Fix 1)
+# ---------------------------------------------------------------------------
+
+
+async def test_owner_email_never_written(tmp_path: Path, feed_input: PublisherInput) -> None:
+    """<itunes:email> must never appear in the produced feed regardless of owner_email value."""
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed_input)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    owner = channel.find(f"{{{_ITUNES}}}owner")
+    if owner is not None:
+        assert owner.find(f"{{{_ITUNES}}}email") is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: podcast:guid (Fix 2)
+# ---------------------------------------------------------------------------
+
+
+async def test_podcast_guid_written_in_channel(tmp_path: Path) -> None:
+    """<podcast:guid> must appear in channel when podcast_guid is set."""
+    feed = PublisherInput(
+        base_url="https://x.com",
+        title="Pod",
+        episodes=[],
+        podcast_guid="550e8400-e29b-41d4-a716-446655440000",
+    )
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    assert channel.findtext(f"{{{_PODCAST}}}guid") == "550e8400-e29b-41d4-a716-446655440000"
+
+
+async def test_podcast_guid_absent_when_not_set(tmp_path: Path) -> None:
+    """<podcast:guid> must be absent when podcast_guid is None."""
+    feed = PublisherInput(base_url="https://x.com", title="Pod", episodes=[])
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    assert channel.find(f"{{{_PODCAST}}}guid") is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: enclosure length (Fix 3)
+# ---------------------------------------------------------------------------
+
+
+async def test_enclosure_length_uses_episode_length(tmp_path: Path, pub_date: datetime) -> None:
+    """<enclosure length> must reflect Episode.length, not a hardcoded zero."""
+    ep = Episode(
+        guid="guid-sized",
+        url="https://origin.com/ep.mp3",
+        title="Sized Episode",
+        pub_date=pub_date,
+        length=12345678,
+    )
+    feed = PublisherInput(base_url="https://x.com", title="Pod", episodes=[ep])
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    item = channel.findall("item")[0]
+    enclosure = item.find("enclosure")
+    assert enclosure is not None
+    assert enclosure.get("length") == "12345678"
+
+
+async def test_enclosure_length_defaults_to_zero(tmp_path: Path, pub_date: datetime) -> None:
+    """<enclosure length> must be '0' when Episode.length is 0 (initial state)."""
+    ep = Episode(
+        guid="guid-zero",
+        url="https://origin.com/ep.mp3",
+        title="Zero Length Episode",
+        pub_date=pub_date,
+    )
+    feed = PublisherInput(base_url="https://x.com", title="Pod", episodes=[ep])
+    publisher = FeedPublisher(tmp_path)
+    path = await publisher.publish(feed)
+    channel = ET.parse(str(path)).getroot().find("channel")
+    assert channel is not None
+    enclosure = channel.findall("item")[0].find("enclosure")
+    assert enclosure is not None
+    assert enclosure.get("length") == "0"
+
+
+async def test_update_episode_url_updates_length_attribute(
+    tmp_path: Path, feed_input: PublisherInput
+) -> None:
+    """update_episode_url must update the enclosure length attribute when length is provided."""
+    publisher = FeedPublisher(tmp_path)
+    await publisher.publish(feed_input)
+    await publisher.update_episode_url("My Podcast", "guid-1", "https://local/processed.mp3", length=9876543)
+
+    channel = ET.parse(str(tmp_path / "my-podcast.rss")).getroot().find("channel")
+    assert channel is not None
+    item = next(i for i in channel.findall("item") if i.findtext("guid") == "adfree-guid-1")
+    enclosure = item.find("enclosure")
+    assert enclosure is not None
+    assert enclosure.get("length") == "9876543"

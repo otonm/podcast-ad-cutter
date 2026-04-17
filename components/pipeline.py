@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -239,12 +240,13 @@ class Pipeline:
             itunes_subtitle=feed.itunes_subtitle,
             itunes_summary=feed.itunes_summary,
             owner_name=feed.owner_name,
-            owner_email=feed.owner_email,
+            owner_email=None,
             image_title=feed.image_title,
             image_link=feed.image_link,
             content_encoded=feed.content_encoded,
             itunes_new_feed_url=feed.itunes_new_feed_url,
             itunes_complete=feed.itunes_complete,
+            podcast_guid=str(uuid.uuid5(uuid.NAMESPACE_DNS, slugify(feed.title))),
         )
         return await self._feed_publisher.publish(publisher_input)
 
@@ -295,8 +297,9 @@ class Pipeline:
                     new_url = FeedPublisher.episode_url(
                         self._config.app.base_url, feed_slug, episode.pub_date, episode.title, ext
                     )
-                    await stores.episode.update_episode_url(episode.guid, new_url)
-                    await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url)
+                    file_size = existing_audio.stat().st_size
+                    await stores.episode.update_episode_url(episode.guid, new_url, file_size)
+                    await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url, file_size)
                     return
 
                 # Guard 2: ad segments detected → export edited audio.
@@ -335,8 +338,9 @@ class Pipeline:
                             self._config.app.base_url, feed_slug, episode.pub_date, episode.title,
                             self._config.app.output.file_type,
                         )
-                        await stores.episode.update_episode_url(episode.guid, new_url)
-                        await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url)
+                        file_size = output_path.stat().st_size
+                        await stores.episode.update_episode_url(episode.guid, new_url, file_size)
+                        await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url, file_size)
                         return
                     logger.info(
                         f"Episode '{episode.guid}': no qualifying ads — original audio unchanged"

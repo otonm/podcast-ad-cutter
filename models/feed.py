@@ -37,6 +37,7 @@ class Episode:
     episode_number: int | None = None  # itunes:episode
     season_number: int | None = None  # itunes:season
     itunes_block: bool = False  # itunes:block — hides episode from Apple Podcasts
+    length: int = 0  # enclosure file size in bytes; updated after audio processing
 
 
 @dataclass
@@ -93,6 +94,7 @@ class PublisherInput:
     content_encoded: str | None = None  # from <content:encoded>
     itunes_new_feed_url: str | None = None
     itunes_complete: bool = False  # signals feed has no future episodes
+    podcast_guid: str | None = None  # Podcast 2.0 unique show identifier
 
 
 @dataclass
