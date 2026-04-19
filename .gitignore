@@ -17,3 +17,5 @@ data/
 logs/
 output/
 .coverage
+# Added by code-review-graph
+.code-review-graph/

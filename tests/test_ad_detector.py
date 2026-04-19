@@ -59,12 +59,16 @@ def _make_detector(
     provider: str = "openai",
     model: str = "gpt-4o-mini",
     api_key: str = "sk-test",
-    max_input_tokens: int = 8192,
     max_retries: int = 3,
+    context_window: int | None = None,
 ) -> AdDetector:
-    model_info = {"max_input_tokens": max_input_tokens, "max_tokens": 4096}
-    with patch("components.ad_detector.litellm.get_model_info", return_value=model_info):
-        return AdDetector(provider=provider, model=model, api_key=api_key, max_retries=max_retries)
+    return AdDetector(
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        max_retries=max_retries,
+        context_window=context_window,
+    )
 
 
 @pytest.fixture
@@ -175,16 +179,6 @@ async def test_detect_segment_format_in_user_message(detector: AdDetector) -> No
     user_content = next(m["content"] for m in msgs if m["role"] == "user")
     assert "[0][0][4500]" in user_content
     assert "[1][4500][18000]" in user_content
-
-
-# ---------------------------------------------------------------------------
-# Context window detection
-# ---------------------------------------------------------------------------
-
-async def test_get_model_info_not_found_falls_back_to_8192() -> None:
-    with patch("components.ad_detector.litellm.get_model_info", side_effect=Exception("not found")):
-        det = AdDetector(provider="openai", model="unknown-model", api_key="sk")
-    assert det._max_input_tokens == 8192
 
 
 # ---------------------------------------------------------------------------
@@ -350,7 +344,8 @@ async def test_detect_api_failure_on_retry_raises_ad_detection_error(detector: A
     assert "ep-1" in exc_info.value.message
 
 
-async def test_truncate_segments_when_over_budget(detector: AdDetector) -> None:
+async def test_truncate_segments_when_over_budget() -> None:
+    det = _make_detector(context_window=8192)
     mock_resp = _make_response()
     with (
         patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
@@ -359,7 +354,7 @@ async def test_truncate_segments_when_over_budget(detector: AdDetector) -> None:
             return_value=999999,
         ),
     ):
-        _, detections, _ = await detector.detect("ep-1", _SEGMENTS, _TOPIC)
+        _, detections, _ = await det.detect("ep-1", _SEGMENTS, _TOPIC)
     assert isinstance(detections, list)
 
 
@@ -631,3 +626,146 @@ async def test_log_detection_summary_logs_non_ad_indices(
     # _SEGMENTS has 4 segments (0-3); detection covers [1,2] → non-ad are [0, 3]
     assert "0" in non_ad_logs[0]
     assert "3" in non_ad_logs[0]
+
+
+# ---------------------------------------------------------------------------
+# Context window: no upfront truncation by default
+# ---------------------------------------------------------------------------
+
+async def test_detector_init_does_not_call_get_model_info() -> None:
+    """AdDetector.__init__ must NOT call litellm.get_model_info (lazy resolution only)."""
+    with patch("components.ad_detector.litellm.get_model_info") as mock_info:
+        AdDetector(provider="openai", model="gpt-4o-mini", api_key="sk")
+    mock_info.assert_not_called()
+
+
+async def test_no_truncation_when_context_window_not_set() -> None:
+    """When context_window is None (default), token_counter is never called."""
+    det = AdDetector(provider="openai", model="gpt-4o-mini", api_key="sk")
+    mock_resp = _make_response()
+    with (
+        patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
+        patch("components.ad_detector.litellm.token_counter") as mock_counter,
+    ):
+        await det.detect("ep-1", _SEGMENTS, _TOPIC)
+    mock_counter.assert_not_called()
+
+
+async def test_truncation_applied_when_context_window_set() -> None:
+    """When context_window is set, token_counter is called to measure and truncate."""
+    det = AdDetector(provider="openai", model="gpt-4o-mini", api_key="sk", context_window=100)
+    mock_resp = _make_response()
+    with (
+        patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
+        patch("components.ad_detector.litellm.token_counter", return_value=999999) as mock_counter,
+    ):
+        await det.detect("ep-1", _SEGMENTS, _TOPIC)
+    mock_counter.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# Context window: reactive truncation on ContextWindowExceededError
+# ---------------------------------------------------------------------------
+
+def _make_context_window_error() -> litellm.ContextWindowExceededError:
+    return litellm.ContextWindowExceededError(
+        message="Input too long",
+        model="gpt-4o-mini",
+        llm_provider="openai",
+    )
+
+
+async def test_context_window_error_triggers_truncation_and_retry() -> None:
+    """ContextWindowExceededError causes lazy limit resolution, truncation, and retry."""
+    det = AdDetector(provider="openai", model="gpt-4o-mini", api_key="sk")
+    cw_err = _make_context_window_error()
+    good_resp = _make_response(content=_VALID_DETECTIONS)
+    model_info = {"max_input_tokens": 4096, "max_tokens": 4096}
+    with (
+        patch(
+            "components.ad_detector.litellm.acompletion",
+            new=AsyncMock(side_effect=[cw_err, good_resp]),
+        ) as mock_call,
+        patch("components.ad_detector.litellm.get_model_info", return_value=model_info),
+        patch("components.ad_detector.litellm.token_counter", return_value=100),
+    ):
+        _, detections, _ = await det.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert mock_call.await_count == 2
+    assert len(detections) == 2
+
+
+async def test_context_window_error_resets_messages_from_scratch() -> None:
+    """After ContextWindowExceededError, retry uses clean 2-message history (no accumulated retries)."""
+    det = AdDetector(provider="openai", model="gpt-4o-mini", api_key="sk")
+    cw_err = _make_context_window_error()
+    good_resp = _make_response(content=_VALID_DETECTIONS)
+    model_info = {"max_input_tokens": 4096, "max_tokens": 4096}
+    with (
+        patch(
+            "components.ad_detector.litellm.acompletion",
+            new=AsyncMock(side_effect=[cw_err, good_resp]),
+        ) as mock_call,
+        patch("components.ad_detector.litellm.get_model_info", return_value=model_info),
+        patch("components.ad_detector.litellm.token_counter", return_value=100),
+    ):
+        await det.detect("ep-1", _SEGMENTS, _TOPIC)
+    retry_msgs = mock_call.call_args_list[1].kwargs["messages"]
+    assert len(retry_msgs) == 2
+    assert retry_msgs[0]["role"] == "system"
+    assert retry_msgs[1]["role"] == "user"
+
+
+async def test_context_window_error_falls_back_to_8192_when_model_info_unavailable() -> None:
+    """When model info is unavailable after a context window error, falls back to 8192 tokens."""
+    det = AdDetector(provider="openai", model="unknown-model", api_key="sk")
+    cw_err = _make_context_window_error()
+    good_resp = _make_response(content=_VALID_DETECTIONS)
+    with (
+        patch(
+            "components.ad_detector.litellm.acompletion",
+            new=AsyncMock(side_effect=[cw_err, good_resp]),
+        ) as mock_call,
+        patch("components.ad_detector.litellm.get_model_info", side_effect=Exception("not found")),
+        patch("components.ad_detector.litellm.token_counter", return_value=100),
+    ):
+        _, detections, _ = await det.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert mock_call.await_count == 2
+    assert len(detections) == 2
+
+
+async def test_context_window_error_counts_as_retry_attempt() -> None:
+    """ContextWindowExceededError consumes a retry slot; exhausting retries raises AdDetectionError."""
+    det = AdDetector(provider="openai", model="gpt-4o-mini", api_key="sk", max_retries=2)
+    cw_err = _make_context_window_error()
+    bad_resp = _make_response(content="not json")
+    model_info = {"max_input_tokens": 4096, "max_tokens": 4096}
+    with (
+        patch(
+            "components.ad_detector.litellm.acompletion",
+            new=AsyncMock(side_effect=[cw_err, bad_resp]),
+        ) as mock_call,
+        patch("components.ad_detector.litellm.get_model_info", return_value=model_info),
+        patch("components.ad_detector.litellm.token_counter", return_value=100),
+        pytest.raises(AdDetectionError),
+    ):
+        await det.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert mock_call.await_count == 2
+
+
+async def test_context_window_error_on_last_attempt_raises() -> None:
+    """When every attempt raises ContextWindowExceededError, AdDetectionError is raised."""
+    det = AdDetector(provider="openai", model="gpt-4o-mini", api_key="sk", max_retries=2)
+    cw_err = _make_context_window_error()
+    model_info = {"max_input_tokens": 4096, "max_tokens": 4096}
+    with (
+        patch(
+            "components.ad_detector.litellm.acompletion",
+            new=AsyncMock(side_effect=[cw_err, cw_err]),
+        ) as mock_call,
+        patch("components.ad_detector.litellm.get_model_info", return_value=model_info),
+        patch("components.ad_detector.litellm.token_counter", return_value=100),
+        pytest.raises(AdDetectionError) as exc_info,
+    ):
+        await det.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert mock_call.await_count == 2
+    assert "ep-1" in exc_info.value.message

@@ -34,6 +34,7 @@ class LLMConfig(BaseModel):
 
     provider: Literal["groq", "openai", "openrouter"]
     model: str
+    context_window: int | None = Field(default=None, gt=0)
 
 
 class ModelsConfig(BaseModel):

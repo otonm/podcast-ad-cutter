@@ -15,9 +15,11 @@ models:
   context_extraction:
     provider: "groq"
     model: "llama-3.3-70b-versatile"
+    # context_window: 8192  # optional: always pre-truncate to this token limit (e.g. for local models)
   ad_detection:
     provider: "groq"
     model: "llama-3.3-70b-versatile"
+    # context_window: 8192  # optional: always pre-truncate to this token limit (e.g. for local models)
 
 # Path configurations for various outputs and the cache
 paths:

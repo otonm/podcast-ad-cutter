@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from slugify import slugify
 
+# ── Component imports ──────────────────────────────────────────────────────────
 from components.ad_detector import AdDetector
 from components.ad_parser import AdParser
 from components.audio_editor import AudioEditor
@@ -22,6 +23,8 @@ from components.feed_downloader import FeedDownloader
 from components.feed_parser import FeedParser
 from components.feed_publisher import FeedPublisher
 from components.topic_extractor import TopicExtractor
+
+# ── Config / DB / Model imports ────────────────────────────────────────────────
 from config.config_loader import PROVIDER_KEY_MAP
 from database.ad_store import AdStore
 from database.audio_metadata_store import AudioMetadataStore
@@ -42,8 +45,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# ── Per-feed shared state ──────────────────────────────────────────────────────
+
 @dataclass(slots=True)
 class _Stores:
+    """Groups all DB stores and their cached GUID sets for one feed run.
+
+    The GUID sets are loaded once at the start of a feed and mutated in-place
+    as episodes complete each stage, avoiding repeated DB round-trips.
+    """
+
     episode: EpisodeStore
     transcription: TranscriptionStore
     audio_metadata: AudioMetadataStore
@@ -54,6 +65,8 @@ class _Stores:
     extracted_guids: set[str]
     ad_detected_guids: set[str]
 
+
+# ── Pipeline ───────────────────────────────────────────────────────────────────
 
 class Pipeline:
     """Coordinates each stage of the podcast ad-cutting workflow.
@@ -79,12 +92,18 @@ class Pipeline:
         self._config = config
         self._feed_name = feed_name
         self._db_path: Path = config.app.paths.data_dir / "data.db"
+
+        # ── Feed-level components ──────────────────────────────────────────────
         self._feed_downloader = FeedDownloader()
         self._feed_parser = FeedParser()
         self._feed_publisher = FeedPublisher(config.app.paths.output_dir)
+
+        # ── Episode-level components ───────────────────────────────────────────
         self._episode_downloader = EpisodeDownloader(config.app.paths.cache_dir)
         self._audio_prober = AudioProber()
         self._audio_preprocessor = AudioPreprocessor(config.app.paths.cache_dir)
+
+        # ── ML components (transcription → topic extraction → ad detection) ───
         transcription_cfg = config.app.models.transcription
         self._transcriptor = EpisodeTranscriptor(
             provider=transcription_cfg.provider,
@@ -96,25 +115,40 @@ class Pipeline:
             provider=context_cfg.provider,
             model=context_cfg.model,
             api_key=getattr(config.credentials, PROVIDER_KEY_MAP[context_cfg.provider]),
+            context_window=context_cfg.context_window,
         )
         ad_cfg = config.app.models.ad_detection
         self._ad_detector = AdDetector(
             provider=ad_cfg.provider,
             model=ad_cfg.model,
             api_key=getattr(config.credentials, PROVIDER_KEY_MAP[ad_cfg.provider]),
+            context_window=ad_cfg.context_window,
         )
+
+        # ── Post-processing components ─────────────────────────────────────────
         self._ad_parser = AdParser()
         self._audio_editor = AudioEditor(
             output_dir=config.app.paths.output_dir,
             file_type=config.app.output.file_type,
             bitrate=config.app.output.bitrate,
         )
+
+        # ── Logging config ─────────────────────────────────────────────────────
         self._per_episode_log: bool = config.app.log.per_episode
         self._log_dir: Path = config.app.paths.log_dir
         self._log_file_level: str = config.app.log.file_level
 
+    # ── Public entry point ─────────────────────────────────────────────────────
+
     async def run(self) -> list[ParsedFeed]:
         """Execute the pipeline for the selected feeds.
+
+        High-level flow:
+            1. Select feeds (filter by enabled flag or explicit ``feed_name``).
+            2. Download RSS XML for each feed concurrently.
+            3. Parse feeds into structured :class:`ParsedFeed` objects.
+            4. For each feed: check staleness, save new episodes, publish RSS.
+            5. For each episode: run the per-episode state machine until done.
 
         Returns:
             List of parsed feeds for every feed that was downloaded and
@@ -125,6 +159,7 @@ class Pipeline:
                 exact title exists in the config.
 
         """
+        # ── Phase 1: Select, download, and parse feeds ─────────────────────────
         selected = self._select_feeds()
         download_results = await self._download(selected)
         parse_inputs = self._build_parse_inputs(selected, download_results)
@@ -132,6 +167,7 @@ class Pipeline:
 
         feed_cfg_map = {f.title: f for f in selected}
 
+        # ── Phase 2: Per-feed processing ───────────────────────────────────────
         async with Database(self._db_path) as db:
             store = EpisodeStore(db.conn)
 
@@ -139,6 +175,7 @@ class Pipeline:
                 cfg = feed_cfg_map[feed.config_title]
                 rss_path = self._output_rss_path(feed)
 
+                # ── Staleness check: skip if nothing is new ────────────────────
                 existing_guids = await store.get_guids_for_feed(feed.config_title)
                 new_guids = {ep.guid for ep in feed.episodes} - existing_guids
 
@@ -150,6 +187,7 @@ class Pipeline:
                     logger.info(f"[{feed.config_title}] no new items — skipping feed")
                     continue
 
+                # ── Persist new episodes and publish RSS ───────────────────────
                 await store.save_episodes(feed.config_title, feed.episodes)
 
                 episodes = list(await store.get_episodes_for_feed(
@@ -162,6 +200,7 @@ class Pipeline:
                 if not episodes:
                     continue
 
+                # ── Build per-feed shared state ────────────────────────────────
                 feed_slug = slugify(feed.title)
                 output_feed_dir = self._config.app.paths.output_dir / feed_slug
 
@@ -180,6 +219,7 @@ class Pipeline:
                     ad_detected_guids=await ad_store.get_detected_guids(),
                 )
 
+                # ── Phase 3: Per-episode processing ───────────────────────────
                 for episode in episodes:
                     handler = None
                     if self._per_episode_log:
@@ -205,6 +245,8 @@ class Pipeline:
                             close_episode_log(handler)
 
         return parsed_feeds
+
+    # ── Feed helpers ───────────────────────────────────────────────────────────
 
     async def _publish_feed(self, feed: ParsedFeed, episodes: list[Episode]) -> Path:
         """Build a PublisherInput from feed metadata and publish the RSS file.
@@ -249,194 +291,6 @@ class Pipeline:
             podcast_guid=str(uuid.uuid5(uuid.NAMESPACE_DNS, slugify(feed.title))),
         )
         return await self._feed_publisher.publish(publisher_input)
-
-    async def _process_episode_until_final(  # noqa: PLR0915
-        self,
-        *,
-        episode: Episode,
-        feed: ParsedFeed,
-        feed_slug: str,
-        output_feed_dir: Path,
-        stores: _Stores,
-    ) -> None:
-        """Process one episode via a while-loop state machine.
-
-        Each iteration checks what is already done (filesystem + DB) and
-        performs exactly one step, persisting results so the next iteration
-        picks up from the new state.  The loop exits when either the final
-        output file exists or it is determined that no cuts are needed.
-
-        Guard order per iteration:
-            1. Final file exists  → update URL, return.
-            2. Ad segments detected → export edited audio (return or continue).
-            3. Topic extracted    → run ad detection, continue.
-            4. Transcript exists  → extract topic, continue.
-            (bottom) Download + preprocess + transcribe, continue.
-
-        """
-        pub_date_str = episode.pub_date.strftime("%d.%m.%Y")
-        title_slug = slugify(episode.title)
-        cache_dir = self._config.app.paths.cache_dir
-        raw_path: Path | None = None
-        meta: AudioMetadata | None = None
-
-        logger.info(f"Processing episode '{episode.title}' [{episode.guid}]")
-
-        try:
-            while True:
-                # Guard 1: final file exists → update URL and done.
-                existing_audio = next(
-                    (p for p in output_feed_dir.glob(f"{pub_date_str}-{title_slug}.*")),  # noqa: ASYNC240
-                    None,
-                )
-                if existing_audio is not None:
-                    logger.info(
-                        f"Episode '{episode.guid}': output already exists at {existing_audio}, skipping"
-                    )
-                    ext = existing_audio.suffix.lstrip(".")
-                    new_url = FeedPublisher.episode_url(
-                        self._config.app.base_url, feed_slug, episode.pub_date, episode.title, ext
-                    )
-                    file_size = existing_audio.stat().st_size
-                    await stores.episode.update_episode_url(episode.guid, new_url, file_size)
-                    await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url, file_size)
-                    return
-
-                # Guard 2: ad segments detected → export edited audio.
-                if episode.guid in stores.ad_detected_guids:
-                    ad_segments = await stores.ad.get_segments_for_guid(episode.guid)
-                    logger.info(
-                        f"Episode '{episode.guid}': ad detection cached, "
-                        f"loading {len(ad_segments)} segment(s) from DB"
-                    )
-                    cut_ranges = self._ad_parser.parse(
-                        ad_segments,
-                        min_duration_ms=self._config.app.ad_detection.min_duration,
-                        min_confidence=self._config.app.ad_detection.min_confidence,
-                    )
-                    if raw_path is None:
-                        # Transcript was cached from a previous run — download now.
-                        logger.info(
-                            f"Episode '{episode.guid}': transcription cached, no output; re-downloading"
-                        )
-                        raw_path = await self._episode_downloader.download(
-                            episode.guid, episode.url, on_progress=self._on_download_progress
-                        )
-                        meta = await self._audio_prober.probe(episode.guid, raw_path)
-                        await stores.audio_metadata.save_all([meta])
-                    output_path = await self._audio_editor.edit(
-                        episode.guid,
-                        raw_path,
-                        cut_ranges,
-                        feed_slug,
-                        episode.pub_date,
-                        episode.title,
-                        total_duration_s=meta.duration,  # type: ignore[union-attr]
-                    )
-                    if output_path is not None:
-                        new_url = FeedPublisher.episode_url(
-                            self._config.app.base_url, feed_slug, episode.pub_date, episode.title,
-                            self._config.app.output.file_type,
-                        )
-                        file_size = output_path.stat().st_size
-                        await stores.episode.update_episode_url(episode.guid, new_url, file_size)
-                        await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url, file_size)
-                        return
-                    logger.info(
-                        f"Episode '{episode.guid}': no qualifying ads — original audio unchanged"
-                    )
-                    return
-
-                # Guard 3: topic extracted → detect ads.
-                if episode.guid in stores.extracted_guids:
-                    topic = await stores.topic.get_topic_for_guid(episode.guid)
-                    t_segments = await stores.transcription.get_segments_for_guid(episode.guid)
-                    logger.info(
-                        f"Episode '{episode.guid}': loaded {len(t_segments)} transcription segment(s) from DB"
-                    )
-                    logger.info(
-                        f"Episode '{episode.guid}': topic context "
-                        f"{'available' if topic else 'unavailable'}"
-                    )
-                    segment_map = dict(enumerate(t_segments))
-                    _, detections, ad_cost = await self._ad_detector.detect(
-                        episode.guid, t_segments, topic
-                    )
-                    ad_segments = [
-                        AdSegment(
-                            guid=episode.guid,
-                            start_ms=min(segment_map[i].start_ms for i in valid_indices),
-                            end_ms=max(segment_map[i].end_ms for i in valid_indices),
-                            confidence=d.confidence,
-                            sponsor=d.sponsor,
-                            ad_topic=d.ad_topic,
-                            indices=valid_indices,
-                        )
-                        for d in detections
-                        if (valid_indices := [i for i in d.indices if i in segment_map])
-                    ]
-                    await stores.ad.save_segments(episode.guid, ad_segments)
-                    await stores.ad.mark_detected(episode.guid)
-                    await stores.cost.save_cost(ad_cost)
-                    stores.ad_detected_guids.add(episode.guid)
-                    continue
-
-                # Guard 4: transcript exists → extract topic.
-                if episode.guid in stores.transcribed_guids:
-                    transcription_text = await stores.transcription.get_transcription_text(episode.guid)
-                    _, topic_obj, topic_cost = await self._topic_extractor.extract(
-                        episode.guid,
-                        feed.config_title,
-                        episode.title,
-                        feed.title,
-                        transcription_text,
-                        episode.description,
-                    )
-                    await stores.topic.save_topic(topic_obj)
-                    await stores.cost.save_cost(topic_cost)
-                    stores.extracted_guids.add(episode.guid)
-                    continue
-
-                # Bottom: nothing cached — download, preprocess, transcribe.
-                cached_audio = next(
-                    (p for p in cache_dir.glob(f"{episode.guid}.*")),
-                    None,
-                )
-                if cached_audio is not None:
-                    logger.info(
-                        f"Episode '{episode.guid}': cached audio found, transcription missing"
-                    )
-                    raw_path = cached_audio
-                else:
-                    logger.info(f"Episode '{episode.guid}' is new")
-                    # Prefer the URL from the current-run RSS parse (fresh signed URL)
-                    # over the potentially stale URL stored in the database.
-                    fresh_urls = {ep.guid: ep.url for ep in feed.episodes}
-                    url = fresh_urls.get(episode.guid, episode.url)
-                    raw_path = await self._episode_downloader.download(
-                        episode.guid, url, on_progress=self._on_download_progress
-                    )
-                meta = await self._audio_prober.probe(episode.guid, raw_path)
-                await stores.audio_metadata.save_all([meta])
-                mono_path = await self._audio_preprocessor.preprocess(
-                    episode.guid, raw_path, meta.duration, on_progress=self._on_preprocess_progress
-                )
-                try:
-                    _, transcription, t_segments, cost = await self._transcriptor.transcribe(
-                        episode.guid, mono_path
-                    )
-                finally:
-                    mono_path.unlink(missing_ok=True)
-                    logger.debug(f"Episode '{episode.guid}': removed mono file {mono_path}")
-                await stores.transcription.save_transcription(transcription)
-                await stores.transcription.save_segments(t_segments)
-                await stores.cost.save_cost(cost)
-                stores.transcribed_guids.add(episode.guid)
-                # loop → guard 4 fires on next iteration
-        finally:
-            if raw_path is not None:
-                raw_path.unlink(missing_ok=True)
-                logger.debug(f"Episode '{episode.guid}': removed cached audio {raw_path}")
 
     def _output_rss_path(self, feed: ParsedFeed) -> Path:
         """Return the expected RSS output path for a parsed feed.
@@ -521,6 +375,230 @@ class Pipeline:
             )
             for title, xml_text in download_results
         ]
+
+    # ── Episode state machine ──────────────────────────────────────────────────
+
+    async def _process_episode_until_final(  # noqa: C901, PLR0912, PLR0915
+        self,
+        *,
+        episode: Episode,
+        feed: ParsedFeed,
+        feed_slug: str,
+        output_feed_dir: Path,
+        stores: _Stores,
+    ) -> None:
+        """Process one episode via a while-loop state machine.
+
+        Each iteration evaluates the guards below in order, executes exactly
+        one step, persists its result, then loops.  The loop exits as soon as
+        a terminal guard fires (return) or all stages complete naturally.
+
+        State machine guard order (evaluated top-to-bottom every iteration):
+        ┌──────┬─────────────────────────────────┬─────────────────────────────┐
+        │ Guard│ Condition                        │ Action                      │
+        ├──────┼─────────────────────────────────┼─────────────────────────────┤
+        │  1   │ Output file exists on disk       │ Update URL in DB → return   │
+        │  2   │ Ad detection result in DB        │ Parse cuts, export → return │
+        │  3   │ Topic extracted                  │ Run ad detection → continue │
+        │  4   │ Transcript exists                │ Extract topic    → continue │
+        │  5   │ Audio on disk (cached or fresh)  │ Probe + preprocess + transcribe → continue │
+        │  —   │ (none of the above)              │ Download audio   → continue │
+        └──────┴─────────────────────────────────┴─────────────────────────────┘
+
+        The ``raw_path`` and ``meta`` locals accumulate across iterations so
+        that a file downloaded in one pass is reused by the next without a
+        second disk read.  Both are cleaned up in the ``finally`` block.
+
+        """
+        pub_date_str = episode.pub_date.strftime("%d.%m.%Y")
+        title_slug = slugify(episode.title)
+        cache_dir = self._config.app.paths.cache_dir
+        raw_path: Path | None = None
+        meta: AudioMetadata | None = None
+
+        logger.info(f"Processing episode '{episode.title}' [{episode.guid}]")
+
+        try:
+            while True:
+
+                # ── Guard 1: output file already exists ────────────────────────
+                # Glob matches any extension so a re-encoded file is found even
+                # if the configured file_type changed between runs.
+                existing_audio = next(
+                    (p for p in output_feed_dir.glob(f"{pub_date_str}-{title_slug}.*")),  # noqa: ASYNC240
+                    None,
+                )
+                if existing_audio is not None:
+                    logger.info(
+                        f"Episode '{episode.guid}': output already exists at {existing_audio}, skipping"
+                    )
+                    ext = existing_audio.suffix.lstrip(".")
+                    new_url = FeedPublisher.episode_url(
+                        self._config.app.base_url, feed_slug, episode.pub_date, episode.title, ext
+                    )
+                    file_size = existing_audio.stat().st_size
+                    await stores.episode.update_episode_url(episode.guid, new_url, file_size)
+                    await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url, file_size)
+                    return
+
+                # ── Guard 2: ad detection result cached → export edited audio ──
+                if episode.guid in stores.ad_detected_guids:
+                    ad_segments = await stores.ad.get_segments_for_guid(episode.guid)
+                    logger.info(
+                        f"Episode '{episode.guid}': ad detection cached, "
+                        f"loading {len(ad_segments)} segment(s) from DB"
+                    )
+
+                    # No ads found — nothing to cut.
+                    if not ad_segments:
+                        logger.info(
+                            f"Episode '{episode.guid}': no ad segments on record — original audio unchanged"
+                        )
+                        return
+
+                    cut_ranges = self._ad_parser.parse(
+                        ad_segments,
+                        min_duration_ms=self._config.app.ad_detection.min_duration,
+                        min_confidence=self._config.app.ad_detection.min_confidence,
+                    )
+
+                    # Audio may not be in memory if transcription was cached from
+                    # a previous run — re-download before exporting.
+                    if raw_path is None:
+                        logger.info(
+                            f"Episode '{episode.guid}': transcription cached, no output; re-downloading"
+                        )
+                        raw_path = await self._episode_downloader.download(
+                            episode.guid, episode.url, on_progress=self._on_download_progress
+                        )
+                        meta = await self._audio_prober.probe(episode.guid, raw_path)
+                        await stores.audio_metadata.save_all([meta])
+
+                    output_path = await self._audio_editor.edit(
+                        episode.guid,
+                        raw_path,
+                        cut_ranges,
+                        feed_slug,
+                        episode.pub_date,
+                        episode.title,
+                        total_duration_s=meta.duration,  # type: ignore[union-attr]
+                    )
+
+                    if output_path is not None:
+                        new_url = FeedPublisher.episode_url(
+                            self._config.app.base_url, feed_slug, episode.pub_date, episode.title,
+                            self._config.app.output.file_type,
+                        )
+                        file_size = output_path.stat().st_size
+                        await stores.episode.update_episode_url(episode.guid, new_url, file_size)
+                        await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url, file_size)
+                        return
+
+                    # All detected segments fell below the confidence/duration
+                    # thresholds after parsing — treat as no-ad episode.
+                    logger.info(
+                        f"Episode '{episode.guid}': no qualifying ads — original audio unchanged"
+                    )
+                    return
+
+                # ── Guard 3: topic extracted → run ad detection ────────────────
+                if episode.guid in stores.extracted_guids:
+                    topic = await stores.topic.get_topic_for_guid(episode.guid)
+                    t_segments = await stores.transcription.get_segments_for_guid(episode.guid)
+                    logger.info(
+                        f"Episode '{episode.guid}': loaded {len(t_segments)} transcription segment(s) from DB"
+                    )
+                    logger.info(
+                        f"Episode '{episode.guid}': topic context "
+                        f"{'available' if topic else 'unavailable'}"
+                    )
+                    segment_map = dict(enumerate(t_segments))
+                    _, detections, ad_cost = await self._ad_detector.detect(
+                        episode.guid, t_segments, topic
+                    )
+                    ad_segments = [
+                        AdSegment(
+                            guid=episode.guid,
+                            start_ms=min(segment_map[i].start_ms for i in valid_indices),
+                            end_ms=max(segment_map[i].end_ms for i in valid_indices),
+                            confidence=d.confidence,
+                            sponsor=d.sponsor,
+                            ad_topic=d.ad_topic,
+                            indices=valid_indices,
+                        )
+                        for d in detections
+                        if (valid_indices := [i for i in d.indices if i in segment_map])
+                    ]
+                    await stores.ad.save_segments(episode.guid, ad_segments)
+                    await stores.ad.mark_detected(episode.guid)
+                    await stores.cost.save_cost(ad_cost)
+                    stores.ad_detected_guids.add(episode.guid)
+                    continue
+
+                # ── Guard 4: transcript exists → extract topic ─────────────────
+                if episode.guid in stores.transcribed_guids:
+                    transcription_text = await stores.transcription.get_transcription_text(episode.guid)
+                    _, topic_obj, topic_cost = await self._topic_extractor.extract(
+                        episode.guid,
+                        feed.config_title,
+                        episode.title,
+                        feed.title,
+                        transcription_text,
+                        episode.description,
+                    )
+                    await stores.topic.save_topic(topic_obj)
+                    await stores.cost.save_cost(topic_cost)
+                    stores.extracted_guids.add(episode.guid)
+                    continue
+
+                # ── Guard 5: audio on disk → probe + preprocess + transcribe ───
+                # Matches audio downloaded earlier this run (raw_path) or left
+                # in the cache dir from a previous interrupted run.
+                cached_audio = next(
+                    (p for p in cache_dir.glob(f"{episode.guid}.*")),
+                    None,
+                )
+                if raw_path is not None or cached_audio is not None:
+                    if raw_path is None:
+                        raw_path = cached_audio
+                        logger.info(
+                            f"Episode '{episode.guid}': cached audio found, transcription missing"
+                        )
+                    meta = await self._audio_prober.probe(episode.guid, raw_path)
+                    await stores.audio_metadata.save_all([meta])
+                    mono_path = await self._audio_preprocessor.preprocess(
+                        episode.guid, raw_path, meta.duration, on_progress=self._on_preprocess_progress
+                    )
+                    try:
+                        _, transcription, t_segments, cost = await self._transcriptor.transcribe(
+                            episode.guid, mono_path
+                        )
+                    finally:
+                        mono_path.unlink(missing_ok=True)
+                        logger.debug(f"Episode '{episode.guid}': removed mono file {mono_path}")
+                    await stores.transcription.save_transcription(transcription)
+                    await stores.transcription.save_segments(t_segments)
+                    await stores.cost.save_cost(cost)
+                    stores.transcribed_guids.add(episode.guid)
+                    continue
+
+                # ── Bottom: no audio yet → download ───────────────────────────
+                # Prefer the URL from the current-run RSS parse (fresh signed URL)
+                # over the potentially stale URL stored in the database.
+                logger.info(f"Episode '{episode.guid}' is new")
+                fresh_urls = {ep.guid: ep.url for ep in feed.episodes}
+                url = fresh_urls.get(episode.guid, episode.url)
+                raw_path = await self._episode_downloader.download(
+                    episode.guid, url, on_progress=self._on_download_progress
+                )
+                # Next iteration → guard 5 fires.
+
+        finally:
+            if raw_path is not None:
+                raw_path.unlink(missing_ok=True)
+                logger.debug(f"Episode '{episode.guid}': removed cached audio {raw_path}")
+
+    # ── Progress callbacks ─────────────────────────────────────────────────────
 
     async def _on_download_progress(self, guid: str, percent: float) -> None:
         """Log episode download progress.

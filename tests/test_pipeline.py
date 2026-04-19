@@ -11,11 +11,17 @@ import pytest
 
 from components.pipeline import Pipeline
 from config.config_loader import FeedConfig
-from models.ad_detection import AdDetectionCost, AdSegment, AdSegmentDetection  # noqa: TC002
+from models.ad_detection import AdDetectionCost, AdSegment, AdSegmentDetection
 from models.feed import AudioMetadata, Episode, FeedParseInput, ParsedFeed, PublisherInput
 from models.topic import TopicExtraction, TopicExtractionCost
 from models.transcription import Transcription, TranscriptionCost, TranscriptionSegment
 from utils.exceptions import FfmpegError, TranscriptionError
+
+# A non-empty AdSegment used as default in tests that require Guard 2 to proceed.
+_DEFAULT_AD_SEGMENT = AdSegment(
+    guid="ep-1", start_ms=0, end_ms=5000, confidence=0.9,
+    sponsor=None, ad_topic=None, indices=[0],
+)
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -116,6 +122,7 @@ def _wire_branch_mocks(
     parsed: ParsedFeed,
     transcribed_guids: set[str],
     extracted_guids: set[str] | None = None,
+    ad_segments: list[AdSegment] | None = None,
 ) -> None:
     """Wire standard mocks for all branch and error tests."""
     m_dl.return_value.download_all = AsyncMock(return_value=[("My Podcast", "<rss/>")])
@@ -173,7 +180,9 @@ def _wire_branch_mocks(
         TranscriptionCost(provider="groq", model="whisper-large-v3-turbo", cost=0.001),
     ))
     m_ad_store.return_value.get_detected_guids = AsyncMock(return_value=set())
-    m_ad_store.return_value.get_segments_for_guid = AsyncMock(return_value=[])
+    m_ad_store.return_value.get_segments_for_guid = AsyncMock(
+        return_value=ad_segments if ad_segments is not None else []
+    )
     m_ad_store.return_value.save_segments = AsyncMock()
     m_ad_store.return_value.mark_detected = AsyncMock()
     m_ad_detector.return_value.detect = AsyncMock(return_value=(
@@ -969,7 +978,7 @@ async def test_branch_a_transcription_and_audio_exist(tmp_path: Path) -> None:
 async def test_branch_b_transcription_exists_no_audio_redownloads_and_copies(
     tmp_path: Path,
 ) -> None:
-    """Branch B: transcription OK, no audio — download, probe, preprocess, copy; no transcribe."""
+    """Branch B: transcription and ad segments exist, no output — re-download and export audio."""
     config, ep, parsed = _branch_config(MagicMock())  # MagicMock → glob returns empty → no audio
 
     with (
@@ -997,6 +1006,7 @@ async def test_branch_b_transcription_exists_no_audio_redownloads_and_copies(
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
             m_ad_detector, m_ad_parser, m_audio_editor,
             episodes=[ep], parsed=parsed, transcribed_guids={"ep-1"},
+            ad_segments=[_DEFAULT_AD_SEGMENT],
         )
         pipeline = Pipeline(config)
         await pipeline.run()
@@ -1260,6 +1270,7 @@ async def test_transcribe_error_skips_episode_continues_loop() -> None:
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
             m_ad_detector, m_ad_parser, m_audio_editor,
             episodes=[ep1, ep2], parsed=parsed, transcribed_guids=set(),
+            ad_segments=[_DEFAULT_AD_SEGMENT],
         )
         m_trans.return_value.transcribe = AsyncMock(side_effect=[
             RuntimeError("transcription failed"),
@@ -1355,6 +1366,7 @@ async def test_multiple_episodes_independent_failures() -> None:
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
             m_ad_detector, m_ad_parser, m_audio_editor,
             episodes=[ep1, ep2, ep3], parsed=parsed, transcribed_guids=set(),
+            ad_segments=[_DEFAULT_AD_SEGMENT],
         )
         # ep1 download fails, ep2 preprocess fails, ep3 succeeds
         m_ep_dl.return_value.download = AsyncMock(side_effect=[
@@ -1392,8 +1404,10 @@ def _make_wiring_config() -> MagicMock:
     config.app.models.transcription.model = "whisper-large-v3-turbo"
     config.app.models.context_extraction.provider = "openai"
     config.app.models.context_extraction.model = "gpt-4o-mini"
+    config.app.models.context_extraction.context_window = None
     config.app.models.ad_detection.provider = "openai"
     config.app.models.ad_detection.model = "gpt-4o-mini"
+    config.app.models.ad_detection.context_window = None
     config.app.output.file_type = "mp3"
     config.app.output.bitrate = "128k"
     config.credentials.groq_api_key = "sk-test"
@@ -1421,6 +1435,7 @@ async def test_pipeline_constructs_ad_detector() -> None:
         provider="openai",
         model="gpt-4o-mini",
         api_key="sk-openai-test",
+        context_window=None,
     )
 
 
@@ -1563,6 +1578,7 @@ async def test_branch_b_audio_editor_returns_path_uses_computed_url() -> None:
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
             m_ad_detector, m_ad_parser, m_audio_editor,
             episodes=[ep], parsed=parsed, transcribed_guids={"ep-1"},
+            ad_segments=[_DEFAULT_AD_SEGMENT],
         )
         m_audio_editor.return_value.edit = AsyncMock(return_value=output_file)
         pipeline = Pipeline(config)
@@ -1604,6 +1620,7 @@ async def test_branch_d_audio_editor_returns_path_uses_computed_url() -> None:
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
             m_ad_detector, m_ad_parser, m_audio_editor,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
+            ad_segments=[_DEFAULT_AD_SEGMENT],
         )
         m_audio_editor.return_value.edit = AsyncMock(return_value=output_file)
         pipeline = Pipeline(config)
@@ -1698,6 +1715,7 @@ async def test_branch_b_transcription_exists_no_output_with_ads() -> None:
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
             m_ad_detector, m_ad_parser, m_audio_editor,
             episodes=[ep], parsed=parsed, transcribed_guids={"ep-1"},
+            ad_segments=[_DEFAULT_AD_SEGMENT],
         )
         m_ts.return_value.get_segments_for_guid = AsyncMock(
             return_value=[TranscriptionSegment(guid="ep-1", start_ms=0, end_ms=1000, text="Hello")]
@@ -1715,7 +1733,7 @@ async def test_branch_b_transcription_exists_no_output_with_ads() -> None:
     m_ep_dl.return_value.download.assert_awaited_once()
     m_prober.return_value.probe.assert_awaited_once()
     m_ams.return_value.save_all.assert_awaited_once()
-    m_prep.return_value.preprocess.assert_not_called()  # D-05: no preprocess in Branch B
+    m_prep.return_value.preprocess.assert_not_called()  # no preprocess in Branch B
     m_ts.return_value.get_segments_for_guid.assert_awaited_once_with("ep-1")
     m_topic_store.return_value.get_topic_for_guid.assert_awaited_once_with("ep-1")
     m_ad_detector.return_value.detect.assert_awaited_once()
@@ -1799,6 +1817,7 @@ async def test_branch_d_full_pipeline_with_ad_detection() -> None:
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
             m_ad_detector, m_ad_parser, m_audio_editor,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
+            ad_segments=[_DEFAULT_AD_SEGMENT],
         )
         m_topic_store.return_value.get_topic_for_guid = AsyncMock(return_value=None)
         m_audio_editor.return_value.edit = AsyncMock(return_value=output_file)
@@ -2314,6 +2333,7 @@ async def test_branch_b_deletes_raw_after_pipeline(tmp_path: Path) -> None:
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
             m_ad_detector, m_ad_parser, m_audio_editor,
             episodes=[ep], parsed=parsed, transcribed_guids={"ep-1"},
+            ad_segments=[_DEFAULT_AD_SEGMENT],
         )
         m_ep_dl.return_value.download = AsyncMock(return_value=raw_file)
         await Pipeline(config).run()
@@ -2513,8 +2533,51 @@ async def test_ad_detection_skips_segment_with_all_out_of_range_indices() -> Non
         m_ad_parser.return_value.parse = MagicMock(return_value=[])
         await Pipeline(config).run()
 
-    # AudioEditor.edit must still be called — the out-of-range detection is skipped, not an error
-    m_audio_editor.return_value.edit.assert_awaited_once()
+    # No valid ad segments → Guard 2 returns early without downloading or editing.
+    m_audio_editor.return_value.edit.assert_not_called()
+
+
+async def test_guard5_cached_audio_transcribes_without_redownload(tmp_path: Path) -> None:
+    """Guard 5: if audio is on disk from a previous run, transcription runs without re-downloading."""
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    (cache_dir / "ep-1.mp3").write_bytes(b"audio")
+
+    config, ep, parsed = _branch_config(MagicMock())
+    config.app.paths.cache_dir = cache_dir
+
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        await Pipeline(config).run()
+
+    m_ep_dl.return_value.download.assert_not_called()
+    m_prober.return_value.probe.assert_awaited_once()
+    m_trans.return_value.transcribe.assert_awaited_once()
+
+
+async def test_guard2_empty_ad_segments_skips_download() -> None:
+    """Guard 2: when no ad segments are on record, audio is never re-downloaded."""
+    config, ep, parsed = _branch_config(MagicMock())
+
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+            ad_segments=[],  # ad detection ran but found nothing
+        )
+        m_ad_store.return_value.get_detected_guids = AsyncMock(return_value={"ep-1"})
+        await Pipeline(config).run()
+
+    m_ep_dl.return_value.download.assert_not_called()
+    m_audio_editor.return_value.edit.assert_not_called()
+    m_store.return_value.update_episode_url.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

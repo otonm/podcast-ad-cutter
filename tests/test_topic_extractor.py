@@ -39,12 +39,16 @@ def _make_extractor(
     provider: str = "openai",
     model: str = "gpt-4o-mini",
     api_key: str = "sk-test",
-    max_input_tokens: int = 8192,
     max_retries: int = 3,
+    context_window: int | None = None,
 ) -> TopicExtractor:
-    model_info = {"max_input_tokens": max_input_tokens, "max_tokens": 4096}
-    with patch("components.topic_extractor.litellm.get_model_info", return_value=model_info):
-        return TopicExtractor(provider=provider, model=model, api_key=api_key, max_retries=max_retries)
+    return TopicExtractor(
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        max_retries=max_retries,
+        context_window=context_window,
+    )
 
 
 @pytest.fixture
@@ -197,53 +201,24 @@ async def test_build_messages_omits_description_when_none(extractor: TopicExtrac
 
 
 # ---------------------------------------------------------------------------
-# Context window detection
+# Context window truncation with override
 # ---------------------------------------------------------------------------
 
-async def test_get_model_info_not_found_falls_back_to_8192() -> None:
-    with patch(
-        "components.topic_extractor.litellm.get_model_info",
-        side_effect=Exception("model not found"),
-    ):
-        ex = TopicExtractor(provider="openai", model="unknown-model", api_key="sk")
-    assert ex._max_input_tokens == 8192
-
-
-async def test_get_model_info_uses_max_input_tokens() -> None:
-    model_info = {"max_input_tokens": 32000, "max_tokens": 4096}
-    with patch("components.topic_extractor.litellm.get_model_info", return_value=model_info):
-        ex = TopicExtractor(provider="openai", model="gpt-4o", api_key="sk")
-    assert ex._max_input_tokens == 32000
-
-
-async def test_get_model_info_falls_back_to_max_tokens_when_no_max_input() -> None:
-    model_info = {"max_tokens": 4096}
-    with patch("components.topic_extractor.litellm.get_model_info", return_value=model_info):
-        ex = TopicExtractor(provider="openai", model="gpt-4o", api_key="sk")
-    assert ex._max_input_tokens == 4096
-
-
 async def test_transcript_truncated_when_over_limit() -> None:
-    """When token count exceeds limit, the transcript sent to the LLM must be shorter."""
+    """When context_window is set and token count exceeds it, the transcript is shortened."""
     long_transcript = "word " * 5000  # very long
-
     mock_resp = _make_response()
-
-    # token_counter returns over-limit on first call, then under-limit after truncation
     token_counts = iter([10000, 100])
-
     with (
-        patch("components.topic_extractor.litellm.get_model_info", return_value={"max_input_tokens": 500}),
         patch("components.topic_extractor.litellm.token_counter", side_effect=lambda **_: next(token_counts)),
         patch(
             "components.topic_extractor.litellm.acompletion",
             new=AsyncMock(return_value=mock_resp),
         ) as mock_call,
     ):
-        ex = TopicExtractor(provider="openai", model="gpt-4o-mini", api_key="sk")
+        ex = TopicExtractor(provider="openai", model="gpt-4o-mini", api_key="sk", context_window=500)
         await ex.extract("ep-1", "pod", "title", "My Show", long_transcript)
 
-    # The transcript portion of the user message must be shorter than the original
     msgs = mock_call.call_args.kwargs["messages"]
     user_content = next(m["content"] for m in msgs if m["role"] == "user")
     assert "Transcript:\n\n" in user_content
@@ -252,7 +227,7 @@ async def test_transcript_truncated_when_over_limit() -> None:
 
 
 async def test_transcript_not_truncated_when_within_limit() -> None:
-    """When token count is within limit, the full transcript is sent."""
+    """When token count is within the context_window limit, the full transcript is sent."""
     mock_resp = _make_response()
     with (
         patch("components.topic_extractor.litellm.token_counter", return_value=50),
@@ -261,15 +236,11 @@ async def test_transcript_not_truncated_when_within_limit() -> None:
             new=AsyncMock(return_value=mock_resp),
         ) as mock_call,
     ):
-        await extractor_with_8192().extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
+        await _make_extractor(context_window=8192).extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
 
     msgs = mock_call.call_args.kwargs["messages"]
     user_content = next(m["content"] for m in msgs if m["role"] == "user")
     assert _TRANSCRIPT in user_content
-
-
-def extractor_with_8192() -> TopicExtractor:
-    return _make_extractor(max_input_tokens=8192)
 
 
 # ---------------------------------------------------------------------------
@@ -625,3 +596,146 @@ async def test_json_validate_failed_after_parse_fail_then_succeeds(extractor: To
     assert mock_call.await_count == 3
     assert extraction.hosts == "Alice, Bob"
     assert cost.cost == pytest.approx(0.004)  # 0.001 + 0.003 (schema err has no cost)
+
+
+# ---------------------------------------------------------------------------
+# Context window: no upfront truncation by default
+# ---------------------------------------------------------------------------
+
+async def test_extractor_init_does_not_call_get_model_info() -> None:
+    """TopicExtractor.__init__ must NOT call litellm.get_model_info (lazy resolution only)."""
+    with patch("components.topic_extractor.litellm.get_model_info") as mock_info:
+        TopicExtractor(provider="openai", model="gpt-4o-mini", api_key="sk")
+    mock_info.assert_not_called()
+
+
+async def test_no_truncation_when_context_window_not_set() -> None:
+    """When context_window is None (default), token_counter is never called."""
+    ex = TopicExtractor(provider="openai", model="gpt-4o-mini", api_key="sk")
+    mock_resp = _make_response()
+    with (
+        patch("components.topic_extractor.litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
+        patch("components.topic_extractor.litellm.token_counter") as mock_counter,
+    ):
+        await ex.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
+    mock_counter.assert_not_called()
+
+
+async def test_truncation_applied_when_context_window_set() -> None:
+    """When context_window is set, token_counter is called to measure and truncate."""
+    ex = TopicExtractor(provider="openai", model="gpt-4o-mini", api_key="sk", context_window=100)
+    mock_resp = _make_response()
+    with (
+        patch("components.topic_extractor.litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
+        patch("components.topic_extractor.litellm.token_counter", return_value=999999) as mock_counter,
+    ):
+        await ex.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
+    mock_counter.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# Context window: reactive truncation on ContextWindowExceededError
+# ---------------------------------------------------------------------------
+
+def _make_context_window_error() -> litellm.ContextWindowExceededError:
+    return litellm.ContextWindowExceededError(
+        message="Input too long",
+        model="gpt-4o-mini",
+        llm_provider="openai",
+    )
+
+
+async def test_context_window_error_triggers_truncation_and_retry() -> None:
+    """ContextWindowExceededError causes lazy limit resolution, truncation, and retry."""
+    ex = TopicExtractor(provider="openai", model="gpt-4o-mini", api_key="sk")
+    cw_err = _make_context_window_error()
+    good_resp = _make_response(content=_VALID_JSON)
+    model_info = {"max_input_tokens": 4096, "max_tokens": 4096}
+    with (
+        patch(
+            "components.topic_extractor.litellm.acompletion",
+            new=AsyncMock(side_effect=[cw_err, good_resp]),
+        ) as mock_call,
+        patch("components.topic_extractor.litellm.get_model_info", return_value=model_info),
+        patch("components.topic_extractor.litellm.token_counter", return_value=100),
+    ):
+        _, extraction, _ = await ex.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
+    assert mock_call.await_count == 2
+    assert extraction.show == "Tech Talk"
+
+
+async def test_context_window_error_resets_messages_from_scratch() -> None:
+    """After ContextWindowExceededError, retry uses clean 2-message history (no accumulated retries)."""
+    ex = TopicExtractor(provider="openai", model="gpt-4o-mini", api_key="sk")
+    cw_err = _make_context_window_error()
+    good_resp = _make_response(content=_VALID_JSON)
+    model_info = {"max_input_tokens": 4096, "max_tokens": 4096}
+    with (
+        patch(
+            "components.topic_extractor.litellm.acompletion",
+            new=AsyncMock(side_effect=[cw_err, good_resp]),
+        ) as mock_call,
+        patch("components.topic_extractor.litellm.get_model_info", return_value=model_info),
+        patch("components.topic_extractor.litellm.token_counter", return_value=100),
+    ):
+        await ex.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
+    retry_msgs = mock_call.call_args_list[1].kwargs["messages"]
+    assert len(retry_msgs) == 2
+    assert retry_msgs[0]["role"] == "system"
+    assert retry_msgs[1]["role"] == "user"
+
+
+async def test_context_window_error_falls_back_to_8192_when_model_info_unavailable() -> None:
+    """When model info is unavailable after a context window error, falls back to 8192 tokens."""
+    ex = TopicExtractor(provider="openai", model="unknown-model", api_key="sk")
+    cw_err = _make_context_window_error()
+    good_resp = _make_response(content=_VALID_JSON)
+    with (
+        patch(
+            "components.topic_extractor.litellm.acompletion",
+            new=AsyncMock(side_effect=[cw_err, good_resp]),
+        ) as mock_call,
+        patch("components.topic_extractor.litellm.get_model_info", side_effect=Exception("not found")),
+        patch("components.topic_extractor.litellm.token_counter", return_value=100),
+    ):
+        _, extraction, _ = await ex.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
+    assert mock_call.await_count == 2
+    assert extraction.show == "Tech Talk"
+
+
+async def test_context_window_error_counts_as_retry_attempt() -> None:
+    """ContextWindowExceededError consumes a retry slot; exhausting retries raises TopicExtractionError."""
+    ex = TopicExtractor(provider="openai", model="gpt-4o-mini", api_key="sk", max_retries=2)
+    cw_err = _make_context_window_error()
+    bad_resp = _make_response(content="not json")
+    model_info = {"max_input_tokens": 4096, "max_tokens": 4096}
+    with (
+        patch(
+            "components.topic_extractor.litellm.acompletion",
+            new=AsyncMock(side_effect=[cw_err, bad_resp]),
+        ) as mock_call,
+        patch("components.topic_extractor.litellm.get_model_info", return_value=model_info),
+        patch("components.topic_extractor.litellm.token_counter", return_value=100),
+        pytest.raises(TopicExtractionError),
+    ):
+        await ex.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
+    assert mock_call.await_count == 2
+
+
+async def test_context_window_error_on_last_attempt_raises() -> None:
+    """When every attempt raises ContextWindowExceededError, TopicExtractionError is raised."""
+    ex = TopicExtractor(provider="openai", model="gpt-4o-mini", api_key="sk", max_retries=2)
+    cw_err = _make_context_window_error()
+    model_info = {"max_input_tokens": 4096, "max_tokens": 4096}
+    with (
+        patch(
+            "components.topic_extractor.litellm.acompletion",
+            new=AsyncMock(side_effect=[cw_err, cw_err]),
+        ) as mock_call,
+        patch("components.topic_extractor.litellm.get_model_info", return_value=model_info),
+        patch("components.topic_extractor.litellm.token_counter", return_value=100),
+        pytest.raises(TopicExtractionError) as exc_info,
+    ):
+        await ex.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
+    assert mock_call.await_count == 2
+    assert "ep-1" in exc_info.value.message

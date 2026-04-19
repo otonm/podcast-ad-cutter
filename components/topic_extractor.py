@@ -18,6 +18,10 @@ class _JsonValidateFailedError(Exception):
     """Internal sentinel: Groq rejected the JSON schema — the call should be retried without schema."""
 
 
+class _ContextWindowExceededError(Exception):
+    """Internal sentinel: API rejected the request because the prompt exceeded the context window."""
+
+
 _SYSTEM_PROMPT: str = """You are an assistant to a podcast creator that assists with metadata gathering.
 Your job is to determine the main topic of a podcast from a given trascription segment.
 
@@ -68,16 +72,26 @@ class TopicExtractor:
 
     """
 
-    def __init__(self, provider: str, model: str, api_key: str, max_retries: int = 3) -> None:
+    def __init__(
+        self,
+        provider: str,
+        model: str,
+        api_key: str,
+        max_retries: int = 3,
+        context_window: int | None = None,
+    ) -> None:
         self._provider = provider
         self._model = model
         self._model_id = model if provider == "openai" else f"{provider}/{model}"
         self._api_key = api_key
         self._max_retries = max_retries
-        self._max_input_tokens = self._resolve_context_window()
+        self._context_window = context_window
 
-    def _resolve_context_window(self) -> int:
-        """Return the model's max input token count, falling back to 8192."""
+    def _get_context_window_limit(self) -> int:
+        """Return the model's max input token count, falling back to 8192.
+
+        Called lazily only when a ContextWindowExceededError occurs.
+        """
         try:
             info = litellm.get_model_info(self._model_id)
             limit = info.get("max_input_tokens") or info.get("max_tokens")
@@ -86,10 +100,9 @@ class TopicExtractor:
                 return int(limit)
         except Exception as exc:  # noqa: BLE001 — litellm raises various errors for unknown models
             logger.warning(
-                f"Could not retrieve model info for {self._model_id} ({exc}), "
-                f"defaulting context window to 8192 tokens"
+                f"Could not retrieve model info for {self._model_id} ({exc}), defaulting context window to 16384 tokens"
             )
-        return 8192
+        return 16384
 
     def _build_messages(
         self,
@@ -118,9 +131,10 @@ class TopicExtractor:
         feed_title: str,
         episode_title: str,
         description: str | None,
+        limit: int,
     ) -> str:
-        """Trim the transcript so the full prompt fits within the context window."""
-        budget = self._max_input_tokens - _COMPLETION_RESERVE_TOKENS
+        """Trim the transcript so the full prompt fits within ``limit`` tokens."""
+        budget = limit - _COMPLETION_RESERVE_TOKENS
         messages = self._build_messages(
             transcript,
             feed_title=feed_title,
@@ -156,7 +170,7 @@ class TopicExtractor:
 
         """
         response_format = TopicExtractionSchema if use_schema else None
-        reasoning_effort = "high" if use_reasoning else None
+        reasoning_effort = {"effort": "high", "summary": "auto"} if use_reasoning else None
         try:
             return await litellm.acompletion(
                 model=self._model_id,
@@ -164,8 +178,13 @@ class TopicExtractor:
                 response_format=response_format,
                 api_key=self._api_key,
                 reasoning_effort=reasoning_effort,
-                drop_params=True,
+                thinking={"type": "enabled", "budget_tokens": 10000},
+                verbosity="high",
+                temperature=0.5,
+                drop_params=True
             )
+        except litellm.ContextWindowExceededError as exc:
+            raise _ContextWindowExceededError from exc
         except litellm.BadRequestError as exc:
             if "json_validate_failed" in str(exc):
                 raise _JsonValidateFailedError from exc
@@ -187,7 +206,7 @@ class TopicExtractor:
             show=data["show"],
         )
 
-    async def extract(
+    async def extract(  # noqa: C901, PLR0915
         self,
         guid: str,
         podcast: str,
@@ -214,9 +233,16 @@ class TopicExtractor:
 
         """
         logger.debug(f"Extracting topic for '{guid}' with model {self._model_id}")
-        trimmed = self._truncate_transcript(
-            transcript, feed_title=feed_title, episode_title=title, description=description
-        )
+        if self._context_window is not None:
+            trimmed = self._truncate_transcript(
+                transcript,
+                feed_title=feed_title,
+                episode_title=title,
+                description=description,
+                limit=self._context_window,
+            )
+        else:
+            trimmed = transcript
         messages = self._build_messages(
             trimmed, feed_title=feed_title, episode_title=title, description=description
         )
@@ -231,6 +257,24 @@ class TopicExtractor:
                     guid, messages, use_schema=use_schema, use_reasoning=use_reasoning
                 )
                 logger.debug(f"LLM response: {response}")
+            except _ContextWindowExceededError as exc:
+                if attempt == self._max_retries - 1:
+                    msg = f"Context window exceeded for '{guid}' after {self._max_retries} attempts"
+                    logger.error(f"Skipping topic extraction for '{guid}': {msg}")
+                    raise TopicExtractionError(msg) from exc
+                limit = self._get_context_window_limit()
+                trimmed = self._truncate_transcript(
+                    transcript,
+                    feed_title=feed_title,
+                    episode_title=title,
+                    description=description,
+                    limit=limit,
+                )
+                messages = self._build_messages(
+                    trimmed, feed_title=feed_title, episode_title=title, description=description
+                )
+                use_schema = True
+                continue
             except _JsonValidateFailedError as exc:
                 if attempt == self._max_retries - 1:
                     msg = f"JSON schema validation failed for '{guid}' after {self._max_retries} attempts"

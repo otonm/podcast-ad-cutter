@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio as _asyncio
 from typing import TYPE_CHECKING, Self
+from unittest.mock import patch
 
 import aiohttp as _aiohttp
 import pytest
@@ -12,7 +13,19 @@ from aioresponses import aioresponses
 if TYPE_CHECKING:
     from pathlib import Path
 
-from components.episode_downloader import EpisodeDownloader
+from yarl import URL as _URL
+
+from components.episode_downloader import _DEFAULT_HEADERS, EpisodeDownloader
+
+# A redirect target whose query string contains percent-encoded characters that
+# yarl would normalize away if the URL were parsed without encoded=True.
+# CloudFront signed URLs have ci=...%3D%3D (base64 padding) and Signature=...~...
+# which must reach the server byte-for-byte as issued, or the signature fails.
+_REDIRECT_TARGET = (
+    "https://stitcher.example.com/audio.mp3"
+    "?ci=dGVzdA%3D%3D&Signature=abc~def__&Expires=9999999999"
+    "&Key-Pair-Id=KTEST"
+)
 
 GUID = "episode-abc123"
 URL = "https://example.com/episode.mp3"
@@ -29,6 +42,60 @@ def cache_dir(tmp_path: Path) -> Path:
 def downloader(cache_dir: Path) -> EpisodeDownloader:
     """EpisodeDownloader with zero retry delay for fast tests."""
     return EpisodeDownloader(cache_dir=cache_dir, max_retries=2, retry_delay=0.0)
+
+
+def test_default_headers_contain_user_agent(cache_dir: Path) -> None:
+    """Default headers include User-Agent: curl/7.88.1 when no headers arg is supplied."""
+    d = EpisodeDownloader(cache_dir=cache_dir)
+    assert d._headers == {"User-Agent": "curl/7.88.1"}
+
+
+def test_custom_headers_replace_default(cache_dir: Path) -> None:
+    """A custom headers dict is stored as-is, replacing the default."""
+    custom = {"User-Agent": "MyApp/1.0", "X-Custom": "value"}
+    d = EpisodeDownloader(cache_dir=cache_dir, headers=custom)
+    assert d._headers == custom
+
+
+async def test_user_agent_passed_to_client_session(cache_dir: Path) -> None:
+    """ClientSession is constructed with the default User-Agent header."""
+    captured: dict = {}
+
+    original_init = _aiohttp.ClientSession.__init__
+
+    def capturing_init(self, *args: object, **kwargs: object) -> None:
+        captured.update(kwargs)
+        original_init(self, *args, **kwargs)  # type: ignore[misc]
+
+    with (
+        patch.object(_aiohttp.ClientSession, "__init__", capturing_init),
+        aioresponses() as m,
+    ):
+        m.get(URL, status=200, body=b"x", headers={"Content-Type": "audio/mpeg"})
+        await EpisodeDownloader(cache_dir=cache_dir).download(GUID, URL)
+
+    assert captured.get("headers") == _DEFAULT_HEADERS
+
+
+async def test_custom_headers_passed_to_client_session(cache_dir: Path) -> None:
+    """ClientSession receives custom headers when provided to EpisodeDownloader."""
+    captured: dict = {}
+    custom = {"User-Agent": "CustomBot/2.0"}
+
+    original_init = _aiohttp.ClientSession.__init__
+
+    def capturing_init(self, *args: object, **kwargs: object) -> None:
+        captured.update(kwargs)
+        original_init(self, *args, **kwargs)  # type: ignore[misc]
+
+    with (
+        patch.object(_aiohttp.ClientSession, "__init__", capturing_init),
+        aioresponses() as m,
+    ):
+        m.get(URL, status=200, body=b"x", headers={"Content-Type": "audio/mpeg"})
+        await EpisodeDownloader(cache_dir=cache_dir, headers=custom).download(GUID, URL)
+
+    assert captured.get("headers") == custom
 
 
 async def test_download_creates_cache_dir(
@@ -313,3 +380,66 @@ async def test_cancelled_error_deletes_partial_file_and_propagates(
 
     partial = cache_dir / f"{GUID}.mp3"
     assert not partial.exists()
+
+
+# ── Redirect handling ──────────────────────────────────────────────────────────
+
+async def test_single_redirect_is_followed(
+    downloader: EpisodeDownloader,
+    cache_dir: Path,
+) -> None:
+    """A 302 redirect is followed and the final response is downloaded."""
+    with aioresponses() as m:
+        m.get(URL, status=302, headers={"Location": _REDIRECT_TARGET})
+        m.get(_URL(_REDIRECT_TARGET, encoded=True), status=200, body=AUDIO_DATA,
+              headers={"Content-Type": "audio/mpeg"})
+        path = await downloader.download(GUID, URL)
+
+    assert path.read_bytes() == AUDIO_DATA
+
+
+async def test_redirect_preserves_percent_encoding(
+    downloader: EpisodeDownloader,
+    cache_dir: Path,
+) -> None:
+    """Percent-encoded characters in redirect Location URLs reach the server unchanged.
+
+    yarl normalises URLs by decoding safe characters (e.g. %3D → =).  A
+    CloudFront signed URL contains %3D (base64 padding) and ~ in its Signature
+    parameter; decoding them invalidates the signature and causes a 403.
+    Using URL(location, encoded=True) prevents normalisation.
+    """
+    with aioresponses() as m:
+        m.get(URL, status=302, headers={"Location": _REDIRECT_TARGET})
+        # Register with encoded=True so only the exact percent-encoded form matches.
+        # If aiohttp decodes %3D to = the lookup will miss and raise ConnectionError.
+        m.get(_URL(_REDIRECT_TARGET, encoded=True), status=200, body=AUDIO_DATA,
+              headers={"Content-Type": "audio/mpeg"})
+        path = await downloader.download(GUID, URL)
+
+    assert path.exists()
+
+
+async def test_too_many_redirects_raises(
+    cache_dir: Path,
+) -> None:
+    """More than _MAX_REDIRECTS consecutive redirects raises ClientError."""
+    d = EpisodeDownloader(cache_dir=cache_dir, max_retries=0)
+    redirect_url = "https://r.example.com/hop"
+
+    with aioresponses() as m:
+        for _ in range(12):  # well over _MAX_REDIRECTS (10)
+            m.get(redirect_url, status=302, headers={"Location": redirect_url})
+        with pytest.raises(_aiohttp.ClientError):
+            await d.download(GUID, redirect_url)
+
+
+async def test_redirect_missing_location_raises(
+    downloader: EpisodeDownloader,
+    cache_dir: Path,
+) -> None:
+    """A 302 response without a Location header raises ClientResponseError."""
+    with aioresponses() as m:
+        m.get(URL, status=302)  # no Location header
+        with pytest.raises(_aiohttp.ClientResponseError):
+            await downloader.download(GUID, URL)

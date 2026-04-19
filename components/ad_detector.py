@@ -23,6 +23,10 @@ class _JsonValidateFailedError(Exception):
     """Internal sentinel: Groq rejected the JSON schema — the call should be retried without schema."""
 
 
+class _ContextWindowExceededError(Exception):
+    """Internal sentinel: API rejected the request because the prompt exceeded the context window."""
+
+
 _COMPLETION_RESERVE_TOKENS = 512
 
 _SYSTEM_PROMPT_TEMPLATE: str = """You are an expert audio editor and detector of advertisements in podcast transcripts.
@@ -55,8 +59,8 @@ Typical characteristics:
 - Other: usually include promo codes, discount URLs or codes, affiliate links or are
   cross-promotion of other network shows
 
-A self-promotion by the host for their own show or content is not considered an ad for this purpose,
-and should not be included in the results.
+A self-promotion by the host for their own show or content is usually not considered an ad for this purpose,
+and should be included in the results with a low confidence score.
 
 ## Detection workflow
 
@@ -157,16 +161,26 @@ class AdDetector:
 
     """
 
-    def __init__(self, provider: str, model: str, api_key: str, max_retries: int = 3) -> None:
+    def __init__(
+        self,
+        provider: str,
+        model: str,
+        api_key: str,
+        max_retries: int = 3,
+        context_window: int | None = None,
+    ) -> None:
         self._provider = provider
         self._model = model
         self._model_id = model if provider == "openai" else f"{provider}/{model}"
         self._api_key = api_key
         self._max_retries = max_retries
-        self._max_input_tokens = self._resolve_context_window()
+        self._context_window = context_window
 
-    def _resolve_context_window(self) -> int:
-        """Return the model's max input token count, falling back to 8192."""
+    def _get_context_window_limit(self) -> int:
+        """Return the model's max input token count, falling back to 8192.
+
+        Called lazily only when a ContextWindowExceededError occurs.
+        """
         try:
             info = litellm.get_model_info(self._model_id)
             limit = info.get("max_input_tokens") or info.get("max_tokens")
@@ -175,10 +189,9 @@ class AdDetector:
                 return int(limit)
         except Exception as exc:  # noqa: BLE001 — litellm raises various errors for unknown models
             logger.warning(
-                f"Could not retrieve model info for {self._model_id} ({exc}), "
-                f"defaulting context window to 8192 tokens"
+                f"Could not retrieve model info for {self._model_id} ({exc}), defaulting context window to 16384 tokens"
             )
-        return 8192
+        return 16384
 
     def _build_system_prompt(self, topic_extraction: TopicExtraction | None) -> str:
         show = topic_extraction.show if topic_extraction else "unknown"
@@ -202,9 +215,9 @@ class AdDetector:
             {"role": "user", "content": f"Segments:\n\n{formatted_segments}"},
         ]
 
-    def _truncate_segments(self, formatted_segments: str, system_prompt: str) -> str:
-        """Trim the formatted segments so the full prompt fits within the context window."""
-        budget = self._max_input_tokens - _COMPLETION_RESERVE_TOKENS
+    def _truncate_segments(self, formatted_segments: str, system_prompt: str, limit: int) -> str:
+        """Trim the formatted segments so the full prompt fits within ``limit`` tokens."""
+        budget = limit - _COMPLETION_RESERVE_TOKENS
         messages = self._build_messages(system_prompt, formatted_segments)
         token_count = litellm.token_counter(model=self._model_id, messages=messages)
         if token_count <= budget:
@@ -258,7 +271,7 @@ class AdDetector:
 
         """
         response_format = AdDetectionResponseSchema if use_schema else None
-        reasoning_effort = "high" if use_reasoning else None
+        reasoning_effort = {"effort": "high", "summary": "auto"} if use_reasoning else None
         try:
             return await litellm.acompletion(
                 model=self._model_id,
@@ -266,8 +279,13 @@ class AdDetector:
                 response_format=response_format,
                 api_key=self._api_key,
                 reasoning_effort=reasoning_effort,
-                drop_params=True,
+                thinking={"type": "enabled", "budget_tokens": 10000},
+                verbosity="high",
+                temperature=0.3,
+                drop_params=True
             )
+        except litellm.ContextWindowExceededError as exc:
+            raise _ContextWindowExceededError from exc
         except litellm.BadRequestError as exc:
             if "json_validate_failed" in str(exc):
                 raise _JsonValidateFailedError from exc
@@ -297,7 +315,7 @@ class AdDetector:
             ))
         return detections
 
-    async def detect(  # noqa: PLR0915
+    async def detect(  # noqa: PLR0912, PLR0915, C901
         self,
         guid: str,
         segments: list[TranscriptionSegment],
@@ -325,8 +343,11 @@ class AdDetector:
             f"topic={'set' if topic_extraction else 'unset'}"
         )
         system_prompt = self._build_system_prompt(topic_extraction)
-        formatted = self._format_segments(segments)
-        formatted = self._truncate_segments(formatted, system_prompt)
+        formatted_original = self._format_segments(segments)
+        if self._context_window is not None:
+            formatted = self._truncate_segments(formatted_original, system_prompt, self._context_window)
+        else:
+            formatted = formatted_original
         messages = self._build_messages(system_prompt, formatted)
         total_cost = 0.0
         use_schema = True
@@ -340,6 +361,17 @@ class AdDetector:
                     guid, messages, use_schema=use_schema, use_reasoning=use_reasoning
                 )
                 self._log_llm_reasoning(response, guid)
+            except _ContextWindowExceededError as exc:
+                if attempt == self._max_retries - 1:
+                    msg = f"Context window exceeded for '{guid}' after {self._max_retries} attempts"
+                    logger.error(f"Skipping ad detection for '{guid}': {msg}")
+                    raise AdDetectionError(msg) from exc
+                limit = self._get_context_window_limit()
+                formatted = self._truncate_segments(formatted_original, system_prompt, limit)
+                messages = self._build_messages(system_prompt, formatted)
+                use_schema = True
+                single_index_retry_done = False
+                continue
             except _JsonValidateFailedError as exc:
                 if attempt == self._max_retries - 1:
                     msg = f"JSON schema validation failed for '{guid}' after {self._max_retries} attempts"
