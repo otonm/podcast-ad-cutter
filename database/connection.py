@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS episodes (
     episode_number  INTEGER,
     season_number   INTEGER,
     itunes_block    INTEGER NOT NULL DEFAULT 0,
-    length          INTEGER NOT NULL DEFAULT 0
+    length          INTEGER NOT NULL DEFAULT 0,
+    source_url      TEXT    NOT NULL DEFAULT ''
 )
 """
 
@@ -159,6 +160,10 @@ class Database:
         with contextlib.suppress(aiosqlite.OperationalError):
             await self.conn.execute(
                 "ALTER TABLE episodes ADD COLUMN length INTEGER NOT NULL DEFAULT 0"
+            )
+        with contextlib.suppress(aiosqlite.OperationalError):
+            await self.conn.execute(
+                "ALTER TABLE episodes ADD COLUMN source_url TEXT NOT NULL DEFAULT ''"
             )
         await self.conn.commit()
         logger.debug(f"Database opened: {self._db_path}")

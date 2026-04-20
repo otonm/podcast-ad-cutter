@@ -453,3 +453,17 @@ async def test_length_column_migration_on_existing_db(db_path: Path) -> None:
         rows = await cursor.fetchall()
     column_names = {row[1] for row in rows}
     assert "length" in column_names
+
+
+async def test_source_url_is_stored_and_retrieved(db_path: Path) -> None:
+    """source_url round-trips through save/get unchanged."""
+    ep = Episode(
+        guid="src-url-ep",
+        url="https://cdn.example.com/ep.mp3",
+    )
+    async with Database(db_path) as db:
+        store = EpisodeStore(db.conn)
+        await store.save_episodes("Pod", [ep])
+        result = await store.get_episodes_for_feed("Pod", limit=10)
+
+    assert result[0].source_url == "https://cdn.example.com/ep.mp3"

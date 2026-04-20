@@ -262,3 +262,33 @@ async def test_ad_detection_runs_fk_enforced(db_path: Path) -> None:
             await db.conn.execute(
                 "INSERT INTO ad_detection_runs (guid) VALUES ('ghost-guid')"
             )
+
+
+async def test_episodes_table_has_source_url_column(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    assert "source_url" in await _column_names(db_path)
+
+
+async def test_source_url_column_migration_on_existing_db(db_path: Path) -> None:
+    """Database.__aenter__ must add source_url to a pre-existing episodes table that lacks it."""
+    async with aiosqlite.connect(db_path) as conn:
+        await conn.execute(
+            "CREATE TABLE episodes ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "podcast TEXT NOT NULL, title TEXT NOT NULL, pubdate TEXT, "
+            "guid TEXT NOT NULL UNIQUE, url TEXT NOT NULL DEFAULT '', "
+            "description TEXT, explicit INTEGER, duration TEXT, image_url TEXT, "
+            "episode_type TEXT, itunes_author TEXT, itunes_subtitle TEXT, "
+            "itunes_summary TEXT, content_encoded TEXT, link TEXT, author TEXT, "
+            "itunes_title TEXT, episode_number INTEGER, season_number INTEGER, "
+            "itunes_block INTEGER NOT NULL DEFAULT 0, "
+            "length INTEGER NOT NULL DEFAULT 0"
+            ")"
+        )
+        await conn.commit()
+
+    async with Database(db_path):
+        pass
+
+    assert "source_url" in await _column_names(db_path)

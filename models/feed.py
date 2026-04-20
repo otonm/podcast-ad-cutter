@@ -38,6 +38,7 @@ class Episode:
     season_number: int | None = None  # itunes:season
     itunes_block: bool = False  # itunes:block — hides episode from Apple Podcasts
     length: int = 0  # enclosure file size in bytes; updated after audio processing
+    source_url: str = ""  # immutable original feed enclosure URL; never updated after first insert
 
 
 @dataclass
