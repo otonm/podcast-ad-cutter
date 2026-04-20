@@ -467,3 +467,18 @@ async def test_source_url_is_stored_and_retrieved(db_path: Path) -> None:
         result = await store.get_episodes_for_feed("Pod", limit=10)
 
     assert result[0].source_url == "https://cdn.example.com/ep.mp3"
+
+
+async def test_update_episode_url_does_not_change_source_url(
+    db_path: Path, episodes: list[Episode]
+) -> None:
+    """source_url must stay immutable even after url is updated."""
+    async with Database(db_path) as db:
+        store = EpisodeStore(db.conn)
+        await store.save_episodes("My Podcast", episodes)
+        await store.update_episode_url("guid-1", "https://local/processed.mp3")
+        result = await store.get_episodes_for_feed("My Podcast", limit=10)
+
+    ep1 = next(e for e in result if e.guid == "guid-1")
+    assert ep1.url == "https://local/processed.mp3"
+    assert ep1.source_url == "https://example.com/ep1.mp3"

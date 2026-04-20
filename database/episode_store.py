@@ -15,27 +15,29 @@ if TYPE_CHECKING:
 # Column order: guid, url, title, pubdate, description, explicit, duration,
 # image_url, episode_type, itunes_author, itunes_subtitle, itunes_summary,
 # content_encoded, link, author, itunes_title, episode_number, season_number,
-# itunes_block — 19 fields total.
+# itunes_block, length, source_url — 21 fields total.
 type _EpisodeRow = tuple[
-    str,        # guid
-    str,        # url
-    str,        # title
-    str | None, # pubdate
-    str | None, # description
-    int | None, # explicit_int
-    str | None, # duration
-    str | None, # image_url
-    str | None, # episode_type
-    str | None, # itunes_author
-    str | None, # itunes_subtitle
-    str | None, # itunes_summary
-    str | None, # content_encoded
-    str | None, # link
-    str | None, # author
-    str | None, # itunes_title
-    int | None, # episode_number
-    int | None, # season_number
-    int,        # itunes_block
+    str,        # 0  guid
+    str,        # 1  url
+    str,        # 2  title
+    str | None, # 3  pubdate
+    str | None, # 4  description
+    int | None, # 5  explicit_int
+    str | None, # 6  duration
+    str | None, # 7  image_url
+    str | None, # 8  episode_type
+    str | None, # 9  itunes_author
+    str | None, # 10 itunes_subtitle
+    str | None, # 11 itunes_summary
+    str | None, # 12 content_encoded
+    str | None, # 13 link
+    str | None, # 14 author
+    str | None, # 15 itunes_title
+    int | None, # 16 episode_number
+    int | None, # 17 season_number
+    int,        # 18 itunes_block
+    int,        # 19 length
+    str,        # 20 source_url
 ]
 
 logger = logging.getLogger(__name__)
@@ -94,6 +96,7 @@ class EpisodeStore:
                 ep.season_number,           # int or None — stored directly
                 int(ep.itunes_block),       # bool → 0/1; column is NOT NULL DEFAULT 0
                 ep.length,
+                ep.url,   # source_url — always the original URL; INSERT OR IGNORE keeps it immutable
             )
             for ep in episodes
         ]
@@ -101,8 +104,9 @@ class EpisodeStore:
             "INSERT OR IGNORE INTO episodes "
             "(podcast, title, pubdate, guid, url, description, explicit, duration, image_url, "
             "episode_type, itunes_author, itunes_subtitle, itunes_summary, content_encoded, "
-            "link, author, itunes_title, episode_number, season_number, itunes_block, length) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "link, author, itunes_title, episode_number, season_number, itunes_block, length, "
+            "source_url) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         await self._conn.commit()
@@ -131,7 +135,8 @@ class EpisodeStore:
         async with self._conn.execute(
             "SELECT guid, url, title, pubdate, description, explicit, duration, image_url, "
             "episode_type, itunes_author, itunes_subtitle, itunes_summary, content_encoded, "
-            "link, author, itunes_title, episode_number, season_number, itunes_block, length "
+            "link, author, itunes_title, episode_number, season_number, itunes_block, length, "
+            "source_url "
             "FROM episodes WHERE podcast = ? ORDER BY pubdate DESC LIMIT ?",
             (podcast, limit),
         ) as cursor:
@@ -208,6 +213,7 @@ def _row_to_episode(row: _EpisodeRow) -> Episode:
         17 season_number
         18 itunes_block
         19 length
+        20 source_url
     """
     (
         guid,
@@ -230,6 +236,7 @@ def _row_to_episode(row: _EpisodeRow) -> Episode:
         season_number,
         itunes_block_int,
         length,
+        source_url,
     ) = row
 
     # pubdate is stored as an ISO-8601 string; fall back to now() if missing.
@@ -261,4 +268,5 @@ def _row_to_episode(row: _EpisodeRow) -> Episode:
         # Bool stored as 0/1 integer; always present (NOT NULL DEFAULT 0).
         itunes_block=bool(itunes_block_int),
         length=length,
+        source_url=source_url,
     )
