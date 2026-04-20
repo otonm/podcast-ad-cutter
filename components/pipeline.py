@@ -17,6 +17,7 @@ from components.ad_parser import AdParser
 from components.audio_editor import AudioEditor
 from components.audio_preprocessor import AudioPreprocessor
 from components.audio_prober import AudioProber
+from components.episode_copier import EpisodeCopier
 from components.episode_downloader import EpisodeDownloader
 from components.episode_transcriptor import EpisodeTranscriptor
 from components.feed_downloader import FeedDownloader
@@ -131,6 +132,10 @@ class Pipeline:
             output_dir=config.app.paths.output_dir,
             file_type=config.app.output.file_type,
             bitrate=config.app.output.bitrate,
+        )
+        self._episode_copier = EpisodeCopier(
+            output_dir=config.app.paths.output_dir,
+            base_url=config.app.base_url,
         )
 
         # ── Logging config ─────────────────────────────────────────────────────
@@ -441,7 +446,7 @@ class Pipeline:
                     await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url, file_size)
                     return
 
-                # ── Guard 2: ad detection result cached → export edited audio ──
+                # ── Guard 2: ad detection result cached → export audio ─────────
                 if episode.guid in stores.ad_detected_guids:
                     ad_segments = await stores.ad.get_segments_for_guid(episode.guid)
                     logger.info(
@@ -449,55 +454,65 @@ class Pipeline:
                         f"loading {len(ad_segments)} segment(s) from DB"
                     )
 
-                    # No ads found — nothing to cut.
-                    if not ad_segments:
-                        logger.info(
-                            f"Episode '{episode.guid}': no ad segments on record — original audio unchanged"
+                    cut_ranges = (
+                        self._ad_parser.parse(
+                            ad_segments,
+                            min_duration_ms=self._config.app.ad_detection.min_duration,
+                            min_confidence=self._config.app.ad_detection.min_confidence,
                         )
-                        return
-
-                    cut_ranges = self._ad_parser.parse(
-                        ad_segments,
-                        min_duration_ms=self._config.app.ad_detection.min_duration,
-                        min_confidence=self._config.app.ad_detection.min_confidence,
+                        if ad_segments
+                        else []
                     )
 
-                    # Audio may not be in memory if transcription was cached from
-                    # a previous run — re-download before exporting.
+                    # Audio may not be on disk if detection was cached from a previous run.
                     if raw_path is None:
-                        logger.info(
-                            f"Episode '{episode.guid}': transcription cached, no output; re-downloading"
+                        logger.info(f"Episode '{episode.guid}': no cached audio; re-downloading")
+                        fresh_urls = {ep.guid: ep.url for ep in feed.episodes}
+                        download_url = (
+                            fresh_urls.get(episode.guid)
+                            or episode.source_url
+                            or episode.url
                         )
                         raw_path = await self._episode_downloader.download(
-                            episode.guid, episode.url, on_progress=self._on_download_progress
+                            episode.guid, download_url, on_progress=self._on_download_progress
                         )
                         meta = await self._audio_prober.probe(episode.guid, raw_path)
                         await stores.audio_metadata.save_all([meta])
 
-                    output_path = await self._audio_editor.edit(
-                        episode.guid,
-                        raw_path,
-                        cut_ranges,
-                        feed_slug,
-                        episode.pub_date,
-                        episode.title,
-                        total_duration_s=meta.duration,  # type: ignore[union-attr]
-                    )
-
-                    if output_path is not None:
-                        new_url = FeedPublisher.episode_url(
-                            self._config.app.base_url, feed_slug, episode.pub_date, episode.title,
-                            self._config.app.output.file_type,
+                    if cut_ranges:
+                        assert meta is not None  # noqa: S101
+                        output_path = await self._audio_editor.edit(
+                            episode.guid,
+                            raw_path,
+                            cut_ranges,
+                            feed_slug,
+                            episode.pub_date,
+                            episode.title,
+                            total_duration_s=meta.duration,
                         )
-                        file_size = output_path.stat().st_size
-                        await stores.episode.update_episode_url(episode.guid, new_url, file_size)
-                        await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url, file_size)
-                        return
+                        if output_path is not None:
+                            new_url = FeedPublisher.episode_url(
+                                self._config.app.base_url, feed_slug, episode.pub_date, episode.title,
+                                self._config.app.output.file_type,
+                            )
+                            file_size = output_path.stat().st_size
+                            await stores.episode.update_episode_url(episode.guid, new_url, file_size)
+                            await self._feed_publisher.update_episode_url(
+                                feed.title, episode.guid, new_url, file_size
+                            )
+                            return
 
-                    # All detected segments fell below the confidence/duration
-                    # thresholds after parsing — treat as no-ad episode.
+                    # No qualifying cuts (or all audio classified as ads) — copy original.
                     logger.info(
-                        f"Episode '{episode.guid}': no qualifying ads — original audio unchanged"
+                        f"Episode '{episode.guid}': no qualifying ad cuts — copying original audio to output"
+                    )
+                    _, dest_path, new_url = await self._episode_copier.copy(
+                        episode.guid, raw_path, feed_slug, episode.pub_date, episode.title
+                    )
+                    file_size = dest_path.stat().st_size
+                    await stores.episode.update_episode_url(episode.guid, new_url, file_size)
+                    await self._feed_publisher.update_episode_url(
+                        feed.title, episode.guid, new_url, file_size
                     )
                     return
 

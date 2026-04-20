@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,7 +12,7 @@ import pytest
 
 from components.pipeline import Pipeline
 from config.config_loader import FeedConfig
-from models.ad_detection import AdDetectionCost, AdSegment, AdSegmentDetection
+from models.ad_detection import AdDetectionCost, AdSegment, AdSegmentDetection, CutRange
 from models.feed import AudioMetadata, Episode, FeedParseInput, ParsedFeed, PublisherInput
 from models.topic import TopicExtraction, TopicExtractionCost
 from models.transcription import Transcription, TranscriptionCost, TranscriptionSegment
@@ -22,6 +23,9 @@ _DEFAULT_AD_SEGMENT = AdSegment(
     guid="ep-1", start_ms=0, end_ms=5000, confidence=0.9,
     sponsor=None, ad_topic=None, indices=[0],
 )
+
+# A CutRange returned by AdParser when ad segments meet the threshold.
+_DEFAULT_CUT_RANGE = CutRange(start_ms=0, end_ms=5000)
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -117,6 +121,7 @@ def _wire_branch_mocks(
     m_ad_detector: MagicMock,
     m_ad_parser: MagicMock,
     m_audio_editor: MagicMock,
+    m_episode_copier: MagicMock,
     *,
     episodes: list[Episode],
     parsed: ParsedFeed,
@@ -192,6 +197,12 @@ def _wire_branch_mocks(
     ))
     m_ad_parser.return_value.parse = MagicMock(return_value=[])
     m_audio_editor.return_value.edit = AsyncMock(return_value=None)
+
+    mock_copy_dest = MagicMock()
+    mock_copy_dest.stat.return_value.st_size = 1024
+    m_episode_copier.return_value.copy = AsyncMock(
+        return_value=("ep-1", mock_copy_dest, "http://localhost/my-podcast/22.03.2026-my-episode.mp3")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -914,6 +925,7 @@ async def test_pipeline_constructs_transcriptor_with_model_id_and_key() -> None:
         patch("components.pipeline.AdDetector"),
         patch("components.pipeline.AdParser"),
         patch("components.pipeline.AudioEditor"),
+        patch("components.pipeline.EpisodeCopier"),
     ):
         Pipeline(config)
 
@@ -956,11 +968,12 @@ async def test_branch_a_transcription_and_audio_exist(tmp_path: Path) -> None:
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids={"ep-1"},
         )
         pipeline = Pipeline(config)
@@ -1000,11 +1013,12 @@ async def test_branch_b_transcription_exists_no_audio_redownloads_and_copies(
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids={"ep-1"},
             ad_segments=[_DEFAULT_AD_SEGMENT],
         )
@@ -1052,11 +1066,12 @@ async def test_branch_c_audio_exists_no_transcription_transcribes_from_output(
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         pipeline = Pipeline(config)
@@ -1099,11 +1114,12 @@ async def test_branch_d_no_transcription_no_audio_full_pipeline() -> None:
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         pipeline = Pipeline(config)
@@ -1171,11 +1187,12 @@ async def test_download_uses_fresh_feed_url_over_stale_db_url() -> None:
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             # DB returns the stale-URL episode; parsed feed has the fresh URL.
             episodes=[db_ep], parsed=parsed, transcribed_guids=set(),
         )
@@ -1219,11 +1236,12 @@ async def test_download_error_skips_episode_continues_loop() -> None:
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep1, ep2], parsed=parsed, transcribed_guids=set(),
         )
         m_ep_dl.return_value.download = AsyncMock(side_effect=[
@@ -1264,11 +1282,12 @@ async def test_transcribe_error_skips_episode_continues_loop() -> None:
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep1, ep2], parsed=parsed, transcribed_guids=set(),
             ad_segments=[_DEFAULT_AD_SEGMENT],
         )
@@ -1281,8 +1300,8 @@ async def test_transcribe_error_skips_episode_continues_loop() -> None:
         await pipeline.run()
 
     assert m_trans.return_value.transcribe.await_count == 2
-    # ep1 failed before audio edit; ep2 audio edit should succeed (but editor returns None)
-    m_audio_editor.return_value.edit.assert_awaited()
+    # ep1 failed before reaching Guard 2; ep2 reaches Guard 2 with no qualifying cuts → copy
+    m_episode_copier.return_value.copy.assert_awaited()
 
 
 async def test_preprocess_error_skips_episode_continues_loop() -> None:
@@ -1312,11 +1331,12 @@ async def test_preprocess_error_skips_episode_continues_loop() -> None:
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep1, ep2], parsed=parsed, transcribed_guids=set(),
         )
         m_prep.return_value.preprocess = AsyncMock(side_effect=[
@@ -1360,11 +1380,12 @@ async def test_multiple_episodes_independent_failures() -> None:
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep1, ep2, ep3], parsed=parsed, transcribed_guids=set(),
             ad_segments=[_DEFAULT_AD_SEGMENT],
         )
@@ -1384,7 +1405,8 @@ async def test_multiple_episodes_independent_failures() -> None:
     assert m_ep_dl.return_value.download.await_count == 3
     assert m_prep.return_value.preprocess.await_count == 2
     assert m_trans.return_value.transcribe.await_count == 1
-    m_audio_editor.return_value.edit.assert_awaited()
+    # ep3 succeeds with no qualifying cuts → copy (not edit)
+    m_episode_copier.return_value.copy.assert_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -1428,6 +1450,7 @@ async def test_pipeline_constructs_ad_detector() -> None:
         patch("components.pipeline.AdDetector") as mock_ad_detector_cls,
         patch("components.pipeline.AdParser"),
         patch("components.pipeline.AudioEditor"),
+        patch("components.pipeline.EpisodeCopier"),
     ):
         Pipeline(config)
 
@@ -1452,6 +1475,7 @@ async def test_pipeline_constructs_ad_parser() -> None:
         patch("components.pipeline.AdDetector"),
         patch("components.pipeline.AdParser") as mock_ad_parser_cls,
         patch("components.pipeline.AudioEditor"),
+        patch("components.pipeline.EpisodeCopier"),
     ):
         Pipeline(config)
 
@@ -1471,6 +1495,7 @@ async def test_pipeline_constructs_audio_editor() -> None:
         patch("components.pipeline.AdDetector"),
         patch("components.pipeline.AdParser"),
         patch("components.pipeline.AudioEditor") as mock_audio_editor_cls,
+        patch("components.pipeline.EpisodeCopier"),
     ):
         Pipeline(config)
 
@@ -1481,9 +1506,10 @@ async def test_pipeline_constructs_audio_editor() -> None:
     )
 
 
-async def test_pipeline_does_not_instantiate_episode_copier() -> None:
-    """Pipeline.__init__ must not call EpisodeCopier after removal."""
+async def test_pipeline_constructs_episode_copier() -> None:
+    """Pipeline.__init__ must instantiate EpisodeCopier with output_dir and base_url."""
     config = _make_wiring_config()
+    config.app.base_url = "https://example.com"
 
     with (
         patch("components.pipeline.FeedDownloader"),
@@ -1494,14 +1520,13 @@ async def test_pipeline_does_not_instantiate_episode_copier() -> None:
         patch("components.pipeline.AdDetector"),
         patch("components.pipeline.AdParser"),
         patch("components.pipeline.AudioEditor"),
+        patch("components.pipeline.EpisodeCopier") as mock_copier_cls,
     ):
         Pipeline(config)
 
-    # If EpisodeCopier is still imported and instantiated, this import will succeed
-    # and we can verify it's no longer referenced in the module.
-    import components.pipeline as pipeline_module  # noqa: PLC0415
-    assert not hasattr(pipeline_module, "EpisodeCopier"), (
-        "EpisodeCopier should have been removed from components.pipeline"
+    mock_copier_cls.assert_called_once_with(
+        output_dir=config.app.paths.output_dir,
+        base_url="https://example.com",
     )
 
 
@@ -1528,11 +1553,12 @@ async def test_run_loads_ad_detected_guids_before_episode_loop() -> None:
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         pipeline = Pipeline(config)
@@ -1572,14 +1598,16 @@ async def test_branch_b_audio_editor_returns_path_uses_computed_url() -> None:
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids={"ep-1"},
             ad_segments=[_DEFAULT_AD_SEGMENT],
         )
+        m_ad_parser.return_value.parse = MagicMock(return_value=[_DEFAULT_CUT_RANGE])
         m_audio_editor.return_value.edit = AsyncMock(return_value=output_file)
         pipeline = Pipeline(config)
         await pipeline.run()
@@ -1614,14 +1642,16 @@ async def test_branch_d_audio_editor_returns_path_uses_computed_url() -> None:
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
             ad_segments=[_DEFAULT_AD_SEGMENT],
         )
+        m_ad_parser.return_value.parse = MagicMock(return_value=[_DEFAULT_CUT_RANGE])
         m_audio_editor.return_value.edit = AsyncMock(return_value=output_file)
         pipeline = Pipeline(config)
         await pipeline.run()
@@ -1663,12 +1693,13 @@ async def test_branch_a_output_exists_short_circuits(tmp_path: Path) -> None:
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         # transcribed_guids is empty — Branch A must trigger from audio_exists alone
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         pipeline = Pipeline(config)
@@ -1709,11 +1740,12 @@ async def test_branch_b_transcription_exists_no_output_with_ads() -> None:
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids={"ep-1"},
             ad_segments=[_DEFAULT_AD_SEGMENT],
         )
@@ -1726,6 +1758,7 @@ async def test_branch_b_transcription_exists_no_output_with_ads() -> None:
                 topic="A topic.", hosts="Host A", show="My Show",
             )
         )
+        m_ad_parser.return_value.parse = MagicMock(return_value=[_DEFAULT_CUT_RANGE])
         m_audio_editor.return_value.edit = AsyncMock(return_value=output_file)
         pipeline = Pipeline(config)
         await pipeline.run()
@@ -1745,8 +1778,8 @@ async def test_branch_b_transcription_exists_no_output_with_ads() -> None:
     m_store.return_value.update_episode_url.assert_awaited_once()
 
 
-async def test_branch_b_transcription_exists_no_output_no_ads_keeps_original_url() -> None:
-    """Branch B: AudioEditor returns None — no URL update (original URL preserved)."""
+async def test_branch_b_audio_editor_returns_none_copies_original_to_output() -> None:
+    """Branch B: AudioEditor returns None (all audio classified as ads) — original file is copied."""
     config, ep, parsed = _branch_config(MagicMock())
 
     with (
@@ -1768,12 +1801,19 @@ async def test_branch_b_transcription_exists_no_output_no_ads_keeps_original_url
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
+        mock_copy_dest = MagicMock()
+        mock_copy_dest.stat.return_value.st_size = 2048
+        m_episode_copier.return_value.copy = AsyncMock(
+            return_value=("ep-1", mock_copy_dest, "http://localhost/my-podcast/22.03.2026-my-episode.mp3")
+        )
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
-            episodes=[ep], parsed=parsed, transcribed_guids={"ep-1"},
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+            ad_segments=[_DEFAULT_AD_SEGMENT],
         )
         m_ts.return_value.get_segments_for_guid = AsyncMock(return_value=[])
         m_topic_store.return_value.get_topic_for_guid = AsyncMock(return_value=None)
@@ -1781,9 +1821,9 @@ async def test_branch_b_transcription_exists_no_output_no_ads_keeps_original_url
         pipeline = Pipeline(config)
         await pipeline.run()
 
-    # AudioEditor returned None -> no URL update
-    m_store.return_value.update_episode_url.assert_not_called()
-    m_pub.return_value.update_episode_url.assert_not_called()
+    m_episode_copier.return_value.copy.assert_awaited_once()
+    m_store.return_value.update_episode_url.assert_awaited_once()
+    m_pub.return_value.update_episode_url.assert_awaited_once()
 
 
 async def test_branch_d_full_pipeline_with_ad_detection() -> None:
@@ -1811,15 +1851,17 @@ async def test_branch_d_full_pipeline_with_ad_detection() -> None:
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
             ad_segments=[_DEFAULT_AD_SEGMENT],
         )
         m_topic_store.return_value.get_topic_for_guid = AsyncMock(return_value=None)
+        m_ad_parser.return_value.parse = MagicMock(return_value=[_DEFAULT_CUT_RANGE])
         m_audio_editor.return_value.edit = AsyncMock(return_value=output_file)
         pipeline = Pipeline(config)
         await pipeline.run()
@@ -1867,16 +1909,18 @@ async def test_branch_d_ad_already_detected_loads_from_store() -> None:
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         m_ad_store.return_value.get_detected_guids = AsyncMock(return_value={"ep-1"})
         m_ad_store.return_value.get_segments_for_guid = AsyncMock(return_value=existing_segments)
         m_topic_store.return_value.get_topic_for_guid = AsyncMock(return_value=None)
+        m_ad_parser.return_value.parse = MagicMock(return_value=[_DEFAULT_CUT_RANGE])
         m_audio_editor.return_value.edit = AsyncMock(return_value=output_file)
         pipeline = Pipeline(config)
         await pipeline.run()
@@ -1919,11 +1963,12 @@ async def test_branch_c_audio_exists_no_transcription_runs_ad_detection(
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         m_audio_editor.return_value.edit = AsyncMock(return_value=None)
@@ -1934,9 +1979,10 @@ async def test_branch_c_audio_exists_no_transcription_runs_ad_detection(
     m_prep.return_value.preprocess.assert_awaited_once()
     m_trans.return_value.transcribe.assert_awaited_once()
     m_ad_detector.return_value.detect.assert_awaited_once()
-    # AudioEditor returned None -> no URL update
-    m_store.return_value.update_episode_url.assert_not_called()
-    m_pub.return_value.update_episode_url.assert_not_called()
+    # No qualifying ad cuts — original audio is copied to output
+    m_episode_copier.return_value.copy.assert_awaited_once()
+    m_store.return_value.update_episode_url.assert_awaited_once()
+    m_pub.return_value.update_episode_url.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -1970,11 +2016,12 @@ async def test_feed_rss_exists_no_new_items_skips_feed(tmp_path: Path) -> None:
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         # All feed episodes already known to the DB and all have completed ad detection.
@@ -2017,11 +2064,12 @@ async def test_feed_rss_exists_undetected_episodes_does_not_skip(tmp_path: Path)
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         # Episode already in DB (not new) but never through ad detection.
@@ -2059,11 +2107,12 @@ async def test_feed_rss_missing_publishes_new_feed(tmp_path: Path) -> None:
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         # DB is empty — all episodes are new.
@@ -2101,11 +2150,12 @@ async def test_feed_rss_exists_with_new_items_publishes(tmp_path: Path) -> None:
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         # DB has no episodes — ep-1 is new even though the RSS file already exists.
@@ -2146,11 +2196,12 @@ async def test_branch_c_topic_already_extracted_loads_from_store(tmp_path: Path)
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
             extracted_guids={"ep-1"},
         )
@@ -2184,11 +2235,12 @@ async def test_branch_d_topic_already_extracted_loads_from_store() -> None:
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
             extracted_guids={"ep-1"},
         )
@@ -2203,24 +2255,25 @@ async def test_branch_d_topic_already_extracted_loads_from_store() -> None:
 # ---------------------------------------------------------------------------
 
 _PATCHES = (
-    "components.pipeline.FeedDownloader",
-    "components.pipeline.FeedParser",
-    "components.pipeline.FeedPublisher",
-    "components.pipeline.Database",
-    "components.pipeline.EpisodeStore",
-    "components.pipeline.TranscriptionStore",
-    "components.pipeline.AudioMetadataStore",
-    "components.pipeline.CostTrackingStore",
-    "components.pipeline.EpisodeDownloader",
-    "components.pipeline.AudioProber",
-    "components.pipeline.AudioPreprocessor",
-    "components.pipeline.EpisodeTranscriptor",
-    "components.pipeline.AdStore",
-    "components.pipeline.TopicExtractor",
-    "components.pipeline.TopicStore",
-    "components.pipeline.AdDetector",
-    "components.pipeline.AdParser",
-    "components.pipeline.AudioEditor",
+    "components.pipeline.FeedDownloader",       # [0]
+    "components.pipeline.FeedParser",            # [1]
+    "components.pipeline.FeedPublisher",         # [2]
+    "components.pipeline.Database",              # [3]
+    "components.pipeline.EpisodeStore",          # [4]
+    "components.pipeline.TranscriptionStore",    # [5]
+    "components.pipeline.AudioMetadataStore",    # [6]
+    "components.pipeline.CostTrackingStore",     # [7]
+    "components.pipeline.EpisodeDownloader",     # [8]
+    "components.pipeline.AudioProber",           # [9]
+    "components.pipeline.AudioPreprocessor",     # [10]
+    "components.pipeline.EpisodeTranscriptor",   # [11]
+    "components.pipeline.AdStore",               # [12]
+    "components.pipeline.TopicExtractor",        # [13]
+    "components.pipeline.TopicStore",            # [14]
+    "components.pipeline.AdDetector",            # [15]
+    "components.pipeline.AdParser",              # [16]
+    "components.pipeline.AudioEditor",           # [17]
+    "components.pipeline.EpisodeCopier",         # [18]  ← NEW
 )
 
 
@@ -2235,11 +2288,11 @@ async def test_branch_c_deletes_mono_after_transcription(tmp_path: Path) -> None
     config, ep, parsed = _branch_config(MagicMock())
     config.app.paths.cache_dir = cache_dir
 
-    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor, patch(_PATCHES[18]) as m_episode_copier:  # noqa: E501
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         m_prep.return_value.preprocess = AsyncMock(return_value=mono_file)
@@ -2257,11 +2310,11 @@ async def test_branch_d_deletes_mono_after_transcription(tmp_path: Path) -> None
 
     config, ep, parsed = _branch_config(MagicMock())
 
-    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor, patch(_PATCHES[18]) as m_episode_copier:  # noqa: E501
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         m_ep_dl.return_value.download = AsyncMock(return_value=raw_file)
@@ -2282,11 +2335,11 @@ async def test_branch_c_deletes_mono_on_transcription_error(tmp_path: Path) -> N
     config, ep, parsed = _branch_config(MagicMock())
     config.app.paths.cache_dir = cache_dir
 
-    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor, patch(_PATCHES[18]) as m_episode_copier:  # noqa: E501
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         m_prep.return_value.preprocess = AsyncMock(return_value=mono_file)
@@ -2305,11 +2358,11 @@ async def test_branch_d_deletes_mono_on_transcription_error(tmp_path: Path) -> N
 
     config, ep, parsed = _branch_config(MagicMock())
 
-    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor, patch(_PATCHES[18]) as m_episode_copier:  # noqa: E501
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         m_ep_dl.return_value.download = AsyncMock(return_value=raw_file)
@@ -2327,11 +2380,11 @@ async def test_branch_b_deletes_raw_after_pipeline(tmp_path: Path) -> None:
 
     config, ep, parsed = _branch_config(MagicMock())
 
-    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor, patch(_PATCHES[18]) as m_episode_copier:  # noqa: E501
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids={"ep-1"},
             ad_segments=[_DEFAULT_AD_SEGMENT],
         )
@@ -2353,11 +2406,11 @@ async def test_branch_c_deletes_raw_after_pipeline(tmp_path: Path) -> None:
     config, ep, parsed = _branch_config(MagicMock())
     config.app.paths.cache_dir = cache_dir
 
-    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor, patch(_PATCHES[18]) as m_episode_copier:  # noqa: E501
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         m_prep.return_value.preprocess = AsyncMock(return_value=mono_file)
@@ -2375,11 +2428,11 @@ async def test_branch_d_deletes_raw_after_pipeline(tmp_path: Path) -> None:
 
     config, ep, parsed = _branch_config(MagicMock())
 
-    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor, patch(_PATCHES[18]) as m_episode_copier:  # noqa: E501
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         m_ep_dl.return_value.download = AsyncMock(return_value=raw_file)
@@ -2396,11 +2449,11 @@ async def test_branch_d_deletes_raw_on_preprocessing_error(tmp_path: Path) -> No
 
     config, ep, parsed = _branch_config(MagicMock())
 
-    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor, patch(_PATCHES[18]) as m_episode_copier:  # noqa: E501
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         m_ep_dl.return_value.download = AsyncMock(return_value=raw_file)
@@ -2419,11 +2472,11 @@ async def test_branch_d_deletes_raw_on_audio_editor_error(tmp_path: Path) -> Non
 
     config, ep, parsed = _branch_config(MagicMock())
 
-    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor, patch(_PATCHES[18]) as m_episode_copier:  # noqa: E501
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         m_ep_dl.return_value.download = AsyncMock(return_value=raw_file)
@@ -2457,11 +2510,12 @@ async def test_ad_detection_builds_ad_segment_from_valid_indices() -> None:
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         # detect returns a block covering index 0 (the only segment in the stub transcription)
@@ -2517,11 +2571,12 @@ async def test_ad_detection_skips_segment_with_all_out_of_range_indices() -> Non
         patch("components.pipeline.AdDetector") as m_ad_detector,
         patch("components.pipeline.AdParser") as m_ad_parser,
         patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
     ):
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         # Return a detection whose indices are all outside the segment_map (only index 0 exists)
@@ -2533,8 +2588,9 @@ async def test_ad_detection_skips_segment_with_all_out_of_range_indices() -> Non
         m_ad_parser.return_value.parse = MagicMock(return_value=[])
         await Pipeline(config).run()
 
-    # No valid ad segments → Guard 2 returns early without downloading or editing.
+    # No valid ad segments → audio editor not called; original audio is copied to output.
     m_audio_editor.return_value.edit.assert_not_called()
+    m_episode_copier.return_value.copy.assert_awaited_once()
 
 
 async def test_guard5_cached_audio_transcribes_without_redownload(tmp_path: Path) -> None:
@@ -2546,11 +2602,11 @@ async def test_guard5_cached_audio_transcribes_without_redownload(tmp_path: Path
     config, ep, parsed = _branch_config(MagicMock())
     config.app.paths.cache_dir = cache_dir
 
-    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor, patch(_PATCHES[18]) as m_episode_copier:  # noqa: E501
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         await Pipeline(config).run()
@@ -2560,24 +2616,47 @@ async def test_guard5_cached_audio_transcribes_without_redownload(tmp_path: Path
     m_trans.return_value.transcribe.assert_awaited_once()
 
 
-async def test_guard2_empty_ad_segments_skips_download() -> None:
-    """Guard 2: when no ad segments are on record, audio is never re-downloaded."""
+async def test_guard2_no_ad_segments_copies_to_output() -> None:
+    """Guard 2: when no ad segments were detected, episode is copied to output folder."""
     config, ep, parsed = _branch_config(MagicMock())
 
-    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor:  # noqa: E501
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor, patch(_PATCHES[18]) as m_episode_copier:  # noqa: E501
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
-            ad_segments=[],  # ad detection ran but found nothing
+            ad_segments=[],  # detection ran, found nothing
         )
         m_ad_store.return_value.get_detected_guids = AsyncMock(return_value={"ep-1"})
         await Pipeline(config).run()
 
-    m_ep_dl.return_value.download.assert_not_called()
     m_audio_editor.return_value.edit.assert_not_called()
-    m_store.return_value.update_episode_url.assert_not_called()
+    m_episode_copier.return_value.copy.assert_awaited_once()
+    m_store.return_value.update_episode_url.assert_awaited_once()
+    m_pub.return_value.update_episode_url.assert_awaited_once()
+
+
+async def test_guard2_no_qualifying_cuts_copies_to_output() -> None:
+    """Guard 2: when ad segments exist but all fall below thresholds, episode is copied."""
+    config, ep, parsed = _branch_config(MagicMock())
+
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor, patch(_PATCHES[18]) as m_episode_copier:  # noqa: E501
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+            ad_segments=[_DEFAULT_AD_SEGMENT],
+        )
+        m_ad_store.return_value.get_detected_guids = AsyncMock(return_value={"ep-1"})
+        m_ad_parser.return_value.parse = MagicMock(return_value=[])  # all below threshold
+        await Pipeline(config).run()
+
+    m_audio_editor.return_value.edit.assert_not_called()
+    m_episode_copier.return_value.copy.assert_awaited_once()
+    m_store.return_value.update_episode_url.assert_awaited_once()
+    m_pub.return_value.update_episode_url.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -2598,32 +2677,39 @@ async def test_per_episode_log_open_called_once_per_episode(tmp_path: Path) -> N
     """When per_episode=True, open_episode_log is called once for each episode."""
     config, ep, parsed = _make_per_episode_config(tmp_path, per_episode=True)
 
-    with (
-        patch("components.pipeline.FeedDownloader") as m_dl,
-        patch("components.pipeline.FeedParser") as m_fp,
-        patch("components.pipeline.FeedPublisher") as m_pub,
-        patch("components.pipeline.Database") as m_db,
-        patch("components.pipeline.EpisodeStore") as m_store,
-        patch("components.pipeline.TranscriptionStore") as m_ts,
-        patch("components.pipeline.AudioMetadataStore") as m_ams,
-        patch("components.pipeline.CostTrackingStore") as m_cs,
-        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
-        patch("components.pipeline.AudioProber") as m_prober,
-        patch("components.pipeline.AudioPreprocessor") as m_prep,
-        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
-        patch("components.pipeline.AdStore") as m_ad_store,
-        patch("components.pipeline.TopicExtractor") as m_topic_ext,
-        patch("components.pipeline.TopicStore") as m_topic_store,
-        patch("components.pipeline.AdDetector") as m_ad_detector,
-        patch("components.pipeline.AdParser") as m_ad_parser,
-        patch("components.pipeline.AudioEditor") as m_audio_editor,
-        patch("components.pipeline.open_episode_log") as m_open,
+    _patches = [
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.FeedParser"),
+        patch("components.pipeline.FeedPublisher"),
+        patch("components.pipeline.Database"),
+        patch("components.pipeline.EpisodeStore"),
+        patch("components.pipeline.TranscriptionStore"),
+        patch("components.pipeline.AudioMetadataStore"),
+        patch("components.pipeline.CostTrackingStore"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.AudioProber"),
+        patch("components.pipeline.AudioPreprocessor"),
+        patch("components.pipeline.EpisodeTranscriptor"),
+        patch("components.pipeline.AdStore"),
+        patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.TopicStore"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
+        patch("components.pipeline.EpisodeCopier"),
+        patch("components.pipeline.open_episode_log"),
         patch("components.pipeline.close_episode_log"),
-    ):
+    ]
+    with contextlib.ExitStack() as stack:
+        mocks = [stack.enter_context(p) for p in _patches]
+        (m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+         m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
+         m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
+         m_episode_copier, m_open, _m_close) = mocks
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
-            m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
+            m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         m_open.return_value = (MagicMock(), MagicMock())
@@ -2642,32 +2728,39 @@ async def test_per_episode_log_not_opened_when_disabled(tmp_path: Path) -> None:
     """When per_episode=False, open_episode_log is never called."""
     config, ep, parsed = _make_per_episode_config(tmp_path, per_episode=False)
 
-    with (
-        patch("components.pipeline.FeedDownloader") as m_dl,
-        patch("components.pipeline.FeedParser") as m_fp,
-        patch("components.pipeline.FeedPublisher") as m_pub,
-        patch("components.pipeline.Database") as m_db,
-        patch("components.pipeline.EpisodeStore") as m_store,
-        patch("components.pipeline.TranscriptionStore") as m_ts,
-        patch("components.pipeline.AudioMetadataStore") as m_ams,
-        patch("components.pipeline.CostTrackingStore") as m_cs,
-        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
-        patch("components.pipeline.AudioProber") as m_prober,
-        patch("components.pipeline.AudioPreprocessor") as m_prep,
-        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
-        patch("components.pipeline.AdStore") as m_ad_store,
-        patch("components.pipeline.TopicExtractor") as m_topic_ext,
-        patch("components.pipeline.TopicStore") as m_topic_store,
-        patch("components.pipeline.AdDetector") as m_ad_detector,
-        patch("components.pipeline.AdParser") as m_ad_parser,
-        patch("components.pipeline.AudioEditor") as m_audio_editor,
-        patch("components.pipeline.open_episode_log") as m_open,
+    _patches = [
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.FeedParser"),
+        patch("components.pipeline.FeedPublisher"),
+        patch("components.pipeline.Database"),
+        patch("components.pipeline.EpisodeStore"),
+        patch("components.pipeline.TranscriptionStore"),
+        patch("components.pipeline.AudioMetadataStore"),
+        patch("components.pipeline.CostTrackingStore"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.AudioProber"),
+        patch("components.pipeline.AudioPreprocessor"),
+        patch("components.pipeline.EpisodeTranscriptor"),
+        patch("components.pipeline.AdStore"),
+        patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.TopicStore"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
+        patch("components.pipeline.EpisodeCopier"),
+        patch("components.pipeline.open_episode_log"),
         patch("components.pipeline.close_episode_log"),
-    ):
+    ]
+    with contextlib.ExitStack() as stack:
+        mocks = [stack.enter_context(p) for p in _patches]
+        (m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+         m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
+         m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
+         m_episode_copier, m_open, _m_close) = mocks
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
-            m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
+            m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         await Pipeline(config).run()
@@ -2679,32 +2772,39 @@ async def test_per_episode_log_closed_even_on_exception(tmp_path: Path) -> None:
     """close_episode_log is called even when episode processing raises."""
     config, ep, parsed = _make_per_episode_config(tmp_path, per_episode=True)
 
-    with (
-        patch("components.pipeline.FeedDownloader") as m_dl,
-        patch("components.pipeline.FeedParser") as m_fp,
-        patch("components.pipeline.FeedPublisher") as m_pub,
-        patch("components.pipeline.Database") as m_db,
-        patch("components.pipeline.EpisodeStore") as m_store,
-        patch("components.pipeline.TranscriptionStore") as m_ts,
-        patch("components.pipeline.AudioMetadataStore") as m_ams,
-        patch("components.pipeline.CostTrackingStore") as m_cs,
-        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
-        patch("components.pipeline.AudioProber") as m_prober,
-        patch("components.pipeline.AudioPreprocessor") as m_prep,
-        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
-        patch("components.pipeline.AdStore") as m_ad_store,
-        patch("components.pipeline.TopicExtractor") as m_topic_ext,
-        patch("components.pipeline.TopicStore") as m_topic_store,
-        patch("components.pipeline.AdDetector") as m_ad_detector,
-        patch("components.pipeline.AdParser") as m_ad_parser,
-        patch("components.pipeline.AudioEditor") as m_audio_editor,
-        patch("components.pipeline.open_episode_log") as m_open,
-        patch("components.pipeline.close_episode_log") as m_close,
-    ):
+    _patches = [
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.FeedParser"),
+        patch("components.pipeline.FeedPublisher"),
+        patch("components.pipeline.Database"),
+        patch("components.pipeline.EpisodeStore"),
+        patch("components.pipeline.TranscriptionStore"),
+        patch("components.pipeline.AudioMetadataStore"),
+        patch("components.pipeline.CostTrackingStore"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.AudioProber"),
+        patch("components.pipeline.AudioPreprocessor"),
+        patch("components.pipeline.EpisodeTranscriptor"),
+        patch("components.pipeline.AdStore"),
+        patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.TopicStore"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
+        patch("components.pipeline.EpisodeCopier"),
+        patch("components.pipeline.open_episode_log"),
+        patch("components.pipeline.close_episode_log"),
+    ]
+    with contextlib.ExitStack() as stack:
+        mocks = [stack.enter_context(p) for p in _patches]
+        (m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+         m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
+         m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
+         m_episode_copier, m_open, m_close) = mocks
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
-            m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
+            m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         fake_handler = MagicMock()
