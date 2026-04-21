@@ -2815,3 +2815,166 @@ async def test_per_episode_log_closed_even_on_exception(tmp_path: Path) -> None:
         await Pipeline(config).run()
 
     m_close.assert_called_once_with(fake_handler)
+
+
+# ---------------------------------------------------------------------------
+# Output folder trimming
+# ---------------------------------------------------------------------------
+
+
+async def test_trim_output_dir_removes_orphaned_files(tmp_path: Path) -> None:
+    """Files whose stem does not match any current episode are deleted."""
+    from datetime import UTC, datetime
+
+    from components.pipeline import Pipeline
+    from models.feed import Episode
+
+    feed_dir = tmp_path / "my-feed"
+    feed_dir.mkdir()
+    # File for an episode still in the active window
+    kept = feed_dir / "22.03.2026-my-episode.mp3"
+    kept.write_bytes(b"keep me")
+    # File for an old episode that has rolled out of the window
+    orphan = feed_dir / "01.01.2020-old-episode.mp3"
+    orphan.write_bytes(b"delete me")
+
+    ep = Episode(
+        guid="ep-1",
+        url="https://example.com/ep.mp3",
+        title="My Episode",
+        pub_date=datetime(2026, 3, 22, tzinfo=UTC),
+    )
+
+    config = MagicMock()
+    config.app.feeds = []
+    config.app.models.transcription.provider = "groq"
+    config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.app.models.context_extraction.provider = "openai"
+    config.app.models.context_extraction.model = "gpt-4o-mini"
+    config.app.models.context_extraction.context_window = None
+    config.app.models.ad_detection.provider = "openai"
+    config.app.models.ad_detection.model = "gpt-4o-mini"
+    config.app.models.ad_detection.context_window = None
+    config.app.output.file_type = "mp3"
+    config.app.output.bitrate = "128k"
+    config.credentials.groq_api_key = "sk-test"
+    config.credentials.openai_api_key = "sk-openai-test"
+    config.app.base_url = "https://example.com"
+    config.app.paths.output_dir = tmp_path
+    config.app.paths.cache_dir = tmp_path / "cache"
+    config.app.paths.data_dir = tmp_path / "data"
+    config.app.paths.log_dir = tmp_path / "logs"
+
+    with (
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.AudioPreprocessor"),
+        patch("components.pipeline.EpisodeTranscriptor"),
+        patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
+        patch("components.pipeline.EpisodeCopier"),
+    ):
+        pipeline = Pipeline(config)
+        await pipeline._trim_output_dir(feed_dir, [ep])
+
+    assert kept.exists()
+    assert not orphan.exists()
+
+
+async def test_trim_output_dir_keeps_all_current_episodes(tmp_path: Path) -> None:
+    """No files are deleted when all files match current episodes."""
+    from datetime import UTC, datetime
+
+    from components.pipeline import Pipeline
+    from models.feed import Episode
+
+    feed_dir = tmp_path / "my-feed"
+    feed_dir.mkdir()
+    f1 = feed_dir / "22.03.2026-episode-one.mp3"
+    f2 = feed_dir / "21.03.2026-episode-two.mp3"
+    f1.write_bytes(b"a")
+    f2.write_bytes(b"b")
+
+    episodes = [
+        Episode(guid="e1", url="x", title="Episode One", pub_date=datetime(2026, 3, 22, tzinfo=UTC)),
+        Episode(guid="e2", url="x", title="Episode Two", pub_date=datetime(2026, 3, 21, tzinfo=UTC)),
+    ]
+
+    config = MagicMock()
+    config.app.feeds = []
+    config.app.models.transcription.provider = "groq"
+    config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.app.models.context_extraction.provider = "openai"
+    config.app.models.context_extraction.model = "gpt-4o-mini"
+    config.app.models.context_extraction.context_window = None
+    config.app.models.ad_detection.provider = "openai"
+    config.app.models.ad_detection.model = "gpt-4o-mini"
+    config.app.models.ad_detection.context_window = None
+    config.app.output.file_type = "mp3"
+    config.app.output.bitrate = "128k"
+    config.credentials.groq_api_key = "sk-test"
+    config.credentials.openai_api_key = "sk-openai-test"
+    config.app.base_url = "https://example.com"
+    config.app.paths.output_dir = tmp_path
+    config.app.paths.cache_dir = tmp_path / "cache"
+    config.app.paths.data_dir = tmp_path / "data"
+    config.app.paths.log_dir = tmp_path / "logs"
+
+    with (
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.AudioPreprocessor"),
+        patch("components.pipeline.EpisodeTranscriptor"),
+        patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
+        patch("components.pipeline.EpisodeCopier"),
+    ):
+        pipeline = Pipeline(config)
+        await pipeline._trim_output_dir(feed_dir, episodes)
+
+    assert f1.exists()
+    assert f2.exists()
+
+
+async def test_trim_output_dir_noop_when_dir_missing(tmp_path: Path) -> None:
+    """No error when the output feed directory does not exist yet."""
+    from components.pipeline import Pipeline
+
+    config = MagicMock()
+    config.app.feeds = []
+    config.app.models.transcription.provider = "groq"
+    config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.app.models.context_extraction.provider = "openai"
+    config.app.models.context_extraction.model = "gpt-4o-mini"
+    config.app.models.context_extraction.context_window = None
+    config.app.models.ad_detection.provider = "openai"
+    config.app.models.ad_detection.model = "gpt-4o-mini"
+    config.app.models.ad_detection.context_window = None
+    config.app.output.file_type = "mp3"
+    config.app.output.bitrate = "128k"
+    config.credentials.groq_api_key = "sk-test"
+    config.credentials.openai_api_key = "sk-openai-test"
+    config.app.base_url = "https://example.com"
+    config.app.paths.output_dir = tmp_path
+    config.app.paths.cache_dir = tmp_path / "cache"
+    config.app.paths.data_dir = tmp_path / "data"
+    config.app.paths.log_dir = tmp_path / "logs"
+
+    with (
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.AudioPreprocessor"),
+        patch("components.pipeline.EpisodeTranscriptor"),
+        patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
+        patch("components.pipeline.EpisodeCopier"),
+    ):
+        pipeline = Pipeline(config)
+        # Must not raise
+        await pipeline._trim_output_dir(tmp_path / "nonexistent-feed", [])

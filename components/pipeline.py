@@ -249,6 +249,9 @@ class Pipeline:
                         if handler is not None:
                             close_episode_log(handler)
 
+                # ── Trim output folder to episodes_to_keep ────────────────────
+                await self._trim_output_dir(output_feed_dir, episodes)
+
         return parsed_feeds
 
     # ── Feed helpers ───────────────────────────────────────────────────────────
@@ -654,3 +657,15 @@ class Pipeline:
         elif sys.stderr.isatty():
             sys.stderr.write(f"\r  Episode '{guid}': {percent:.0%}")
             sys.stderr.flush()
+
+    async def _trim_output_dir(self, output_feed_dir: Path, episodes: list[Episode]) -> None:
+        if not output_feed_dir.is_dir():  # noqa: ASYNC240
+            return
+        expected_stems = {
+            f"{ep.pub_date.strftime('%d.%m.%Y')}-{slugify(ep.title)}"
+            for ep in episodes
+        }
+        for file in output_feed_dir.iterdir():  # noqa: ASYNC240
+            if file.is_file() and file.stem not in expected_stems:
+                file.unlink()
+                logger.info(f"[{output_feed_dir.name}] trimmed orphaned episode file: {file.name}")
