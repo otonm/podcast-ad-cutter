@@ -418,7 +418,7 @@ class Pipeline:
         second disk read.  Both are cleaned up in the ``finally`` block.
 
         """
-        pub_date_str = episode.pub_date.strftime("%d.%m.%Y")
+        pub_date_str = episode.pub_date.astimezone().strftime("%d.%m.%Y")
         title_slug = slugify(episode.title)
         cache_dir = self._config.app.paths.cache_dir
         raw_path: Path | None = None
