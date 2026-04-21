@@ -44,3 +44,13 @@ def compute_completion_cost(response: object, model_id: str) -> float:
             f"Could not compute cost for {model_id} ({exc}), cost will be $0.00"
         )
         return 0.0
+
+
+def extract_llm_reasoning(response: object) -> str | None:
+    """Extract reasoning/thinking text from a completion response.
+
+    Tries reasoning_content (Anthropic, Deepseek) then reasoning (Alibaba/Qwen
+    and other providers that do not normalise the field name).
+    """
+    msg = response.choices[0].message  # type: ignore[union-attr]
+    return getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None)
