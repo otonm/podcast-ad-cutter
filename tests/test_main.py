@@ -154,6 +154,11 @@ class TestConfigureLogging:
             configure_logging(level="INFO", log_to_file=True, log_dir=tmp_path, rotate=True)
         mock_rotate.assert_called_once_with(tmp_path, 10)
 
+    def test_configure_logging_silences_litellm_loggers(self, tmp_path: Path) -> None:
+        configure_logging(level="DEBUG", log_to_file=False, log_dir=tmp_path)
+        assert logging.getLogger("LiteLLM").level == logging.WARNING
+        assert logging.getLogger("LiteLLM Router").level == logging.WARNING
+
 
 # ---------------------------------------------------------------------------
 # _rotate_logs tests
