@@ -10,12 +10,14 @@ config.yaml
 .ruff_cache/
 __pycache__/
 *.egg-info/
+docs/
 
 # Runtime artifacts
 cache/
 data/
 logs/
 output/
+
 .coverage
 # Added by code-review-graph
 .code-review-graph/

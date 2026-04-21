@@ -18,6 +18,7 @@
 services:
   podcast-ad-cutter:
     image: ghcr.io/otonm/podcast-ad-cutter:latest
+    container_name: podcast-ad-cutter
     restart: unless-stopped
 
     environment:
