@@ -991,7 +991,7 @@ async def test_branch_a_transcription_and_audio_exist(tmp_path: Path) -> None:
 async def test_branch_b_transcription_exists_no_audio_redownloads_and_copies(
     tmp_path: Path,
 ) -> None:
-    """Branch B: transcription and ad segments exist, no output — re-download and export audio."""
+    """Branch B: transcription and ad segments exist, no output — re-download and copy (no qualifying cuts)."""
     config, ep, parsed = _branch_config(MagicMock())  # MagicMock → glob returns empty → no audio
 
     with (
@@ -1032,6 +1032,7 @@ async def test_branch_b_transcription_exists_no_audio_redownloads_and_copies(
     m_ams.return_value.save_all.assert_awaited_once()
     m_prep.return_value.preprocess.assert_not_called()  # no preprocess when transcript cached
     m_trans.return_value.transcribe.assert_not_called()
+    m_episode_copier.return_value.copy.assert_awaited_once()
 
 
 async def test_branch_c_audio_exists_no_transcription_transcribes_from_output(

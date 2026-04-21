@@ -423,6 +423,8 @@ class Pipeline:
 
         logger.info(f"Processing episode '{episode.title}' [{episode.guid}]")
 
+        fresh_urls = {ep.guid: ep.url for ep in feed.episodes}
+
         try:
             while True:
 
@@ -467,7 +469,6 @@ class Pipeline:
                     # Audio may not be on disk if detection was cached from a previous run.
                     if raw_path is None:
                         logger.info(f"Episode '{episode.guid}': no cached audio; re-downloading")
-                        fresh_urls = {ep.guid: ep.url for ep in feed.episodes}
                         download_url = (
                             fresh_urls.get(episode.guid)
                             or episode.source_url
@@ -601,7 +602,6 @@ class Pipeline:
                 # Prefer the URL from the current-run RSS parse (fresh signed URL)
                 # over the potentially stale URL stored in the database.
                 logger.info(f"Episode '{episode.guid}' is new")
-                fresh_urls = {ep.guid: ep.url for ep in feed.episodes}
                 url = fresh_urls.get(episode.guid, episode.url)
                 raw_path = await self._episode_downloader.download(
                     episode.guid, url, on_progress=self._on_download_progress
