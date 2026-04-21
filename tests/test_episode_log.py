@@ -150,6 +150,49 @@ class TestOpenEpisodeLog:
         assert "my-great-podcast" in name
         assert "episode-1-the-beginning" in name
 
+    def test_open_lowers_root_level_when_above_file_handler_level(self, tmp_path: Path) -> None:
+        root = logging.getLogger()
+        root.setLevel(logging.WARNING)
+        _, handler = open_episode_log(
+            guid="ep-1",
+            podcast_title="My Podcast",
+            episode_title="My Episode",
+            log_dir=tmp_path,
+            file_level="DEBUG",
+        )
+        assert root.level == logging.DEBUG
+        close_episode_log(handler)
+
+    def test_open_does_not_change_root_level_when_already_at_or_below_file_level(
+        self, tmp_path: Path
+    ) -> None:
+        root = logging.getLogger()
+        root.setLevel(logging.DEBUG)
+        _, handler = open_episode_log(
+            guid="ep-1",
+            podcast_title="My Podcast",
+            episode_title="My Episode",
+            log_dir=tmp_path,
+            file_level="DEBUG",
+        )
+        assert root.level == logging.DEBUG
+        close_episode_log(handler)
+
+    def test_debug_message_reaches_file_when_root_was_at_warning(self, tmp_path: Path) -> None:
+        root = logging.getLogger()
+        root.setLevel(logging.WARNING)
+        _, handler = open_episode_log(
+            guid="ep-1",
+            podcast_title="My Podcast",
+            episode_title="My Episode",
+            log_dir=tmp_path,
+            file_level="DEBUG",
+        )
+        logging.getLogger("components.ad_detector").debug("reasoning text here")
+        close_episode_log(handler)
+        log_file = next((tmp_path / "episodes").glob("*.log"))
+        assert "reasoning text here" in log_file.read_text()
+
 
 class TestCloseEpisodeLog:
     def test_handler_removed_from_root_logger(self, tmp_path: Path) -> None:
@@ -174,3 +217,17 @@ class TestCloseEpisodeLog:
         close_episode_log(handler)
         # FileHandler.stream is None when closed
         assert handler.stream is None
+
+    def test_close_restores_root_level(self, tmp_path: Path) -> None:
+        root = logging.getLogger()
+        root.setLevel(logging.WARNING)
+        _, handler = open_episode_log(
+            guid="ep-1",
+            podcast_title="My Podcast",
+            episode_title="My Episode",
+            log_dir=tmp_path,
+            file_level="DEBUG",
+        )
+        assert root.level == logging.DEBUG
+        close_episode_log(handler)
+        assert root.level == logging.WARNING

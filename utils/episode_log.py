@@ -50,11 +50,16 @@ def open_episode_log(
     episode_slug = slugify(episode_title)
     log_path = episodes_dir / f"{timestamp}.{podcast_slug}.{episode_slug}.log"
 
+    handler_level_int = getattr(logging, file_level)
     handler = logging.FileHandler(log_path, encoding="utf-8")
-    handler.setLevel(getattr(logging, file_level))
+    handler.setLevel(handler_level_int)
     handler.setFormatter(logging.Formatter(fmt))
 
-    logging.getLogger().addHandler(handler)
+    root = logging.getLogger()
+    handler._pac_prior_root_level = root.level  # noqa: SLF001
+    if root.level > handler_level_int:
+        root.setLevel(handler_level_int)
+    root.addHandler(handler)
     episode_logger = logging.getLogger(f"episode.{guid}")
     return episode_logger, handler
 
@@ -67,5 +72,9 @@ def close_episode_log(handler: logging.FileHandler) -> None:
             :func:`open_episode_log`.
 
     """
-    logging.getLogger().removeHandler(handler)
+    root = logging.getLogger()
+    root.removeHandler(handler)
+    prior = getattr(handler, "_pac_prior_root_level", None)
+    if prior is not None:
+        root.setLevel(prior)
     handler.close()
