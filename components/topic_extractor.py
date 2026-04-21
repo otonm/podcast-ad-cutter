@@ -9,7 +9,7 @@ import litellm
 
 from models.topic import TopicExtraction, TopicExtractionCost, TopicExtractionSchema
 from utils.exceptions import TopicExtractionError
-from utils.llm import compute_completion_cost
+from utils.llm import compute_completion_cost, extract_llm_reasoning
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +154,11 @@ class TopicExtractor:
         )
         return trimmed
 
+    def _log_llm_reasoning(self, response: litellm.ModelResponse, guid: str) -> None:
+        reasoning = extract_llm_reasoning(response)
+        if reasoning:
+            logger.debug(f"LLM reasoning for '{guid}':\n{reasoning}")
+
     async def _call_llm(
         self,
         guid: str,
@@ -179,7 +184,6 @@ class TopicExtractor:
                 api_key=self._api_key,
                 reasoning_effort=reasoning_effort,
                 thinking={"type": "enabled", "budget_tokens": 10000},
-                verbosity="high",
                 temperature=0.5,
                 drop_params=True
             )
@@ -256,7 +260,7 @@ class TopicExtractor:
                 response = await self._call_llm(
                     guid, messages, use_schema=use_schema, use_reasoning=use_reasoning
                 )
-                logger.debug(f"LLM response: {response}")
+                self._log_llm_reasoning(response, guid)
             except _ContextWindowExceededError as exc:
                 if attempt == self._max_retries - 1:
                     msg = f"Context window exceeded for '{guid}' after {self._max_retries} attempts"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import litellm
@@ -24,9 +25,13 @@ _TRANSCRIPT = "Welcome to Tech Talk. I'm Alice and I'm Bob. Today we discuss AI.
 def _make_response(
     content: str = _VALID_JSON,
     response_cost: float | None = 0.002,
+    reasoning_content: str | None = None,
+    reasoning: str | None = None,
 ) -> MagicMock:
     msg = MagicMock()
     msg.content = content
+    msg.reasoning_content = reasoning_content
+    msg.reasoning = reasoning
     choice = MagicMock()
     choice.message = msg
     resp = MagicMock()
@@ -739,3 +744,48 @@ async def test_context_window_error_on_last_attempt_raises() -> None:
         await ex.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
     assert mock_call.await_count == 2
     assert "ep-1" in exc_info.value.message
+
+
+# ---------------------------------------------------------------------------
+# LLM reasoning logging
+# ---------------------------------------------------------------------------
+
+_VALID_EXTRACTION = json.dumps({
+    "topic": "Hosts discuss AI advances.",
+    "hosts": "Alice, Bob",
+    "show": "Tech Talk",
+})
+
+
+async def test_log_llm_reasoning_emits_debug_when_present(
+    extractor: TopicExtractor,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When reasoning_content is set, a DEBUG message containing the reasoning is logged."""
+    mock_resp = _make_response(
+        content=_VALID_EXTRACTION,
+        reasoning_content="The topic is clearly about AI.",
+    )
+    with (
+        patch("components.topic_extractor.litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
+        caplog.at_level(logging.DEBUG, logger="components.topic_extractor"),
+    ):
+        await extractor.extract("ep-1", "Tech Talk", "AI Episode", "Tech Talk", _TRANSCRIPT)
+    assert any(
+        "The topic is clearly about AI." in r.message
+        for r in caplog.records
+    )
+
+
+async def test_log_llm_reasoning_silent_when_absent(
+    extractor: TopicExtractor,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When reasoning_content is None, no reasoning DEBUG message is logged."""
+    mock_resp = _make_response(content=_VALID_EXTRACTION, reasoning_content=None)
+    with (
+        patch("components.topic_extractor.litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
+        caplog.at_level(logging.DEBUG, logger="components.topic_extractor"),
+    ):
+        await extractor.extract("ep-1", "Tech Talk", "AI Episode", "Tech Talk", _TRANSCRIPT)
+    assert not any("LLM reasoning" in r.message for r in caplog.records)
