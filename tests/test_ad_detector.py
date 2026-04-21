@@ -43,10 +43,12 @@ def _make_response(
     content: str = _VALID_DETECTIONS,
     response_cost: float | None = 0.002,
     reasoning_content: str | None = None,
+    reasoning: str | None = None,
 ) -> MagicMock:
     msg = MagicMock()
     msg.content = content
     msg.reasoning_content = reasoning_content
+    msg.reasoning = reasoning
     choice = MagicMock()
     choice.message = msg
     resp = MagicMock()
@@ -583,6 +585,27 @@ async def test_log_llm_reasoning_silent_when_absent(
     ):
         await detector.detect("ep-1", _SEGMENTS, _TOPIC)
     assert not any("LLM reasoning" in r.message for r in caplog.records)
+
+
+async def test_log_llm_reasoning_falls_back_to_reasoning_field(
+    detector: AdDetector,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When reasoning_content is None but reasoning is set, reasoning is still logged."""
+    mock_resp = _make_response(
+        content=_INBOUNDS_DETECTIONS,
+        reasoning_content=None,
+        reasoning="Segment 1 has a promo code.",
+    )
+    with (
+        patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=mock_resp)),
+        caplog.at_level(logging.DEBUG, logger="components.ad_detector"),
+    ):
+        await detector.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert any(
+        "Segment 1 has a promo code." in r.message
+        for r in caplog.records
+    )
 
 
 # ---------------------------------------------------------------------------

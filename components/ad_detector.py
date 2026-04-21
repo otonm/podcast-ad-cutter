@@ -10,7 +10,7 @@ import litellm
 
 from models.ad_detection import AdDetectionCost, AdDetectionResponseSchema, AdSegmentDetection
 from utils.exceptions import AdDetectionError
-from utils.llm import compute_completion_cost
+from utils.llm import compute_completion_cost, extract_llm_reasoning
 
 if TYPE_CHECKING:
     from models.topic import TopicExtraction
@@ -231,7 +231,7 @@ class AdDetector:
         return trimmed
 
     def _log_llm_reasoning(self, response: litellm.ModelResponse, guid: str) -> None:
-        reasoning = getattr(response.choices[0].message, "reasoning_content", None)
+        reasoning = extract_llm_reasoning(response)
         if reasoning:
             logger.debug(f"LLM reasoning for '{guid}':\n{reasoning}")
 
@@ -280,7 +280,6 @@ class AdDetector:
                 api_key=self._api_key,
                 reasoning_effort=reasoning_effort,
                 thinking={"type": "enabled", "budget_tokens": 10000},
-                verbosity="high",
                 temperature=0.3,
                 drop_params=True
             )
