@@ -2978,3 +2978,26 @@ async def test_trim_output_dir_noop_when_dir_missing(tmp_path: Path) -> None:
         pipeline = Pipeline(config)
         # Must not raise
         await pipeline._trim_output_dir(tmp_path / "nonexistent-feed", [])
+
+
+async def test_run_calls_trim_output_dir_after_episode_loop() -> None:
+    """Pipeline.run() must call _trim_output_dir once per feed after processing all episodes."""
+    config, ep, parsed = _branch_config(MagicMock())
+
+    with patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub, patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts, patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl, patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans, patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext, patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector, patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor, patch(_PATCHES[18]) as m_episode_copier:  # noqa: E501
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        pipeline = Pipeline(config)
+        pipeline._trim_output_dir = AsyncMock()
+        await pipeline.run()
+
+    pipeline._trim_output_dir.assert_awaited_once()
+    call_args = pipeline._trim_output_dir.call_args
+    assert call_args is not None
+    output_feed_dir, episodes = call_args.args
+    assert output_feed_dir == config.app.paths.output_dir / "my-podcast"
+    assert episodes == [ep]

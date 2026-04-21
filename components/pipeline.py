@@ -662,7 +662,7 @@ class Pipeline:
         if not output_feed_dir.is_dir():  # noqa: ASYNC240
             return
         expected_stems = {
-            f"{ep.pub_date.strftime('%d.%m.%Y')}-{slugify(ep.title)}"
+            f"{ep.pub_date.astimezone().strftime('%d.%m.%Y')}-{slugify(ep.title)}"
             for ep in episodes
         }
         for file in output_feed_dir.iterdir():  # noqa: ASYNC240
