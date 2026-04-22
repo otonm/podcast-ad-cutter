@@ -64,9 +64,11 @@ def make_config(feeds: list[FeedConfig]) -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
-def _branch_config(output_dir: Path | MagicMock) -> tuple[MagicMock, Episode, ParsedFeed]:
+def _branch_config(
+    output_dir: Path | MagicMock, *, episode: Episode | None = None
+) -> tuple[MagicMock, Episode, ParsedFeed]:
     """Build config/episode/parsed-feed for decision-tree branch tests."""
-    ep = Episode(
+    ep = episode or Episode(
         guid="ep-1",
         url="https://example.com/ep.mp3",
         title="My Episode",
@@ -203,6 +205,51 @@ def _wire_branch_mocks(
     m_episode_copier.return_value.copy = AsyncMock(
         return_value=("ep-1", mock_copy_dest, "http://localhost/my-podcast/22.03.2026-my-episode.mp3")
     )
+
+
+@contextlib.contextmanager
+def _staleness_harness(
+    config: MagicMock,
+    episodes: list[Episode],
+    parsed: ParsedFeed,
+    *,
+    transcribed_guids: set[str],
+    ad_segments: list[AdSegment] | None = None,
+):
+    """Patch all pipeline dependencies for staleness-check tests.
+
+    Yields ``(m_store, m_pub, m_ep_dl, m_ad_store)`` so each test can configure
+    per-test return values and assert outcomes.
+    """
+    with (
+        patch("components.pipeline.FeedDownloader") as m_dl,
+        patch("components.pipeline.FeedParser") as m_fp,
+        patch("components.pipeline.FeedPublisher") as m_pub,
+        patch("components.pipeline.Database") as m_db,
+        patch("components.pipeline.EpisodeStore") as m_store,
+        patch("components.pipeline.TranscriptionStore") as m_ts,
+        patch("components.pipeline.AudioMetadataStore") as m_ams,
+        patch("components.pipeline.CostTrackingStore") as m_cs,
+        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
+        patch("components.pipeline.AudioProber") as m_prober,
+        patch("components.pipeline.AudioPreprocessor") as m_prep,
+        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
+        patch("components.pipeline.AdStore") as m_ad_store,
+        patch("components.pipeline.TopicExtractor") as m_topic_ext,
+        patch("components.pipeline.TopicStore") as m_topic_store,
+        patch("components.pipeline.AdDetector") as m_ad_detector,
+        patch("components.pipeline.AdParser") as m_ad_parser,
+        patch("components.pipeline.AudioEditor") as m_audio_editor,
+        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
+            episodes=episodes, parsed=parsed, transcribed_guids=transcribed_guids,
+            ad_segments=ad_segments,
+        )
+        yield m_store, m_pub, m_ep_dl, m_ad_store
 
 
 # ---------------------------------------------------------------------------
@@ -1565,13 +1612,13 @@ async def test_run_loads_ad_detected_guids_before_episode_loop() -> None:
         pipeline = Pipeline(config)
         await pipeline.run()
 
-    # AdStore must be instantiated with the db connection object.
-    # Called twice per feed: once for the skip-check, once for the processing block.
+    # AdStore is instantiated once per feed and reused for both the staleness check
+    # and the processing block — the single instance is shared via the hoisted ad_store.
     mock_db_obj = m_db.return_value.__aenter__.return_value
-    assert m_ad_store.call_count == 2
-    assert all(c == call(mock_db_obj.conn) for c in m_ad_store.call_args_list)
-    # get_detected_guids must be awaited at least once
-    m_ad_store.return_value.get_detected_guids.assert_awaited()
+    assert m_ad_store.call_count == 1
+    assert m_ad_store.call_args == call(mock_db_obj.conn)
+    # get_detected_guids must be awaited once (reused snapshot; not re-fetched)
+    m_ad_store.return_value.get_detected_guids.assert_awaited_once()
 
 
 async def test_branch_b_audio_editor_returns_path_uses_computed_url() -> None:
@@ -1992,44 +2039,19 @@ async def test_branch_c_audio_exists_no_transcription_runs_ad_detection(
 
 
 async def test_feed_rss_exists_no_new_items_skips_feed(tmp_path: Path) -> None:
-    """RSS file exists and all feed episodes are already in the DB — skip entire feed."""
+    """RSS file exists, all episodes in DB with ad detection, output audio exists — skip."""
     rss_file = tmp_path / "my-podcast.rss"
     rss_file.write_text("<rss/>")
+    audio_file = tmp_path / "my-podcast" / "22.03.2026-my-episode.mp3"
+    audio_file.parent.mkdir(parents=True)
+    audio_file.write_bytes(b"audio")
 
     config, ep, parsed = _branch_config(tmp_path)
 
-    with (
-        patch("components.pipeline.FeedDownloader") as m_dl,
-        patch("components.pipeline.FeedParser") as m_fp,
-        patch("components.pipeline.FeedPublisher") as m_pub,
-        patch("components.pipeline.Database") as m_db,
-        patch("components.pipeline.EpisodeStore") as m_store,
-        patch("components.pipeline.TranscriptionStore") as m_ts,
-        patch("components.pipeline.AudioMetadataStore") as m_ams,
-        patch("components.pipeline.CostTrackingStore") as m_cs,
-        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
-        patch("components.pipeline.AudioProber") as m_prober,
-        patch("components.pipeline.AudioPreprocessor") as m_prep,
-        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
-        patch("components.pipeline.AdStore") as m_ad_store,
-        patch("components.pipeline.TopicExtractor") as m_topic_ext,
-        patch("components.pipeline.TopicStore") as m_topic_store,
-        patch("components.pipeline.AdDetector") as m_ad_detector,
-        patch("components.pipeline.AdParser") as m_ad_parser,
-        patch("components.pipeline.AudioEditor") as m_audio_editor,
-        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
-    ):
-        _wire_branch_mocks(
-            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
-            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
-            episodes=[ep], parsed=parsed, transcribed_guids=set(),
-        )
-        # All feed episodes already known to the DB and all have completed ad detection.
+    with _staleness_harness(config, [ep], parsed, transcribed_guids=set()) as (m_store, m_pub, m_ep_dl, m_ad_store):
         m_store.return_value.get_guids_for_feed = AsyncMock(return_value={"ep-1"})
         m_ad_store.return_value.get_detected_guids = AsyncMock(return_value={"ep-1"})
-        pipeline = Pipeline(config)
-        await pipeline.run()
+        await Pipeline(config).run()
 
     m_store.return_value.save_episodes.assert_not_called()
     m_pub.return_value.publish.assert_not_called()
@@ -2046,42 +2068,95 @@ async def test_feed_rss_exists_undetected_episodes_does_not_skip(tmp_path: Path)
 
     config, ep, parsed = _branch_config(tmp_path)
 
-    with (
-        patch("components.pipeline.FeedDownloader") as m_dl,
-        patch("components.pipeline.FeedParser") as m_fp,
-        patch("components.pipeline.FeedPublisher") as m_pub,
-        patch("components.pipeline.Database") as m_db,
-        patch("components.pipeline.EpisodeStore") as m_store,
-        patch("components.pipeline.TranscriptionStore") as m_ts,
-        patch("components.pipeline.AudioMetadataStore") as m_ams,
-        patch("components.pipeline.CostTrackingStore") as m_cs,
-        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
-        patch("components.pipeline.AudioProber") as m_prober,
-        patch("components.pipeline.AudioPreprocessor") as m_prep,
-        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
-        patch("components.pipeline.AdStore") as m_ad_store,
-        patch("components.pipeline.TopicExtractor") as m_topic_ext,
-        patch("components.pipeline.TopicStore") as m_topic_store,
-        patch("components.pipeline.AdDetector") as m_ad_detector,
-        patch("components.pipeline.AdParser") as m_ad_parser,
-        patch("components.pipeline.AudioEditor") as m_audio_editor,
-        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
-    ):
-        _wire_branch_mocks(
-            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
-            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
-            episodes=[ep], parsed=parsed, transcribed_guids=set(),
-        )
-        # Episode already in DB (not new) but never through ad detection.
+    with _staleness_harness(config, [ep], parsed, transcribed_guids=set()) as (m_store, m_pub, _m_ep_dl, m_ad_store):
         m_store.return_value.get_guids_for_feed = AsyncMock(return_value={"ep-1"})
         m_ad_store.return_value.get_detected_guids = AsyncMock(return_value=set())
-        pipeline = Pipeline(config)
-        await pipeline.run()
+        await Pipeline(config).run()
 
-    # Feed was not skipped — save_episodes and publish were called for the undetected episode.
     m_store.return_value.save_episodes.assert_awaited_once()
     m_pub.return_value.publish.assert_awaited_once()
+
+
+async def test_feed_rss_exists_output_audio_exists_no_ad_record_skips_feed(tmp_path: Path) -> None:
+    """RSS exists, episode in DB, no ad detection record, but output audio exists → skip feed.
+
+    Bug A: Guard 1 short-circuits for episodes whose output files exist but the ad detection
+    store was never populated (e.g. DB reset, pipeline interrupted before ad detection).
+    The staleness check must treat output-file existence as evidence of completion so the
+    pipeline is not activated unnecessarily every run.
+    """
+    rss_file = tmp_path / "my-podcast.rss"
+    rss_file.write_text("<rss/>")
+    audio_file = tmp_path / "my-podcast" / "22.03.2026-my-episode.mp3"
+    audio_file.parent.mkdir(parents=True)
+    audio_file.write_bytes(b"audio")
+
+    config, ep, parsed = _branch_config(tmp_path)
+
+    with _staleness_harness(config, [ep], parsed, transcribed_guids=set()) as (m_store, m_pub, m_ep_dl, m_ad_store):
+        m_store.return_value.get_guids_for_feed = AsyncMock(return_value={"ep-1"})
+        m_ad_store.return_value.get_detected_guids = AsyncMock(return_value=set())
+        await Pipeline(config).run()
+
+    m_store.return_value.save_episodes.assert_not_called()
+    m_pub.return_value.publish.assert_not_called()
+    m_ep_dl.return_value.download.assert_not_called()
+
+
+async def test_feed_rss_exists_ad_detected_output_file_missing_does_not_skip(tmp_path: Path) -> None:
+    """RSS exists, episode in ad store, but output audio file was deleted → do not skip.
+
+    Bug B: When the ad detection record exists but the output file is missing (deleted or
+    remote storage unavailable), the staleness check incorrectly skips the feed. Guard 2
+    would re-export from cached segments, but it never gets the chance. The staleness check
+    must detect the missing output and activate the pipeline so Guard 2 can re-export.
+    """
+    rss_file = tmp_path / "my-podcast.rss"
+    rss_file.write_text("<rss/>")
+
+    config, ep, parsed = _branch_config(tmp_path)
+
+    with _staleness_harness(
+        config, [ep], parsed,
+        transcribed_guids={"ep-1"},
+        ad_segments=[_DEFAULT_AD_SEGMENT],
+    ) as (m_store, m_pub, _m_ep_dl, m_ad_store):
+        m_store.return_value.get_guids_for_feed = AsyncMock(return_value={"ep-1"})
+        m_ad_store.return_value.get_detected_guids = AsyncMock(return_value={"ep-1"})
+        await Pipeline(config).run()
+
+    m_store.return_value.save_episodes.assert_awaited_once()
+    m_pub.return_value.publish.assert_awaited_once()
+    m_ad_store.return_value.get_segments_for_guid.assert_awaited()
+
+
+async def test_staleness_disk_check_skips_episode_with_no_pub_date(tmp_path: Path) -> None:
+    """Episode with pub_date=None is skipped by the disk-reconciliation loop without crashing.
+
+    When an episode has no pub_date the filename pattern cannot be computed, so the
+    loop must skip it via `continue`.  The episode is already in the ad-detection store
+    so unprocessed_guids is empty — the feed is still skipped correctly.
+    """
+    rss_file = tmp_path / "my-podcast.rss"
+    rss_file.write_text("<rss/>")
+
+    ep_no_date = Episode(
+        guid="ep-no-date",
+        url="https://example.com/ep-no-date.mp3",
+        title="No Date Episode",
+        pub_date=None,
+    )
+    config, _, parsed = _branch_config(tmp_path, episode=ep_no_date)
+
+    with _staleness_harness(
+        config, [ep_no_date], parsed, transcribed_guids=set()
+    ) as (m_store, m_pub, _m_ep_dl, m_ad_store):
+        m_store.return_value.get_guids_for_feed = AsyncMock(return_value={"ep-no-date"})
+        m_ad_store.return_value.get_detected_guids = AsyncMock(return_value={"ep-no-date"})
+        await Pipeline(config).run()
+
+    m_store.return_value.save_episodes.assert_not_called()
+    m_pub.return_value.publish.assert_not_called()
 
 
 async def test_feed_rss_missing_publishes_new_feed(tmp_path: Path) -> None:

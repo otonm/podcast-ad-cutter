@@ -181,12 +181,20 @@ class Pipeline:
                 rss_path = self._output_rss_path(feed)
 
                 # ── Staleness check: skip if nothing is new ────────────────────
+                feed_slug = slugify(feed.title)
+                output_feed_dir = self._config.app.paths.output_dir / feed_slug
+
                 existing_guids = await store.get_guids_for_feed(feed.config_title)
                 new_guids = {ep.guid for ep in feed.episodes} - existing_guids
 
                 feed_guids = {ep.guid for ep in feed.episodes}
-                ad_detected_guids = await AdStore(db.conn).get_detected_guids()
+                ad_store = AdStore(db.conn)
+                ad_detected_guids = await ad_store.get_detected_guids()
                 unprocessed_guids = feed_guids - ad_detected_guids
+
+                unprocessed_guids = self._reconcile_unprocessed_with_disk(
+                    feed.episodes, output_feed_dir, ad_detected_guids, unprocessed_guids
+                )
 
                 if rss_path.exists() and not new_guids and not unprocessed_guids:
                     logger.info(f"[{feed.config_title}] no new items — skipping feed")
@@ -206,12 +214,9 @@ class Pipeline:
                     continue
 
                 # ── Build per-feed shared state ────────────────────────────────
-                feed_slug = slugify(feed.title)
-                output_feed_dir = self._config.app.paths.output_dir / feed_slug
 
                 t_store = TranscriptionStore(db.conn)
                 topic_store = TopicStore(db.conn)
-                ad_store = AdStore(db.conn)
                 stores = _Stores(
                     episode=store,
                     transcription=t_store,
@@ -221,7 +226,7 @@ class Pipeline:
                     ad=ad_store,
                     transcribed_guids=await t_store.get_transcribed_guids(),
                     extracted_guids=await topic_store.get_extracted_guids(),
-                    ad_detected_guids=await ad_store.get_detected_guids(),
+                    ad_detected_guids=ad_detected_guids,
                 )
 
                 # ── Phase 3: Per-episode processing ───────────────────────────
@@ -299,6 +304,40 @@ class Pipeline:
             podcast_guid=str(uuid.uuid5(uuid.NAMESPACE_DNS, slugify(feed.title))),
         )
         return await self._feed_publisher.publish(publisher_input)
+
+    @staticmethod
+    def _reconcile_unprocessed_with_disk(
+        episodes: list[Episode],
+        output_feed_dir: Path,
+        ad_detected_guids: set[str],
+        unprocessed_guids: set[str],
+    ) -> set[str]:
+        """Reconcile ``unprocessed_guids`` against disk reality.
+
+        The output file is the authoritative signal that an episode is complete:
+
+        - Bug A: file exists but no ad-store record → remove from unprocessed.
+        - Bug B: ad-store record present but file deleted → add to unprocessed
+          so Guard 2 can re-export from cached segments.
+
+        Episodes without ``pub_date`` are skipped: no date means no filename.
+
+        Returns:
+            A new set derived from ``unprocessed_guids`` after disk reconciliation.
+
+        """
+        result = set(unprocessed_guids)
+        for ep in episodes:
+            if ep.pub_date is None:
+                continue
+            date_str = ep.pub_date.astimezone().strftime("%d.%m.%Y")
+            stem = f"{date_str}-{slugify(ep.title)}.*"
+            output_exists = any(output_feed_dir.glob(stem))
+            if ep.guid in result and output_exists:
+                result.discard(ep.guid)
+            elif ep.guid in ad_detected_guids and not output_exists:
+                result.add(ep.guid)
+        return result
 
     def _output_rss_path(self, feed: ParsedFeed) -> Path:
         """Return the expected RSS output path for a parsed feed.
@@ -402,16 +441,16 @@ class Pipeline:
         a terminal guard fires (return) or all stages complete naturally.
 
         State machine guard order (evaluated top-to-bottom every iteration):
-        ┌──────┬─────────────────────────────────┬─────────────────────────────┐
-        │ Guard│ Condition                        │ Action                      │
-        ├──────┼─────────────────────────────────┼─────────────────────────────┤
-        │  1   │ Output file exists on disk       │ Update URL in DB → return   │
-        │  2   │ Ad detection result in DB        │ Parse cuts, export → return │
-        │  3   │ Topic extracted                  │ Run ad detection → continue │
-        │  4   │ Transcript exists                │ Extract topic    → continue │
+        ┌──────┬──────────────────────────────────┬────────────────────────────────────────────┐
+        │ Guard│ Condition                        │ Action                                     │
+        ├──────┼──────────────────────────────────┼────────────────────────────────────────────┤
+        │  1   │ Output file exists on disk       │ Update URL in DB → return                  │
+        │  2   │ Ad detection result in DB        │ Parse cuts, export → return                │
+        │  3   │ Topic extracted                  │ Run ad detection → continue                │
+        │  4   │ Transcript exists                │ Extract topic    → continue                │
         │  5   │ Audio on disk (cached or fresh)  │ Probe + preprocess + transcribe → continue │
-        │  —   │ (none of the above)              │ Download audio   → continue │
-        └──────┴─────────────────────────────────┴─────────────────────────────┘
+        │  —   │ (none of the above)              │ Download audio   → continue                │
+        └──────┴──────────────────────────────────┴────────────────────────────────────────────┘
 
         The ``raw_path`` and ``meta`` locals accumulate across iterations so
         that a file downloaded in one pass is reused by the next without a
