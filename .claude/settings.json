@@ -30,14 +30,17 @@
       "mcp__code-review-graph__query_graph_tool",
       "mcp__code-review-graph__list_graph_stats_tool",
       "mcp__code-review-graph__list_flows_tool",
-      "mcp__code-review-graph__get_flow_tool"
+      "mcp__code-review-graph__get_flow_tool",
+      "mcp__code-review-graph__list_communities_tool"
+    ],
+    "additionalDirectories": [
+      "/home/oton/.claude/plans"
     ]
   },
   "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "code-review-graph"
   ],
-  "outputStyle": "Critical Engineer",
   "hooks": {
     "PostToolUse": [
       {
@@ -63,5 +66,6 @@
         ]
       }
     ]
-  }
+  },
+  "outputStyle": "Critical Engineer"
 }

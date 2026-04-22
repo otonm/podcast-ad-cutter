@@ -207,51 +207,6 @@ def _wire_branch_mocks(
     )
 
 
-@contextlib.contextmanager
-def _staleness_harness(
-    config: MagicMock,
-    episodes: list[Episode],
-    parsed: ParsedFeed,
-    *,
-    transcribed_guids: set[str],
-    ad_segments: list[AdSegment] | None = None,
-):
-    """Patch all pipeline dependencies for staleness-check tests.
-
-    Yields ``(m_store, m_pub, m_ep_dl, m_ad_store)`` so each test can configure
-    per-test return values and assert outcomes.
-    """
-    with (
-        patch("components.pipeline.FeedDownloader") as m_dl,
-        patch("components.pipeline.FeedParser") as m_fp,
-        patch("components.pipeline.FeedPublisher") as m_pub,
-        patch("components.pipeline.Database") as m_db,
-        patch("components.pipeline.EpisodeStore") as m_store,
-        patch("components.pipeline.TranscriptionStore") as m_ts,
-        patch("components.pipeline.AudioMetadataStore") as m_ams,
-        patch("components.pipeline.CostTrackingStore") as m_cs,
-        patch("components.pipeline.EpisodeDownloader") as m_ep_dl,
-        patch("components.pipeline.AudioProber") as m_prober,
-        patch("components.pipeline.AudioPreprocessor") as m_prep,
-        patch("components.pipeline.EpisodeTranscriptor") as m_trans,
-        patch("components.pipeline.AdStore") as m_ad_store,
-        patch("components.pipeline.TopicExtractor") as m_topic_ext,
-        patch("components.pipeline.TopicStore") as m_topic_store,
-        patch("components.pipeline.AdDetector") as m_ad_detector,
-        patch("components.pipeline.AdParser") as m_ad_parser,
-        patch("components.pipeline.AudioEditor") as m_audio_editor,
-        patch("components.pipeline.EpisodeCopier") as m_episode_copier,
-    ):
-        _wire_branch_mocks(
-            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
-            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
-            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
-            episodes=episodes, parsed=parsed, transcribed_guids=transcribed_guids,
-            ad_segments=ad_segments,
-        )
-        yield m_store, m_pub, m_ep_dl, m_ad_store
-
-
 # ---------------------------------------------------------------------------
 # Feed-selection tests
 # ---------------------------------------------------------------------------
@@ -1612,12 +1567,9 @@ async def test_run_loads_ad_detected_guids_before_episode_loop() -> None:
         pipeline = Pipeline(config)
         await pipeline.run()
 
-    # AdStore is instantiated once per feed and reused for both the staleness check
-    # and the processing block — the single instance is shared via the hoisted ad_store.
     mock_db_obj = m_db.return_value.__aenter__.return_value
     assert m_ad_store.call_count == 1
     assert m_ad_store.call_args == call(mock_db_obj.conn)
-    # get_detected_guids must be awaited once (reused snapshot; not re-fetched)
     m_ad_store.return_value.get_detected_guids.assert_awaited_once()
 
 
@@ -2031,158 +1983,6 @@ async def test_branch_c_audio_exists_no_transcription_runs_ad_detection(
     m_episode_copier.return_value.copy.assert_awaited_once()
     m_store.return_value.update_episode_url.assert_awaited_once()
     m_pub.return_value.update_episode_url.assert_awaited_once()
-
-
-# ---------------------------------------------------------------------------
-# Feed-level existence and new-items checks
-# ---------------------------------------------------------------------------
-
-
-async def test_feed_rss_exists_no_new_items_skips_feed(tmp_path: Path) -> None:
-    """RSS file exists, all episodes in DB with ad detection, output audio exists — skip."""
-    rss_file = tmp_path / "my-podcast.rss"
-    rss_file.write_text("<rss/>")
-    audio_file = tmp_path / "my-podcast" / "22.03.2026-my-episode.mp3"
-    audio_file.parent.mkdir(parents=True)
-    audio_file.write_bytes(b"audio")
-
-    config, ep, parsed = _branch_config(tmp_path)
-
-    with _staleness_harness(config, [ep], parsed, transcribed_guids=set()) as (m_store, m_pub, m_ep_dl, m_ad_store):
-        m_store.return_value.get_guids_for_feed = AsyncMock(return_value={"ep-1"})
-        m_ad_store.return_value.get_detected_guids = AsyncMock(return_value={"ep-1"})
-        await Pipeline(config).run()
-
-    m_store.return_value.save_episodes.assert_not_called()
-    m_pub.return_value.publish.assert_not_called()
-    m_ep_dl.return_value.download.assert_not_called()
-
-
-async def test_feed_rss_exists_undetected_episodes_does_not_skip(tmp_path: Path) -> None:
-    """RSS file exists, no new GUIDs from RSS, but episode has not been through ad detection.
-
-    The undetected episode is not skipped and enters the state machine.
-    """
-    rss_file = tmp_path / "my-podcast.rss"
-    rss_file.write_text("<rss/>")
-
-    config, ep, parsed = _branch_config(tmp_path)
-
-    with _staleness_harness(config, [ep], parsed, transcribed_guids=set()) as (m_store, m_pub, _m_ep_dl, m_ad_store):
-        m_store.return_value.get_guids_for_feed = AsyncMock(return_value={"ep-1"})
-        m_ad_store.return_value.get_detected_guids = AsyncMock(return_value=set())
-        await Pipeline(config).run()
-
-    m_store.return_value.save_episodes.assert_awaited_once()
-    m_pub.return_value.publish.assert_awaited_once()
-
-
-async def test_feed_rss_exists_output_audio_exists_no_ad_record_skips_feed(tmp_path: Path) -> None:
-    """RSS exists, episode in DB, no ad detection record, but output audio exists → skip feed.
-
-    Bug A: Guard 1 short-circuits for episodes whose output files exist but the ad detection
-    store was never populated (e.g. DB reset, pipeline interrupted before ad detection).
-    The staleness check must treat output-file existence as evidence of completion so the
-    pipeline is not activated unnecessarily every run.
-    """
-    rss_file = tmp_path / "my-podcast.rss"
-    rss_file.write_text("<rss/>")
-    audio_file = tmp_path / "my-podcast" / "22.03.2026-my-episode.mp3"
-    audio_file.parent.mkdir(parents=True)
-    audio_file.write_bytes(b"audio")
-
-    config, ep, parsed = _branch_config(tmp_path)
-
-    with _staleness_harness(config, [ep], parsed, transcribed_guids=set()) as (m_store, m_pub, m_ep_dl, m_ad_store):
-        m_store.return_value.get_guids_for_feed = AsyncMock(return_value={"ep-1"})
-        m_ad_store.return_value.get_detected_guids = AsyncMock(return_value=set())
-        await Pipeline(config).run()
-
-    m_store.return_value.save_episodes.assert_not_called()
-    m_pub.return_value.publish.assert_not_called()
-    m_ep_dl.return_value.download.assert_not_called()
-
-
-async def test_feed_not_in_db_output_audio_exists_skips_feed(tmp_path: Path) -> None:
-    """RSS exists, episode NOT in DB, NOT in ad store, but output audio exists → skip.
-
-    DB-reset scenario: all state wiped but output files remain on disk.
-    The disk-reconciliation step removes the episode from unprocessed_guids,
-    so the feed should be skipped even though new_guids would have been non-empty
-    under the old logic.
-    """
-    rss_file = tmp_path / "my-podcast.rss"
-    rss_file.write_text("<rss/>")
-    audio_file = tmp_path / "my-podcast" / "22.03.2026-my-episode.mp3"
-    audio_file.parent.mkdir(parents=True)
-    audio_file.write_bytes(b"audio")
-
-    config, ep, parsed = _branch_config(tmp_path)
-
-    with _staleness_harness(config, [ep], parsed, transcribed_guids=set()) as (m_store, m_pub, m_ep_dl, m_ad_store):
-        m_store.return_value.get_guids_for_feed = AsyncMock(return_value=set())
-        m_ad_store.return_value.get_detected_guids = AsyncMock(return_value=set())
-        await Pipeline(config).run()
-
-    m_store.return_value.save_episodes.assert_not_called()
-    m_pub.return_value.publish.assert_not_called()
-    m_ep_dl.return_value.download.assert_not_called()
-
-
-async def test_feed_rss_exists_ad_detected_output_file_missing_does_not_skip(tmp_path: Path) -> None:
-    """RSS exists, episode in ad store, but output audio file was deleted → do not skip.
-
-    Bug B: When the ad detection record exists but the output file is missing (deleted or
-    remote storage unavailable), the staleness check incorrectly skips the feed. Guard 2
-    would re-export from cached segments, but it never gets the chance. The staleness check
-    must detect the missing output and activate the pipeline so Guard 2 can re-export.
-    """
-    rss_file = tmp_path / "my-podcast.rss"
-    rss_file.write_text("<rss/>")
-
-    config, ep, parsed = _branch_config(tmp_path)
-
-    with _staleness_harness(
-        config, [ep], parsed,
-        transcribed_guids={"ep-1"},
-        ad_segments=[_DEFAULT_AD_SEGMENT],
-    ) as (m_store, m_pub, _m_ep_dl, m_ad_store):
-        m_store.return_value.get_guids_for_feed = AsyncMock(return_value={"ep-1"})
-        m_ad_store.return_value.get_detected_guids = AsyncMock(return_value={"ep-1"})
-        await Pipeline(config).run()
-
-    m_store.return_value.save_episodes.assert_awaited_once()
-    m_pub.return_value.publish.assert_awaited_once()
-    m_ad_store.return_value.get_segments_for_guid.assert_awaited()
-
-
-async def test_staleness_disk_check_skips_episode_with_no_pub_date(tmp_path: Path) -> None:
-    """Episode with pub_date=None is skipped by the disk-reconciliation loop without crashing.
-
-    When an episode has no pub_date the filename pattern cannot be computed, so the
-    loop must skip it via `continue`.  The episode is already in the ad-detection store
-    so unprocessed_guids is empty — the feed is still skipped correctly.
-    """
-    rss_file = tmp_path / "my-podcast.rss"
-    rss_file.write_text("<rss/>")
-
-    ep_no_date = Episode(
-        guid="ep-no-date",
-        url="https://example.com/ep-no-date.mp3",
-        title="No Date Episode",
-        pub_date=None,
-    )
-    config, _, parsed = _branch_config(tmp_path, episode=ep_no_date)
-
-    with _staleness_harness(
-        config, [ep_no_date], parsed, transcribed_guids=set()
-    ) as (m_store, m_pub, _m_ep_dl, m_ad_store):
-        m_store.return_value.get_guids_for_feed = AsyncMock(return_value={"ep-no-date"})
-        m_ad_store.return_value.get_detected_guids = AsyncMock(return_value={"ep-no-date"})
-        await Pipeline(config).run()
-
-    m_store.return_value.save_episodes.assert_not_called()
-    m_pub.return_value.publish.assert_not_called()
 
 
 async def test_feed_rss_missing_publishes_new_feed(tmp_path: Path) -> None:
@@ -2925,10 +2725,7 @@ async def test_per_episode_log_closed_even_on_exception(tmp_path: Path) -> None:
 
 async def test_trim_output_dir_removes_orphaned_files(tmp_path: Path) -> None:
     """Files whose stem does not match any current episode are deleted."""
-    from datetime import UTC, datetime
-
     from components.pipeline import Pipeline
-    from models.feed import Episode
 
     feed_dir = tmp_path / "my-feed"
     feed_dir.mkdir()
@@ -2939,13 +2736,6 @@ async def test_trim_output_dir_removes_orphaned_files(tmp_path: Path) -> None:
     orphan = feed_dir / "01.01.2020-old-episode.mp3"
     orphan.write_bytes(b"delete me")
 
-    ep = Episode(
-        guid="ep-1",
-        url="https://example.com/ep.mp3",
-        title="My Episode",
-        pub_date=datetime(2026, 3, 22, tzinfo=UTC),
-    )
-
     config = MagicMock()
     config.app.feeds = []
     config.app.models.transcription.provider = "groq"
@@ -2978,7 +2768,7 @@ async def test_trim_output_dir_removes_orphaned_files(tmp_path: Path) -> None:
         patch("components.pipeline.EpisodeCopier"),
     ):
         pipeline = Pipeline(config)
-        await pipeline._trim_output_dir(feed_dir, [ep])
+        await pipeline._trim_output_dir(feed_dir, 1)
 
     assert kept.exists()
     assert not orphan.exists()
@@ -2986,10 +2776,7 @@ async def test_trim_output_dir_removes_orphaned_files(tmp_path: Path) -> None:
 
 async def test_trim_output_dir_keeps_all_current_episodes(tmp_path: Path) -> None:
     """No files are deleted when all files match current episodes."""
-    from datetime import UTC, datetime
-
     from components.pipeline import Pipeline
-    from models.feed import Episode
 
     feed_dir = tmp_path / "my-feed"
     feed_dir.mkdir()
@@ -2998,11 +2785,6 @@ async def test_trim_output_dir_keeps_all_current_episodes(tmp_path: Path) -> Non
     f1.write_bytes(b"a")
     f2.write_bytes(b"b")
 
-    episodes = [
-        Episode(guid="e1", url="x", title="Episode One", pub_date=datetime(2026, 3, 22, tzinfo=UTC)),
-        Episode(guid="e2", url="x", title="Episode Two", pub_date=datetime(2026, 3, 21, tzinfo=UTC)),
-    ]
-
     config = MagicMock()
     config.app.feeds = []
     config.app.models.transcription.provider = "groq"
@@ -3035,7 +2817,7 @@ async def test_trim_output_dir_keeps_all_current_episodes(tmp_path: Path) -> Non
         patch("components.pipeline.EpisodeCopier"),
     ):
         pipeline = Pipeline(config)
-        await pipeline._trim_output_dir(feed_dir, episodes)
+        await pipeline._trim_output_dir(feed_dir, 2)
 
     assert f1.exists()
     assert f2.exists()
@@ -3078,7 +2860,7 @@ async def test_trim_output_dir_noop_when_dir_missing(tmp_path: Path) -> None:
     ):
         pipeline = Pipeline(config)
         # Must not raise
-        await pipeline._trim_output_dir(tmp_path / "nonexistent-feed", [])
+        await pipeline._trim_output_dir(tmp_path / "nonexistent-feed", 0)
 
 
 async def test_run_calls_trim_output_dir_after_episode_loop() -> None:
@@ -3099,6 +2881,111 @@ async def test_run_calls_trim_output_dir_after_episode_loop() -> None:
     pipeline._trim_output_dir.assert_awaited_once()
     call_args = pipeline._trim_output_dir.call_args
     assert call_args is not None
-    output_feed_dir, episodes = call_args.args
+    output_feed_dir, episodes_to_keep = call_args.args
     assert output_feed_dir == config.app.paths.output_dir / "my-podcast"
-    assert episodes == [ep]
+    assert episodes_to_keep == config.app.feeds[0].episodes_to_keep
+
+
+def _make_trim_pipeline(tmp_path: Path) -> Pipeline:
+    from components.pipeline import Pipeline
+
+    config = MagicMock()
+    config.app.feeds = []
+    config.app.models.transcription.provider = "groq"
+    config.app.models.transcription.model = "whisper-large-v3-turbo"
+    config.app.models.context_extraction.provider = "openai"
+    config.app.models.context_extraction.model = "gpt-4o-mini"
+    config.app.models.context_extraction.context_window = None
+    config.app.models.ad_detection.provider = "openai"
+    config.app.models.ad_detection.model = "gpt-4o-mini"
+    config.app.models.ad_detection.context_window = None
+    config.app.output.file_type = "mp3"
+    config.app.output.bitrate = "128k"
+    config.credentials.groq_api_key = "sk-test"
+    config.credentials.openai_api_key = "sk-openai-test"
+    config.app.base_url = "https://example.com"
+    config.app.paths.output_dir = tmp_path
+    config.app.paths.cache_dir = tmp_path / "cache"
+    config.app.paths.data_dir = tmp_path / "data"
+    config.app.paths.log_dir = tmp_path / "logs"
+
+    with (
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.AudioPreprocessor"),
+        patch("components.pipeline.EpisodeTranscriptor"),
+        patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
+        patch("components.pipeline.EpisodeCopier"),
+    ):
+        return Pipeline(config)
+
+
+@pytest.mark.asyncio
+async def test_trim_output_dir_preserves_old_file_when_new_episode_download_fails(
+    tmp_path: Path,
+) -> None:
+    """A failed-download episode must not displace an older episode's output file.
+
+    Scenario: episodes_to_keep=3, output dir has files for B/C/D.
+    New episode A was inserted into the DB (newest) but its download failed, so no file exists.
+    The old trim logic received [A, B, C] and deleted D's file.
+    The new logic receives episodes_to_keep=3 and must keep all three existing files.
+    """
+    feed_dir = tmp_path / "my-feed"
+    feed_dir.mkdir()
+    b = feed_dir / "22.03.2026-episode-b.mp3"
+    c = feed_dir / "21.03.2026-episode-c.mp3"
+    d = feed_dir / "20.03.2026-episode-d.mp3"
+    b.write_bytes(b"b")
+    c.write_bytes(b"c")
+    d.write_bytes(b"d")
+
+    pipeline = _make_trim_pipeline(tmp_path)
+    await pipeline._trim_output_dir(feed_dir, 3)
+
+    assert b.exists()
+    assert c.exists()
+    assert d.exists(), "oldest file must survive when a newer episode has no output file"
+
+
+@pytest.mark.asyncio
+async def test_trim_output_dir_keeps_n_most_recent_by_date(tmp_path: Path) -> None:
+    """When the directory has more files than episodes_to_keep, the oldest are deleted."""
+    feed_dir = tmp_path / "my-feed"
+    feed_dir.mkdir()
+    a = feed_dir / "23.03.2026-episode-a.mp3"
+    b = feed_dir / "22.03.2026-episode-b.mp3"
+    c = feed_dir / "21.03.2026-episode-c.mp3"
+    d = feed_dir / "20.03.2026-episode-d.mp3"
+    for f in (a, b, c, d):
+        f.write_bytes(b"x")
+
+    pipeline = _make_trim_pipeline(tmp_path)
+    await pipeline._trim_output_dir(feed_dir, 3)
+
+    assert a.exists()
+    assert b.exists()
+    assert c.exists()
+    assert not d.exists(), "oldest file must be trimmed when directory exceeds episodes_to_keep"
+
+
+@pytest.mark.asyncio
+async def test_trim_output_dir_deletes_unrecognized_filename_before_named_episodes(
+    tmp_path: Path,
+) -> None:
+    """Files whose names don't match DD.MM.YYYY-… are treated as oldest and trimmed first."""
+    feed_dir = tmp_path / "my-feed"
+    feed_dir.mkdir()
+    episode_file = feed_dir / "22.03.2026-episode.mp3"
+    unknown = feed_dir / "feed.xml"
+    episode_file.write_bytes(b"audio")
+    unknown.write_bytes(b"xml")
+
+    pipeline = _make_trim_pipeline(tmp_path)
+    await pipeline._trim_output_dir(feed_dir, 1)
+
+    assert episode_file.exists()
+    assert not unknown.exists(), "unrecognized filenames sort as oldest and must be trimmed"

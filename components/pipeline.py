@@ -178,24 +178,8 @@ class Pipeline:
 
             for feed in parsed_feeds:
                 cfg = feed_cfg_map[feed.config_title]
-                rss_path = self._output_rss_path(feed)
-
-                # ── Staleness check: skip if nothing is new ────────────────────
                 feed_slug = slugify(feed.title)
                 output_feed_dir = self._config.app.paths.output_dir / feed_slug
-
-                feed_guids = {ep.guid for ep in feed.episodes}
-                ad_store = AdStore(db.conn)
-                ad_detected_guids = await ad_store.get_detected_guids()
-                unprocessed_guids = feed_guids - ad_detected_guids
-
-                unprocessed_guids = self._reconcile_unprocessed_with_disk(
-                    feed.episodes, output_feed_dir, ad_detected_guids, unprocessed_guids
-                )
-
-                if rss_path.exists() and not unprocessed_guids:
-                    logger.info(f"[{feed.config_title}] no new items — skipping feed")
-                    continue
 
                 # ── Persist new episodes and publish RSS ───────────────────────
                 await store.save_episodes(feed.config_title, feed.episodes)
@@ -212,6 +196,8 @@ class Pipeline:
 
                 # ── Build per-feed shared state ────────────────────────────────
 
+                ad_store = AdStore(db.conn)
+                ad_detected_guids = await ad_store.get_detected_guids()
                 t_store = TranscriptionStore(db.conn)
                 topic_store = TopicStore(db.conn)
                 stores = _Stores(
@@ -252,7 +238,7 @@ class Pipeline:
                             close_episode_log(handler)
 
                 # ── Trim output folder to episodes_to_keep ────────────────────
-                await self._trim_output_dir(output_feed_dir, episodes)
+                await self._trim_output_dir(output_feed_dir, cfg.episodes_to_keep)
 
         return parsed_feeds
 
@@ -301,52 +287,6 @@ class Pipeline:
             podcast_guid=str(uuid.uuid5(uuid.NAMESPACE_DNS, slugify(feed.title))),
         )
         return await self._feed_publisher.publish(publisher_input)
-
-    @staticmethod
-    def _reconcile_unprocessed_with_disk(
-        episodes: list[Episode],
-        output_feed_dir: Path,
-        ad_detected_guids: set[str],
-        unprocessed_guids: set[str],
-    ) -> set[str]:
-        """Reconcile ``unprocessed_guids`` against disk reality.
-
-        The output file is the authoritative signal that an episode is complete:
-
-        - Bug A: file exists but no ad-store record → remove from unprocessed.
-        - Bug B: ad-store record present but file deleted → add to unprocessed
-          so Guard 2 can re-export from cached segments.
-
-        Episodes without ``pub_date`` are skipped: no date means no filename.
-
-        Returns:
-            A new set derived from ``unprocessed_guids`` after disk reconciliation.
-
-        """
-        result = set(unprocessed_guids)
-        for ep in episodes:
-            if ep.pub_date is None:
-                continue
-            date_str = ep.pub_date.astimezone().strftime("%d.%m.%Y")
-            stem = f"{date_str}-{slugify(ep.title)}.*"
-            output_exists = any(output_feed_dir.glob(stem))
-            if ep.guid in result and output_exists:
-                result.discard(ep.guid)
-            elif ep.guid in ad_detected_guids and not output_exists:
-                result.add(ep.guid)
-        return result
-
-    def _output_rss_path(self, feed: ParsedFeed) -> Path:
-        """Return the expected RSS output path for a parsed feed.
-
-        Args:
-            feed: The parsed feed whose output path is needed.
-
-        Returns:
-            ``output_dir/{feed_slug}.rss`` as a :class:`~pathlib.Path`.
-
-        """
-        return self._config.app.paths.output_dir / f"{slugify(feed.title)}.rss"
 
     def _select_feeds(self) -> list[FeedConfig]:
         """Return the feeds to process for this run.
@@ -694,14 +634,21 @@ class Pipeline:
             sys.stderr.write(f"\r  Episode '{guid}': {percent:.0%}")
             sys.stderr.flush()
 
-    async def _trim_output_dir(self, output_feed_dir: Path, episodes: list[Episode]) -> None:
+    async def _trim_output_dir(self, output_feed_dir: Path, episodes_to_keep: int) -> None:
         if not output_feed_dir.is_dir():  # noqa: ASYNC240
             return
-        expected_stems = {
-            f"{ep.pub_date.astimezone().strftime('%d.%m.%Y')}-{slugify(ep.title)}"
-            for ep in episodes
-        }
-        for file in output_feed_dir.iterdir():  # noqa: ASYNC240
-            if file.is_file() and file.stem not in expected_stems:
-                file.unlink()
-                logger.info(f"[{output_feed_dir.name}] trimmed orphaned episode file: {file.name}")
+
+        def _pub_date_from_stem(stem: str) -> datetime:
+            try:
+                return datetime.strptime(stem[:10], "%d.%m.%Y")  # noqa: DTZ007
+            except ValueError:
+                return datetime.min  # noqa: DTZ901
+
+        files = sorted(
+            [f for f in output_feed_dir.iterdir() if f.is_file()],  # noqa: ASYNC240
+            key=lambda f: _pub_date_from_stem(f.stem),
+            reverse=True,
+        )
+        for file in files[episodes_to_keep:]:
+            file.unlink()
+            logger.info(f"[{output_feed_dir.name}] trimmed orphaned episode file: {file.name}")
