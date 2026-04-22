@@ -184,9 +184,6 @@ class Pipeline:
                 feed_slug = slugify(feed.title)
                 output_feed_dir = self._config.app.paths.output_dir / feed_slug
 
-                existing_guids = await store.get_guids_for_feed(feed.config_title)
-                new_guids = {ep.guid for ep in feed.episodes} - existing_guids
-
                 feed_guids = {ep.guid for ep in feed.episodes}
                 ad_store = AdStore(db.conn)
                 ad_detected_guids = await ad_store.get_detected_guids()
@@ -196,7 +193,7 @@ class Pipeline:
                     feed.episodes, output_feed_dir, ad_detected_guids, unprocessed_guids
                 )
 
-                if rss_path.exists() and not new_guids and not unprocessed_guids:
+                if rss_path.exists() and not unprocessed_guids:
                     logger.info(f"[{feed.config_title}] no new items — skipping feed")
                     continue
 

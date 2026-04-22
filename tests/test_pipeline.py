@@ -2103,6 +2103,32 @@ async def test_feed_rss_exists_output_audio_exists_no_ad_record_skips_feed(tmp_p
     m_ep_dl.return_value.download.assert_not_called()
 
 
+async def test_feed_not_in_db_output_audio_exists_skips_feed(tmp_path: Path) -> None:
+    """RSS exists, episode NOT in DB, NOT in ad store, but output audio exists → skip.
+
+    DB-reset scenario: all state wiped but output files remain on disk.
+    The disk-reconciliation step removes the episode from unprocessed_guids,
+    so the feed should be skipped even though new_guids would have been non-empty
+    under the old logic.
+    """
+    rss_file = tmp_path / "my-podcast.rss"
+    rss_file.write_text("<rss/>")
+    audio_file = tmp_path / "my-podcast" / "22.03.2026-my-episode.mp3"
+    audio_file.parent.mkdir(parents=True)
+    audio_file.write_bytes(b"audio")
+
+    config, ep, parsed = _branch_config(tmp_path)
+
+    with _staleness_harness(config, [ep], parsed, transcribed_guids=set()) as (m_store, m_pub, m_ep_dl, m_ad_store):
+        m_store.return_value.get_guids_for_feed = AsyncMock(return_value=set())
+        m_ad_store.return_value.get_detected_guids = AsyncMock(return_value=set())
+        await Pipeline(config).run()
+
+    m_store.return_value.save_episodes.assert_not_called()
+    m_pub.return_value.publish.assert_not_called()
+    m_ep_dl.return_value.download.assert_not_called()
+
+
 async def test_feed_rss_exists_ad_detected_output_file_missing_does_not_skip(tmp_path: Path) -> None:
     """RSS exists, episode in ad store, but output audio file was deleted → do not skip.
 
