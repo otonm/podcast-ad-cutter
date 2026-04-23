@@ -36,7 +36,7 @@ from database.topic_store import TopicStore
 from database.transcription_store import TranscriptionStore
 from models.ad_detection import AdSegment
 from models.feed import AudioMetadata, Episode, FeedParseInput, ParsedFeed, PublisherInput
-from utils.episode_log import close_episode_log, open_episode_log
+from utils.episode_log import close_episode_log, open_episode_log, rotate_episode_logs
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -142,6 +142,8 @@ class Pipeline:
         self._per_episode_log: bool = config.app.log.per_episode
         self._log_dir: Path = config.app.paths.log_dir
         self._log_file_level: str = config.app.log.file_level
+        self._log_rotate: bool = config.app.log.rotate
+        self._log_keep_last: int = config.app.log.keep_last
 
     # ── Public entry point ─────────────────────────────────────────────────────
 
@@ -215,8 +217,9 @@ class Pipeline:
                 # ── Phase 3: Per-episode processing ───────────────────────────
                 for episode in episodes:
                     handler = None
+                    log_path = None
                     if self._per_episode_log:
-                        _, handler = open_episode_log(
+                        _, handler, log_path = open_episode_log(
                             guid=episode.guid,
                             podcast_title=feed.config_title,
                             episode_title=episode.title,
@@ -236,6 +239,8 @@ class Pipeline:
                     finally:
                         if handler is not None:
                             close_episode_log(handler)
+                        if log_path is not None and self._log_rotate:
+                            rotate_episode_logs(log_path.parent, self._log_keep_last)
 
                 # ── Trim output folder to episodes_to_keep ────────────────────
                 await self._trim_output_dir(output_feed_dir, cfg.episodes_to_keep)

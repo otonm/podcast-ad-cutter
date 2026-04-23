@@ -2571,6 +2571,8 @@ def _make_per_episode_config(tmp_path: Path, *, per_episode: bool) -> tuple[Magi
     config, ep, parsed = _branch_config(MagicMock())
     config.app.log.per_episode = per_episode
     config.app.log.file_level = "DEBUG"
+    config.app.log.rotate = False
+    config.app.log.keep_last = 10
     config.app.paths.log_dir = tmp_path
     return config, ep, parsed
 
@@ -2601,20 +2603,21 @@ async def test_per_episode_log_open_called_once_per_episode(tmp_path: Path) -> N
         patch("components.pipeline.EpisodeCopier"),
         patch("components.pipeline.open_episode_log"),
         patch("components.pipeline.close_episode_log"),
+        patch("components.pipeline.rotate_episode_logs"),
     ]
     with contextlib.ExitStack() as stack:
         mocks = [stack.enter_context(p) for p in _patches]
         (m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
          m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
          m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
-         m_episode_copier, m_open, _m_close) = mocks
+         m_episode_copier, m_open, _m_close, _m_rotate) = mocks
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
             m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
-        m_open.return_value = (MagicMock(), MagicMock())
+        m_open.return_value = (MagicMock(), MagicMock(), MagicMock())
         await Pipeline(config).run()
 
     m_open.assert_called_once_with(
@@ -2652,13 +2655,14 @@ async def test_per_episode_log_not_opened_when_disabled(tmp_path: Path) -> None:
         patch("components.pipeline.EpisodeCopier"),
         patch("components.pipeline.open_episode_log"),
         patch("components.pipeline.close_episode_log"),
+        patch("components.pipeline.rotate_episode_logs"),
     ]
     with contextlib.ExitStack() as stack:
         mocks = [stack.enter_context(p) for p in _patches]
         (m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
          m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
          m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
-         m_episode_copier, m_open, _m_close) = mocks
+         m_episode_copier, m_open, _m_close, _m_rotate) = mocks
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
@@ -2696,13 +2700,14 @@ async def test_per_episode_log_closed_even_on_exception(tmp_path: Path) -> None:
         patch("components.pipeline.EpisodeCopier"),
         patch("components.pipeline.open_episode_log"),
         patch("components.pipeline.close_episode_log"),
+        patch("components.pipeline.rotate_episode_logs"),
     ]
     with contextlib.ExitStack() as stack:
         mocks = [stack.enter_context(p) for p in _patches]
         (m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
          m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
          m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
-         m_episode_copier, m_open, m_close) = mocks
+         m_episode_copier, m_open, m_close, _m_rotate) = mocks
         _wire_branch_mocks(
             m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
             m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
@@ -2710,12 +2715,111 @@ async def test_per_episode_log_closed_even_on_exception(tmp_path: Path) -> None:
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         fake_handler = MagicMock()
-        m_open.return_value = (MagicMock(), fake_handler)
+        m_open.return_value = (MagicMock(), fake_handler, MagicMock())
         # Force episode processing to raise
         m_ep_dl.return_value.download = AsyncMock(side_effect=RuntimeError("boom"))
         await Pipeline(config).run()
 
     m_close.assert_called_once_with(fake_handler)
+
+
+@pytest.mark.asyncio
+async def test_per_episode_rotate_called_when_rotate_enabled(tmp_path: Path) -> None:
+    """rotate_episode_logs is called after close when rotate=True."""
+    config, ep, parsed = _make_per_episode_config(tmp_path, per_episode=True)
+    config.app.log.rotate = True
+    config.app.log.keep_last = 3
+
+    _patches = [
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.FeedParser"),
+        patch("components.pipeline.FeedPublisher"),
+        patch("components.pipeline.Database"),
+        patch("components.pipeline.EpisodeStore"),
+        patch("components.pipeline.TranscriptionStore"),
+        patch("components.pipeline.AudioMetadataStore"),
+        patch("components.pipeline.CostTrackingStore"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.AudioProber"),
+        patch("components.pipeline.AudioPreprocessor"),
+        patch("components.pipeline.EpisodeTranscriptor"),
+        patch("components.pipeline.AdStore"),
+        patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.TopicStore"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
+        patch("components.pipeline.EpisodeCopier"),
+        patch("components.pipeline.open_episode_log"),
+        patch("components.pipeline.close_episode_log"),
+        patch("components.pipeline.rotate_episode_logs"),
+    ]
+    with contextlib.ExitStack() as stack:
+        mocks = [stack.enter_context(p) for p in _patches]
+        (m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+         m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
+         m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
+         m_episode_copier, m_open, _m_close, m_rotate) = mocks
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
+            m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        fake_log_path = MagicMock()
+        fake_log_path.parent = tmp_path / "episodes" / "my-podcast"
+        m_open.return_value = (MagicMock(), MagicMock(), fake_log_path)
+        await Pipeline(config).run()
+
+    m_rotate.assert_called_once_with(fake_log_path.parent, 3)
+
+
+@pytest.mark.asyncio
+async def test_per_episode_rotate_not_called_when_rotate_disabled(tmp_path: Path) -> None:
+    """rotate_episode_logs is not called when rotate=False."""
+    config, ep, parsed = _make_per_episode_config(tmp_path, per_episode=True)
+    config.app.log.rotate = False
+
+    _patches = [
+        patch("components.pipeline.FeedDownloader"),
+        patch("components.pipeline.FeedParser"),
+        patch("components.pipeline.FeedPublisher"),
+        patch("components.pipeline.Database"),
+        patch("components.pipeline.EpisodeStore"),
+        patch("components.pipeline.TranscriptionStore"),
+        patch("components.pipeline.AudioMetadataStore"),
+        patch("components.pipeline.CostTrackingStore"),
+        patch("components.pipeline.EpisodeDownloader"),
+        patch("components.pipeline.AudioProber"),
+        patch("components.pipeline.AudioPreprocessor"),
+        patch("components.pipeline.EpisodeTranscriptor"),
+        patch("components.pipeline.AdStore"),
+        patch("components.pipeline.TopicExtractor"),
+        patch("components.pipeline.TopicStore"),
+        patch("components.pipeline.AdDetector"),
+        patch("components.pipeline.AdParser"),
+        patch("components.pipeline.AudioEditor"),
+        patch("components.pipeline.EpisodeCopier"),
+        patch("components.pipeline.open_episode_log"),
+        patch("components.pipeline.close_episode_log"),
+        patch("components.pipeline.rotate_episode_logs"),
+    ]
+    with contextlib.ExitStack() as stack:
+        mocks = [stack.enter_context(p) for p in _patches]
+        (m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+         m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
+         m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
+         m_episode_copier, m_open, _m_close, m_rotate) = mocks
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
+            m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        m_open.return_value = (MagicMock(), MagicMock(), MagicMock())
+        await Pipeline(config).run()
+
+    m_rotate.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
