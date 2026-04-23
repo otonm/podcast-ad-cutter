@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import time
 from pathlib import Path
 
 import pytest
@@ -254,19 +256,22 @@ class TestRotateEpisodeLogs:
         assert remaining[1].name == "ep-one.2026-04-22T10-00-00.log"
 
     def test_deletes_oldest_by_mtime_not_name(self, tmp_path: Path) -> None:
-        import time
-
         feed_dir = tmp_path / "my-podcast"
         feed_dir.mkdir()
-        self._make_log_file(feed_dir, "ep-one", "2026-04-22T10-00-00")
-        time.sleep(0.01)
+        # Create "newer name" file first — if rotation used name order it would keep this one
+        f_name_newer = self._make_log_file(feed_dir, "ep-one", "2026-04-22T10-00-00")
+        # Create "older name" file second
         f_name_older = self._make_log_file(feed_dir, "ep-one", "2026-04-20T10-00-00")
+        # Force mtime: f_name_newer has an older mtime, f_name_older has a newer mtime
+        now = time.time()
+        os.utime(f_name_newer, (now, now))
+        os.utime(f_name_older, (now + 1.0, now + 1.0))
 
         rotate_episode_logs(feed_dir, keep_last=1)
 
         remaining = list(feed_dir.glob("ep-one.*.log"))
         assert len(remaining) == 1
-        assert remaining[0] == f_name_older  # mtime-newer wins
+        assert remaining[0] == f_name_older  # mtime-newer wins despite older-looking name
 
     def test_keep_last_zero_deletes_all(self, tmp_path: Path) -> None:
         feed_dir = tmp_path / "my-podcast"
@@ -302,3 +307,9 @@ class TestRotateEpisodeLogs:
         rotate_episode_logs(feed_dir, keep_last=5)
 
         assert f.exists()
+
+    def test_raises_on_negative_keep_last(self, tmp_path: Path) -> None:
+        feed_dir = tmp_path / "my-podcast"
+        feed_dir.mkdir()
+        with pytest.raises(ValueError, match="keep_last must be >= 0"):
+            rotate_episode_logs(feed_dir, keep_last=-1)

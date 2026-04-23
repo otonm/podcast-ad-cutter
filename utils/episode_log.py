@@ -95,6 +95,8 @@ def rotate_episode_logs(feed_dir: Path, keep_last: int) -> None:
     """
     if not feed_dir.exists():
         return
+    if keep_last < 0:
+        raise ValueError(f"keep_last must be >= 0, got {keep_last}")
     groups: dict[str, list[Path]] = {}
     for f in feed_dir.glob("*.log"):
         episode_slug = f.stem.rsplit(".", 1)[0]
