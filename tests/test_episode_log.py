@@ -33,35 +33,35 @@ def restore_root_logger() -> object:
 
 
 class TestOpenEpisodeLog:
-    def test_creates_episodes_subdirectory(self, tmp_path: Path) -> None:
-        episodes_dir = tmp_path / "episodes"
-        assert not episodes_dir.exists()
-        _, handler = open_episode_log(
+    def test_creates_feed_subdirectory(self, tmp_path: Path) -> None:
+        _, handler, _ = open_episode_log(
             guid="ep-1",
             podcast_title="My Podcast",
             episode_title="My Episode",
             log_dir=tmp_path,
         )
         close_episode_log(handler)
-        assert episodes_dir.is_dir()
+        feed_dir = tmp_path / "episodes" / "my-podcast"
+        assert feed_dir.is_dir()
 
     def test_log_filename_matches_expected_pattern(self, tmp_path: Path) -> None:
-        _, handler = open_episode_log(
+        _, handler, log_path = open_episode_log(
             guid="ep-1",
             podcast_title="My Podcast",
             episode_title="My Episode",
             log_dir=tmp_path,
         )
         close_episode_log(handler)
-        files = list((tmp_path / "episodes").glob("*.log"))
+        files = list((tmp_path / "episodes" / "my-podcast").glob("*.log"))
         assert len(files) == 1
-        pattern = r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.my-podcast\.my-episode\.log$"
+        pattern = r"^my-episode\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.log$"
         assert re.match(pattern, files[0].name), f"Unexpected filename: {files[0].name}"
+        assert log_path == files[0]
 
     def test_handler_attached_to_root_logger(self, tmp_path: Path) -> None:
         root = logging.getLogger()
         before_count = len(root.handlers)
-        _, handler = open_episode_log(
+        _, handler, _ = open_episode_log(
             guid="ep-1",
             podcast_title="My Podcast",
             episode_title="My Episode",
@@ -72,7 +72,7 @@ class TestOpenEpisodeLog:
         close_episode_log(handler)
 
     def test_handler_level_matches_file_level_arg(self, tmp_path: Path) -> None:
-        _, handler = open_episode_log(
+        _, handler, _ = open_episode_log(
             guid="ep-1",
             podcast_title="My Podcast",
             episode_title="My Episode",
@@ -83,7 +83,7 @@ class TestOpenEpisodeLog:
         close_episode_log(handler)
 
     def test_handler_level_defaults_to_debug(self, tmp_path: Path) -> None:
-        _, handler = open_episode_log(
+        _, handler, _ = open_episode_log(
             guid="ep-1",
             podcast_title="My Podcast",
             episode_title="My Episode",
@@ -93,7 +93,7 @@ class TestOpenEpisodeLog:
         close_episode_log(handler)
 
     def test_returns_episode_logger_with_correct_name(self, tmp_path: Path) -> None:
-        episode_logger, handler = open_episode_log(
+        episode_logger, handler, _ = open_episode_log(
             guid="ep-1",
             podcast_title="My Podcast",
             episode_title="My Episode",
@@ -106,7 +106,7 @@ class TestOpenEpisodeLog:
     def test_messages_from_any_logger_written_to_episode_file(self, tmp_path: Path) -> None:
         root = logging.getLogger()
         root.setLevel(logging.DEBUG)
-        _, handler = open_episode_log(
+        _, handler, _ = open_episode_log(
             guid="ep-1",
             podcast_title="My Podcast",
             episode_title="My Episode",
@@ -116,14 +116,14 @@ class TestOpenEpisodeLog:
         some_logger.debug("ad detection triggered")
         close_episode_log(handler)
 
-        log_file = next((tmp_path / "episodes").glob("*.log"))
+        log_file = next((tmp_path / "episodes" / "my-podcast").glob("*.log"))
         content = log_file.read_text()
         assert "ad detection triggered" in content
 
     def test_episode_logger_messages_written_to_episode_file(self, tmp_path: Path) -> None:
         root = logging.getLogger()
         root.setLevel(logging.DEBUG)
-        episode_logger, handler = open_episode_log(
+        episode_logger, handler, _ = open_episode_log(
             guid="ep-42",
             podcast_title="My Podcast",
             episode_title="My Episode",
@@ -132,28 +132,28 @@ class TestOpenEpisodeLog:
         episode_logger.debug("explicit episode message")
         close_episode_log(handler)
 
-        log_file = next((tmp_path / "episodes").glob("*.log"))
+        log_file = next((tmp_path / "episodes" / "my-podcast").glob("*.log"))
         content = log_file.read_text()
         assert "explicit episode message" in content
 
     def test_slugifies_podcast_and_episode_titles(self, tmp_path: Path) -> None:
-        _, handler = open_episode_log(
+        _, handler, _ = open_episode_log(
             guid="ep-1",
             podcast_title="My Great Podcast!",
             episode_title="Episode 1: The Beginning",
             log_dir=tmp_path,
         )
         close_episode_log(handler)
-        files = list((tmp_path / "episodes").glob("*.log"))
+        feed_dir = tmp_path / "episodes" / "my-great-podcast"
+        files = list(feed_dir.glob("*.log"))
         assert len(files) == 1
         name = files[0].name
-        assert "my-great-podcast" in name
-        assert "episode-1-the-beginning" in name
+        assert name.startswith("episode-1-the-beginning.")
 
     def test_open_lowers_root_level_when_above_file_handler_level(self, tmp_path: Path) -> None:
         root = logging.getLogger()
         root.setLevel(logging.WARNING)
-        _, handler = open_episode_log(
+        _, handler, _ = open_episode_log(
             guid="ep-1",
             podcast_title="My Podcast",
             episode_title="My Episode",
@@ -168,7 +168,7 @@ class TestOpenEpisodeLog:
     ) -> None:
         root = logging.getLogger()
         root.setLevel(logging.DEBUG)
-        _, handler = open_episode_log(
+        _, handler, _ = open_episode_log(
             guid="ep-1",
             podcast_title="My Podcast",
             episode_title="My Episode",
@@ -181,7 +181,7 @@ class TestOpenEpisodeLog:
     def test_debug_message_reaches_file_when_root_was_at_warning(self, tmp_path: Path) -> None:
         root = logging.getLogger()
         root.setLevel(logging.WARNING)
-        _, handler = open_episode_log(
+        _, handler, _ = open_episode_log(
             guid="ep-1",
             podcast_title="My Podcast",
             episode_title="My Episode",
@@ -190,14 +190,14 @@ class TestOpenEpisodeLog:
         )
         logging.getLogger("components.ad_detector").debug("reasoning text here")
         close_episode_log(handler)
-        log_file = next((tmp_path / "episodes").glob("*.log"))
+        log_file = next((tmp_path / "episodes" / "my-podcast").glob("*.log"))
         assert "reasoning text here" in log_file.read_text()
 
 
 class TestCloseEpisodeLog:
     def test_handler_removed_from_root_logger(self, tmp_path: Path) -> None:
         root = logging.getLogger()
-        _, handler = open_episode_log(
+        _, handler, _ = open_episode_log(
             guid="ep-1",
             podcast_title="My Podcast",
             episode_title="My Episode",
@@ -208,7 +208,7 @@ class TestCloseEpisodeLog:
         assert handler not in root.handlers
 
     def test_handler_closed_after_removal(self, tmp_path: Path) -> None:
-        _, handler = open_episode_log(
+        _, handler, _ = open_episode_log(
             guid="ep-1",
             podcast_title="My Podcast",
             episode_title="My Episode",
@@ -221,7 +221,7 @@ class TestCloseEpisodeLog:
     def test_close_restores_root_level(self, tmp_path: Path) -> None:
         root = logging.getLogger()
         root.setLevel(logging.WARNING)
-        _, handler = open_episode_log(
+        _, handler, _ = open_episode_log(
             guid="ep-1",
             podcast_title="My Podcast",
             episode_title="My Episode",

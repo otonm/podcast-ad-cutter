@@ -37,6 +37,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # TC003, TC001: Types are used at runtime in pydantic field annotations
 "config/config_loader.py" = ["TC003", "TC001"]
+"utils/episode_log.py" = ["TC003"]  # Path used at runtime for mkdir/path construction
 "tests/**/*.py" = ["S101", "ANN", "D101", "D102", "D103", "D400", "D403", "D415", "INP001", "SIM117", "S314", "SLF001", "PLR2004", "ARG001", "TC003", "PLC0415", "RUF100"]  # SIM117: nested with; S314: test XML is controlled; SLF001: direct private method testing; PLR2004: magic values in assertions are idiomatic; ARG001: pytest fixtures used for side-effects need not be referenced; D400/D403/D415: docstring style relaxed in tests; TC003: Path used only in annotations (from __future__ import annotations); PLC0415: inline imports in tests are idiomatic for avoiding circular imports; RUF100: noqa directives may be version-dependent
 
 [tool.mypy]
