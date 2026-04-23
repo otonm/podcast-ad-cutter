@@ -49,7 +49,7 @@ log:
   # When true, old .log files in log_dir are deleted after each run, keeping only keep_last.
   rotate: false
   keep_last: 10
-  # When true, write a debug log for each episode to logs/episodes/<datetime>.<podcast>.<episode>.log.
+  # When true, write a debug log for each episode to logs/episodes/<feed-slug>/<episode-slug>.<datetime>.log.
   # Captures all log messages emitted during that episode's processing, useful for debugging missing ad cuts.
   per_episode: false
 
