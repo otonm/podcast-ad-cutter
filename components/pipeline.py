@@ -216,7 +216,7 @@ class Pipeline:
                 for episode in episodes:
                     handler = None
                     if self._per_episode_log:
-                        _, handler = open_episode_log(
+                        _, handler, _ = open_episode_log(
                             guid=episode.guid,
                             podcast_title=feed.config_title,
                             episode_title=episode.title,

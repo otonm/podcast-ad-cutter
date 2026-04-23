@@ -2614,7 +2614,7 @@ async def test_per_episode_log_open_called_once_per_episode(tmp_path: Path) -> N
             m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
-        m_open.return_value = (MagicMock(), MagicMock())
+        m_open.return_value = (MagicMock(), MagicMock(), MagicMock())
         await Pipeline(config).run()
 
     m_open.assert_called_once_with(
@@ -2710,7 +2710,7 @@ async def test_per_episode_log_closed_even_on_exception(tmp_path: Path) -> None:
             episodes=[ep], parsed=parsed, transcribed_guids=set(),
         )
         fake_handler = MagicMock()
-        m_open.return_value = (MagicMock(), fake_handler)
+        m_open.return_value = (MagicMock(), fake_handler, MagicMock())
         # Force episode processing to raise
         m_ep_dl.return_value.download = AsyncMock(side_effect=RuntimeError("boom"))
         await Pipeline(config).run()
