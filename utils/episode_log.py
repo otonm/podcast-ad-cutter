@@ -77,3 +77,30 @@ def close_episode_log(handler: logging.FileHandler) -> None:
     if prior is not None:
         root.setLevel(prior)
     handler.close()
+
+
+def rotate_episode_logs(feed_dir: Path, keep_last: int) -> None:
+    """Prune per-episode logs in feed_dir, keeping keep_last per episode slug.
+
+    Groups ``*.log`` files by episode slug (the filename prefix before the
+    timestamp), then for each group deletes the oldest files beyond keep_last.
+    Sorted by modification time so the decision is independent of filename order.
+
+    Args:
+        feed_dir: Directory containing per-episode log files for one feed.
+            If it does not exist, this function is a no-op.
+        keep_last: Number of most-recent log files to retain per episode slug.
+            Pass 0 to delete all files in every group.
+
+    """
+    if not feed_dir.exists():
+        return
+    groups: dict[str, list[Path]] = {}
+    for f in feed_dir.glob("*.log"):
+        episode_slug = f.stem.rsplit(".", 1)[0]
+        groups.setdefault(episode_slug, []).append(f)
+    for files in groups.values():
+        files.sort(key=lambda p: p.stat().st_mtime)
+        to_delete = files[:-keep_last] if keep_last > 0 else files
+        for old_file in to_delete:
+            old_file.unlink()

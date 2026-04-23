@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from utils.episode_log import close_episode_log, open_episode_log
+from utils.episode_log import close_episode_log, open_episode_log, rotate_episode_logs
 
 
 @pytest.fixture(autouse=True)
@@ -231,3 +231,74 @@ class TestCloseEpisodeLog:
         assert root.level == logging.DEBUG
         close_episode_log(handler)
         assert root.level == logging.WARNING
+
+
+class TestRotateEpisodeLogs:
+    def _make_log_file(self, feed_dir: Path, episode_slug: str, timestamp: str) -> Path:
+        p = feed_dir / f"{episode_slug}.{timestamp}.log"
+        p.write_text("log content")
+        return p
+
+    def test_keeps_keep_last_most_recent_per_episode_slug(self, tmp_path: Path) -> None:
+        feed_dir = tmp_path / "my-podcast"
+        feed_dir.mkdir()
+        self._make_log_file(feed_dir, "ep-one", "2026-04-20T10-00-00")
+        self._make_log_file(feed_dir, "ep-one", "2026-04-21T10-00-00")
+        self._make_log_file(feed_dir, "ep-one", "2026-04-22T10-00-00")
+
+        rotate_episode_logs(feed_dir, keep_last=2)
+
+        remaining = sorted(feed_dir.glob("ep-one.*.log"))
+        assert len(remaining) == 2
+        assert remaining[0].name == "ep-one.2026-04-21T10-00-00.log"
+        assert remaining[1].name == "ep-one.2026-04-22T10-00-00.log"
+
+    def test_deletes_oldest_by_mtime_not_name(self, tmp_path: Path) -> None:
+        import time
+
+        feed_dir = tmp_path / "my-podcast"
+        feed_dir.mkdir()
+        self._make_log_file(feed_dir, "ep-one", "2026-04-22T10-00-00")
+        time.sleep(0.01)
+        f_name_older = self._make_log_file(feed_dir, "ep-one", "2026-04-20T10-00-00")
+
+        rotate_episode_logs(feed_dir, keep_last=1)
+
+        remaining = list(feed_dir.glob("ep-one.*.log"))
+        assert len(remaining) == 1
+        assert remaining[0] == f_name_older  # mtime-newer wins
+
+    def test_keep_last_zero_deletes_all(self, tmp_path: Path) -> None:
+        feed_dir = tmp_path / "my-podcast"
+        feed_dir.mkdir()
+        self._make_log_file(feed_dir, "ep-one", "2026-04-20T10-00-00")
+        self._make_log_file(feed_dir, "ep-one", "2026-04-21T10-00-00")
+
+        rotate_episode_logs(feed_dir, keep_last=0)
+
+        assert list(feed_dir.glob("*.log")) == []
+
+    def test_does_not_affect_other_episode_slugs(self, tmp_path: Path) -> None:
+        feed_dir = tmp_path / "my-podcast"
+        feed_dir.mkdir()
+        self._make_log_file(feed_dir, "ep-one", "2026-04-20T10-00-00")
+        self._make_log_file(feed_dir, "ep-one", "2026-04-21T10-00-00")
+        self._make_log_file(feed_dir, "ep-two", "2026-04-20T10-00-00")
+
+        rotate_episode_logs(feed_dir, keep_last=1)
+
+        assert len(list(feed_dir.glob("ep-one.*.log"))) == 1
+        assert len(list(feed_dir.glob("ep-two.*.log"))) == 1
+
+    def test_noop_when_feed_dir_missing(self, tmp_path: Path) -> None:
+        feed_dir = tmp_path / "does-not-exist"
+        rotate_episode_logs(feed_dir, keep_last=2)
+
+    def test_noop_when_fewer_files_than_keep_last(self, tmp_path: Path) -> None:
+        feed_dir = tmp_path / "my-podcast"
+        feed_dir.mkdir()
+        f = self._make_log_file(feed_dir, "ep-one", "2026-04-20T10-00-00")
+
+        rotate_episode_logs(feed_dir, keep_last=5)
+
+        assert f.exists()
