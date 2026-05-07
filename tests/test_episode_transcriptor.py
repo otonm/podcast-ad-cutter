@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from components.episode_transcriptor import EpisodeTranscriptor
+from components.episode_transcriptor import EpisodeTranscriptor, _noop
 from models.transcription import Transcription, TranscriptionCost, TranscriptionSegment
 from utils.exceptions import TranscriptionError
 
@@ -394,3 +394,189 @@ async def test_transcribe_opens_file_in_binary_mode(
 
     assert len(captured_file) == 1
     assert isinstance(captured_file[0], io.RawIOBase | io.BufferedIOBase)
+
+
+async def test_noop_progress_callback_does_not_raise() -> None:
+    await _noop(0.5)
+
+
+async def test_transcribe_error_includes_file_size_mb(
+    transcriptor: EpisodeTranscriptor, audio_file: Path
+) -> None:
+    with patch(
+        "components.episode_transcriptor.litellm.atranscription",
+        new=AsyncMock(side_effect=RuntimeError("API down")),
+    ):
+        with pytest.raises(TranscriptionError) as exc_info:
+            await transcriptor.transcribe("ep-1", audio_file)
+    assert "MB" in exc_info.value.message
+
+
+# ---------------------------------------------------------------------------
+# Chunking helpers
+# ---------------------------------------------------------------------------
+
+_SMALL_LIMIT = 50       # bytes — triggers chunking for any 100-byte test file
+_SMALL_CHUNK_SECS = 60  # seconds per chunk
+_SMALL_BITRATE = 1.0    # bytes/sec — makes 100-byte file "last" 100 seconds
+
+
+async def _fake_ffmpeg_run(
+    args: list[str], on_progress: object = None, duration: float = 0.0
+) -> None:
+    """Write a stub chunk file at the path given as the last ffmpeg arg."""
+    from pathlib import Path as _Path
+    _Path(args[-1]).write_bytes(b"chunk data")
+
+
+@pytest.fixture
+def large_audio(tmp_path: Path) -> Path:
+    """100-byte audio file — with patched constants, represents a 100-second episode."""
+    p = tmp_path / "large.mono.m4a"
+    p.write_bytes(b"x" * 100)
+    return p
+
+
+# ---------------------------------------------------------------------------
+# Chunking tests
+# ---------------------------------------------------------------------------
+
+
+async def test_transcribe_splits_into_multiple_chunks_when_file_exceeds_limit(
+    transcriptor: EpisodeTranscriptor, large_audio: Path
+) -> None:
+    mock_atrans = AsyncMock(return_value=_make_response(segments=[]))
+    with (
+        patch("components.episode_transcriptor._GROQ_MAX_BYTES", _SMALL_LIMIT),
+        patch("components.episode_transcriptor._CHUNK_DURATION_SECS", _SMALL_CHUNK_SECS),
+        patch("components.episode_transcriptor._AUDIO_BITRATE_BYTES_PER_SEC", _SMALL_BITRATE),
+        patch("components.episode_transcriptor.Ffmpeg") as mock_ffmpeg_cls,
+        patch("components.episode_transcriptor.litellm.atranscription", new=mock_atrans),
+    ):
+        mock_ffmpeg_cls.return_value.run = AsyncMock(side_effect=_fake_ffmpeg_run)
+        await transcriptor.transcribe("ep-1", large_audio)
+    # 100 bytes / 1 byte/sec = 100 sec; ceil(100 / 60) = 2 chunks
+    assert mock_atrans.call_count == 2
+
+
+async def test_transcribe_chunked_concatenates_text_with_space(
+    transcriptor: EpisodeTranscriptor, large_audio: Path
+) -> None:
+    responses = iter([
+        _make_response(text="First part", segments=[]),
+        _make_response(text="Second part", segments=[]),
+    ])
+
+    async def _side(**_: object) -> MagicMock:
+        return next(responses)
+
+    with (
+        patch("components.episode_transcriptor._GROQ_MAX_BYTES", _SMALL_LIMIT),
+        patch("components.episode_transcriptor._CHUNK_DURATION_SECS", _SMALL_CHUNK_SECS),
+        patch("components.episode_transcriptor._AUDIO_BITRATE_BYTES_PER_SEC", _SMALL_BITRATE),
+        patch("components.episode_transcriptor.Ffmpeg") as mock_ffmpeg_cls,
+        patch("components.episode_transcriptor.litellm.atranscription", side_effect=_side),
+    ):
+        mock_ffmpeg_cls.return_value.run = AsyncMock(side_effect=_fake_ffmpeg_run)
+        _, transcription, _, _ = await transcriptor.transcribe("ep-1", large_audio)
+
+    assert transcription.text == "First part Second part"
+
+
+async def test_transcribe_chunked_offsets_segment_timestamps_by_chunk_start(
+    transcriptor: EpisodeTranscriptor, large_audio: Path
+) -> None:
+    responses = iter([
+        _make_response(text="A", segments=[{"start": 1.0, "end": 2.0, "text": "Hello"}]),
+        _make_response(text="B", segments=[{"start": 0.5, "end": 1.5, "text": "World"}]),
+    ])
+
+    async def _side(**_: object) -> MagicMock:
+        return next(responses)
+
+    with (
+        patch("components.episode_transcriptor._GROQ_MAX_BYTES", _SMALL_LIMIT),
+        patch("components.episode_transcriptor._CHUNK_DURATION_SECS", _SMALL_CHUNK_SECS),
+        patch("components.episode_transcriptor._AUDIO_BITRATE_BYTES_PER_SEC", _SMALL_BITRATE),
+        patch("components.episode_transcriptor.Ffmpeg") as mock_ffmpeg_cls,
+        patch("components.episode_transcriptor.litellm.atranscription", side_effect=_side),
+    ):
+        mock_ffmpeg_cls.return_value.run = AsyncMock(side_effect=_fake_ffmpeg_run)
+        _, _, segments, _ = await transcriptor.transcribe("ep-1", large_audio)
+
+    assert len(segments) == 2
+    assert segments[0].start_ms == 1000   # chunk 0 has no offset
+    assert segments[0].end_ms == 2000
+    assert segments[1].start_ms == 60500  # chunk 1: 500 + 60 * 1000 ms
+    assert segments[1].end_ms == 61500
+
+
+async def test_transcribe_chunked_sums_costs_across_chunks(
+    transcriptor: EpisodeTranscriptor, large_audio: Path
+) -> None:
+    responses = iter([
+        _make_response(text="A", segments=[], response_cost=0.01),
+        _make_response(text="B", segments=[], response_cost=0.02),
+    ])
+
+    async def _side(**_: object) -> MagicMock:
+        return next(responses)
+
+    with (
+        patch("components.episode_transcriptor._GROQ_MAX_BYTES", _SMALL_LIMIT),
+        patch("components.episode_transcriptor._CHUNK_DURATION_SECS", _SMALL_CHUNK_SECS),
+        patch("components.episode_transcriptor._AUDIO_BITRATE_BYTES_PER_SEC", _SMALL_BITRATE),
+        patch("components.episode_transcriptor.Ffmpeg") as mock_ffmpeg_cls,
+        patch("components.episode_transcriptor.litellm.atranscription", side_effect=_side),
+    ):
+        mock_ffmpeg_cls.return_value.run = AsyncMock(side_effect=_fake_ffmpeg_run)
+        _, _, _, cost = await transcriptor.transcribe("ep-1", large_audio)
+
+    assert cost.cost == pytest.approx(0.03)
+
+
+async def test_transcribe_chunked_deletes_chunk_files_after_success(
+    transcriptor: EpisodeTranscriptor, large_audio: Path
+) -> None:
+    with (
+        patch("components.episode_transcriptor._GROQ_MAX_BYTES", _SMALL_LIMIT),
+        patch("components.episode_transcriptor._CHUNK_DURATION_SECS", _SMALL_CHUNK_SECS),
+        patch("components.episode_transcriptor._AUDIO_BITRATE_BYTES_PER_SEC", _SMALL_BITRATE),
+        patch("components.episode_transcriptor.Ffmpeg") as mock_ffmpeg_cls,
+        patch(
+            "components.episode_transcriptor.litellm.atranscription",
+            new=AsyncMock(return_value=_make_response(segments=[])),
+        ),
+    ):
+        mock_ffmpeg_cls.return_value.run = AsyncMock(side_effect=_fake_ffmpeg_run)
+        await transcriptor.transcribe("ep-1", large_audio)
+
+    assert not (large_audio.parent / "ep-1.chunk0000.mono.m4a").exists()
+    assert not (large_audio.parent / "ep-1.chunk0001.mono.m4a").exists()
+
+
+async def test_transcribe_chunked_deletes_chunk_files_on_transcription_error(
+    transcriptor: EpisodeTranscriptor, large_audio: Path
+) -> None:
+    call_count = 0
+
+    async def _fail_on_second(**_: object) -> MagicMock:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise RuntimeError("second chunk failed")
+        return _make_response(segments=[])
+
+    with (
+        patch("components.episode_transcriptor._GROQ_MAX_BYTES", _SMALL_LIMIT),
+        patch("components.episode_transcriptor._CHUNK_DURATION_SECS", _SMALL_CHUNK_SECS),
+        patch("components.episode_transcriptor._AUDIO_BITRATE_BYTES_PER_SEC", _SMALL_BITRATE),
+        patch("components.episode_transcriptor.Ffmpeg") as mock_ffmpeg_cls,
+        patch("components.episode_transcriptor.litellm.atranscription", side_effect=_fail_on_second),
+    ):
+        mock_ffmpeg_cls.return_value.run = AsyncMock(side_effect=_fake_ffmpeg_run)
+        with pytest.raises(TranscriptionError):
+            await transcriptor.transcribe("ep-1", large_audio)
+
+    assert not (large_audio.parent / "ep-1.chunk0000.mono.m4a").exists()
+    assert not (large_audio.parent / "ep-1.chunk0001.mono.m4a").exists()
