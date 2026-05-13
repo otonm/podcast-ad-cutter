@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import litellm
@@ -71,6 +72,12 @@ def _make_detector(
         max_retries=max_retries,
         context_window=context_window,
     )
+
+
+@pytest.fixture(autouse=True)
+def _mock_supports_reasoning() -> Generator[None, None, None]:
+    with patch("components.ad_detector.litellm.supports_reasoning", return_value=True):
+        yield
 
 
 @pytest.fixture
@@ -181,6 +188,32 @@ async def test_detect_segment_format_in_user_message(detector: AdDetector) -> No
     user_content = next(m["content"] for m in msgs if m["role"] == "user")
     assert "[0][0][4500]" in user_content
     assert "[1][4500][18000]" in user_content
+
+
+async def test_detect_passes_reasoning_effort_string_when_supported(detector: AdDetector) -> None:
+    mock_resp = _make_response()
+    with patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=mock_resp)) as mock_call:
+        await detector.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert mock_call.call_args.kwargs["reasoning_effort"] == "high"
+
+
+async def test_detect_omits_reasoning_when_model_unsupported(caplog: pytest.LogCaptureFixture) -> None:
+    mock_resp = _make_response()
+    with (
+        patch("components.ad_detector.litellm.supports_reasoning", return_value=False),
+        patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=mock_resp)) as mock_call,
+        caplog.at_level(logging.WARNING, logger="components.ad_detector"),
+    ):
+        await _make_detector().detect("ep-1", _SEGMENTS, _TOPIC)
+    assert mock_call.call_args.kwargs["reasoning_effort"] is None
+    assert any("does not support reasoning" in r.message for r in caplog.records)
+
+
+async def test_detect_does_not_pass_thinking_param(detector: AdDetector) -> None:
+    mock_resp = _make_response()
+    with patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=mock_resp)) as mock_call:
+        await detector.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert "thinking" not in mock_call.call_args.kwargs
 
 
 # ---------------------------------------------------------------------------

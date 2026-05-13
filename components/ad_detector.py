@@ -175,6 +175,11 @@ class AdDetector:
         self._api_key = api_key
         self._max_retries = max_retries
         self._context_window = context_window
+        self._reasoning_supported = litellm.supports_reasoning(self._model_id)
+        if not self._reasoning_supported:
+            logger.warning(
+                f"Model '{self._model_id}' does not support reasoning; reasoning will be disabled"
+            )
 
     def _get_context_window_limit(self) -> int:
         """Return the model's max input token count, falling back to 8192.
@@ -271,7 +276,7 @@ class AdDetector:
 
         """
         response_format = AdDetectionResponseSchema if use_schema else None
-        reasoning_effort = {"effort": "high", "summary": "auto"} if use_reasoning else None
+        reasoning_effort = "high" if use_reasoning else None
         try:
             return await litellm.acompletion(
                 model=self._model_id,
@@ -279,7 +284,6 @@ class AdDetector:
                 response_format=response_format,
                 api_key=self._api_key,
                 reasoning_effort=reasoning_effort,
-                thinking={"type": "enabled", "budget_tokens": 10000},
                 temperature=0.3,
                 drop_params=True
             )
@@ -350,7 +354,7 @@ class AdDetector:
         messages = self._build_messages(system_prompt, formatted)
         total_cost = 0.0
         use_schema = True
-        use_reasoning = True
+        use_reasoning = self._reasoning_supported
         single_index_retry_done = False
 
         for attempt in range(self._max_retries):
