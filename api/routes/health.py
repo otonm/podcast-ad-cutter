@@ -14,8 +14,19 @@ logger = logging.getLogger(__name__)
 
 
 def _read_version() -> str:
-    """Read the application version from package metadata or pyproject.toml (D-12)."""
-    raise NotImplementedError
+    """Read the application version from package metadata or pyproject.toml (D-12).
+
+    Tries importlib.metadata first (works when installed as a distribution).
+    Falls back to reading pyproject.toml directly via tomllib (works when
+    running from source without a [build-system] table).
+    """
+    try:
+        return importlib.metadata.version("podcast-ad-cutter")
+    except importlib.metadata.PackageNotFoundError:
+        pyproject = Path(__file__).parent.parent.parent / "pyproject.toml"
+        with pyproject.open("rb") as f:
+            data = tomllib.load(f)
+        return str(data["project"]["version"])
 
 
 def create_health_router(start_time: float) -> web.RouteTableDef:
@@ -28,4 +39,14 @@ def create_health_router(start_time: float) -> web.RouteTableDef:
         RouteTableDef with the health handler registered.
 
     """
-    raise NotImplementedError
+    routes = web.RouteTableDef()
+
+    @routes.get("/api/v1/health")
+    async def health(request: web.Request) -> web.Response:
+        return web.json_response({
+            "status": "ok",
+            "uptime_seconds": round(time.monotonic() - start_time, 2),
+            "version": _read_version(),
+        })
+
+    return routes

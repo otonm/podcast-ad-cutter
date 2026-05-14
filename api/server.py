@@ -27,15 +27,31 @@ def create_app(event_bus: EventBus, start_time: float) -> web.Application:
         Configured web.Application instance.
 
     """
-    raise NotImplementedError
+    app = web.Application()
+    app["event_bus"] = event_bus
+    app.add_routes(create_health_router(start_time))
+    return app
 
 
 async def serve(host: str, port: int) -> None:
     """Start the aiohttp server and keep it running until cancelled.
+
+    Uses AppRunner + TCPSite per CLAUDE.md mandate — web.run_app() is forbidden
+    because it blocks the asyncio event loop.
 
     Args:
         host: Host to bind to.
         port: Port to bind to.
 
     """
-    raise NotImplementedError
+    start_time = time.monotonic()
+    event_bus = EventBus()
+    app = create_app(event_bus, start_time)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host, port)
+    await site.start()
+    logger.info(f"API server listening on {host}:{port}")
+    # Block until cancelled — KeyboardInterrupt in main() → asyncio.run cancels all tasks
+    await asyncio.Event().wait()
+    await runner.cleanup()

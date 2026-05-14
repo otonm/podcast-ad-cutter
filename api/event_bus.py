@@ -49,12 +49,19 @@ class EventBus:
 
     def subscribe(self) -> asyncio.Queue[PipelineEvent]:
         """Create a new subscriber queue and return it."""
-        raise NotImplementedError
+        q: asyncio.Queue[PipelineEvent] = asyncio.Queue()
+        self._subscribers.append(q)
+        return q
 
     def unsubscribe(self, q: asyncio.Queue[PipelineEvent]) -> None:
         """Remove a subscriber queue."""
-        raise NotImplementedError
+        self._subscribers.remove(q)
 
     def emit(self, event: PipelineEvent) -> None:
-        """Broadcast event to all subscribers. Silent no-op if no subscribers (D-04)."""
-        raise NotImplementedError
+        """Broadcast event to all subscribers. Silent no-op if no subscribers (D-04).
+
+        Iterates over a snapshot of the subscriber list to avoid RuntimeError
+        if unsubscribe() is called concurrently during iteration (Pitfall 3).
+        """
+        for q in list(self._subscribers):
+            q.put_nowait(event)
