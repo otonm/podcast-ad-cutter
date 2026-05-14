@@ -345,21 +345,15 @@ class TestMain:
         mock_cfg.app.log.level = "INFO"
         mock_cfg.app.log.to_file = False
         mock_cfg.app.paths.log_dir = tmp_path
+        mock_serve = AsyncMock()
         with (
             patch("main.load_config", return_value=mock_cfg),
             patch("main.configure_logging"),
-            patch("main.serve") as mock_serve,
+            patch("main.serve", mock_serve),
             patch("main.Pipeline") as mock_pipeline_cls,
         ):
-            mock_serve.return_value = None
-            mock_serve.side_effect = None
-            mock_serve_coro = AsyncMock(return_value=None)
-            mock_serve.side_effect = mock_serve_coro.side_effect
-            # Patch serve as a coroutine function
-            mock_serve_coro2 = AsyncMock()
-            with patch("main.serve", mock_serve_coro2):
-                await main()
-        mock_serve_coro2.assert_awaited_once()
+            await main()
+        mock_serve.assert_awaited_once_with("0.0.0.0", 8080)
         mock_pipeline_cls.assert_not_called()
 
     async def test_no_serve_flag_runs_pipeline_not_serve(
