@@ -12,7 +12,7 @@ Brownfield milestone that adds a REST + SSE web API to an existing async Python 
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: API Foundation** - `--serve` flag starts aiohttp server; health check responds; EventBus and dual-mode entry are clean
+- [x] **Phase 1: API Foundation** - `--serve` flag starts aiohttp server; health check responds; EventBus and dual-mode entry are clean (completed 2026-05-14)
 - [ ] **Phase 2: SSE Progress Stream** - Connected SSE client receives live stage-transition and progress events while the pipeline runs
 - [ ] **Phase 3: Pipeline Control** - Client can start, stop, and inspect a pipeline run; per-feed and per-episode control works
 - [ ] **Phase 4: Config & Feed Management** - All settings and feed configuration can be read and modified via API; changes persist atomically
@@ -32,7 +32,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. An `EventBus` class exists that supports multiple concurrent subscriber queues and an `emit()` method
   4. `Pipeline` accepts an optional `EventBus` argument without breaking existing CLI behavior
 **Plans**: 1 plan
-- [ ] 01-01-PLAN.md — Walking Skeleton: dual-mode entry, idling aiohttp server, /api/v1/health, EventBus, Pipeline accepts optional EventBus
+- [x] 01-01-PLAN.md — Walking Skeleton: dual-mode entry, idling aiohttp server, /api/v1/health, EventBus, Pipeline accepts optional EventBus
 **UI hint**: no
 
 ### Phase 2: SSE Progress Stream
@@ -113,7 +113,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. API Foundation | 0/1 | Not started | - |
+| 1. API Foundation | 1/1 | Complete   | 2026-05-14 |
 | 2. SSE Progress Stream | 0/TBD | Not started | - |
 | 3. Pipeline Control | 0/TBD | Not started | - |
 | 4. Config & Feed Management | 0/TBD | Not started | - |

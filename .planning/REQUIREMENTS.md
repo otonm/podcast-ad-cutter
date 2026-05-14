@@ -7,8 +7,8 @@
 
 ### Infrastructure
 
-- [ ] **INFRA-01**: Server starts in API mode when `--serve` flag is passed to `main.py`; bare invocation still runs pipeline once and exits
-- [ ] **INFRA-02**: `GET /api/v1/health` returns 200 with server uptime and version
+- [x] **INFRA-01**: Server starts in API mode when `--serve` flag is passed to `main.py`; bare invocation still runs pipeline once and exits
+- [x] **INFRA-02**: `GET /api/v1/health` returns 200 with server uptime and version
 
 ### Pipeline Control
 
@@ -79,8 +79,8 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INFRA-01 | Phase 1 | Pending |
-| INFRA-02 | Phase 1 | Pending |
+| INFRA-01 | Phase 1 | Complete |
+| INFRA-02 | Phase 1 | Complete |
 | EVT-01 | Phase 2 | Pending |
 | STAT-01 | Phase 3 | Pending |
 | CTRL-01 | Phase 3 | Pending |
