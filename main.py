@@ -9,6 +9,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from api.server import serve
 from components.pipeline import Pipeline
 from config.config_loader import Config, load_config
 from utils.exceptions import ConfigError
@@ -57,6 +58,24 @@ def parse_args() -> argparse.Namespace:
         "--log-to-file",
         action="store_true",
         help="Write logs to a timestamped file inside logs/",
+    )
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="Start the HTTP API server instead of running the pipeline once. "
+        "Exposes the API on all interfaces by default (0.0.0.0); use --host to restrict.",
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="0.0.0.0",  # noqa: S104 — intentional; firewall is operator responsibility (T-01-01)
+        help="Host to bind the API server to (default: 0.0.0.0). Only applies with --serve.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="Port to bind the API server to (default: 8080). Only applies with --serve.",
     )
     return parser.parse_args()
 
@@ -160,6 +179,10 @@ async def main() -> None:
         rotate=cfg.app.log.rotate,
         keep_last=cfg.app.log.keep_last,
     )
+
+    if args.serve:
+        await serve(args.host, args.port)
+        return
 
     pipeline = Pipeline(cfg, feed_name=args.feed)
     try:

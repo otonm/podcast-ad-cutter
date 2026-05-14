@@ -1,4 +1,4 @@
-"""API server — AppRunner + TCPSite lifecycle (never web.run_app)."""
+"""API server — AppRunner + TCPSite lifecycle."""
 
 from __future__ import annotations
 
@@ -36,8 +36,8 @@ def create_app(event_bus: EventBus, start_time: float) -> web.Application:
 async def serve(host: str, port: int) -> None:
     """Start the aiohttp server and keep it running until cancelled.
 
-    Uses AppRunner + TCPSite per CLAUDE.md mandate — web.run_app() is forbidden
-    because it blocks the asyncio event loop.
+    Uses AppRunner + TCPSite per CLAUDE.md mandate — blocking server calls
+    are forbidden because they prevent sharing the asyncio event loop.
 
     Args:
         host: Host to bind to.

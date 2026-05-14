@@ -41,6 +41,7 @@ from utils.episode_log import close_episode_log, open_episode_log, rotate_episod
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from api.event_bus import EventBus
     from config.config_loader import Config, FeedConfig
 
 logger = logging.getLogger(__name__)
@@ -89,9 +90,16 @@ class Pipeline:
 
     """
 
-    def __init__(self, config: Config, feed_name: str | None = None) -> None:
+    def __init__(
+        self,
+        config: Config,
+        feed_name: str | None = None,
+        *,
+        event_bus: EventBus | None = None,
+    ) -> None:
         self._config = config
         self._feed_name = feed_name
+        self._event_bus = event_bus
         self._db_path: Path = config.app.paths.data_dir / "data.db"
 
         # ── Feed-level components ──────────────────────────────────────────────

@@ -8,7 +8,6 @@ import pytest
 
 from api.event_bus import EventBus, PipelineEvent, PipelineEventType
 
-
 # ---------------------------------------------------------------------------
 # PipelineEventType enum tests
 # ---------------------------------------------------------------------------
@@ -84,7 +83,7 @@ class TestEventBusUnsubscribe:
     async def test_unsubscribe_nonexistent_raises(self) -> None:
         bus = EventBus()
         q: asyncio.Queue[PipelineEvent] = asyncio.Queue()
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="x not in list"):
             bus.unsubscribe(q)
 
 

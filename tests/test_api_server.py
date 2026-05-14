@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from api.server import serve
 
-
 # ---------------------------------------------------------------------------
 # serve() lifecycle tests
 # ---------------------------------------------------------------------------

@@ -9,7 +9,6 @@ from aiohttp.test_utils import TestClient, TestServer
 from api.event_bus import EventBus
 from api.server import create_app
 
-
 # ---------------------------------------------------------------------------
 # Health endpoint tests
 # ---------------------------------------------------------------------------

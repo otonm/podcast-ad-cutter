@@ -42,7 +42,7 @@ def create_health_router(start_time: float) -> web.RouteTableDef:
     routes = web.RouteTableDef()
 
     @routes.get("/api/v1/health")
-    async def health(request: web.Request) -> web.Response:
+    async def health(_request: web.Request) -> web.Response:
         return web.json_response({
             "status": "ok",
             "uptime_seconds": round(time.monotonic() - start_time, 2),
