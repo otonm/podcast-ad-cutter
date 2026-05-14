@@ -25,9 +25,9 @@
 
 **Databases:**
 - SQLite (via `aiosqlite>=0.22.1`) — all persistence.
-  - Connection: `database/connection.py` (`DatabaseConnection` class)
+  - Connection: `database/connection.py` (`Database` async context manager)
   - Path: configured via `paths.data_dir` in `config.yaml`
-  - Tables: `episodes`, `transcriptions`, `transcription_segments`, `ads`, `topics`, `audio_metadata`, `cost_tracking`
+  - Tables: `episodes`, `transcriptions`, `transcription_segments`, `ad_segments`, `ad_detection_runs`, `topic_extractions`, `episode_audio_metadata`, `cost_tracking`
   - Store modules: `database/episode_store.py`, `database/transcription_store.py`, `database/ad_store.py`, `database/topic_store.py`, `database/audio_metadata_store.py`, `database/cost_tracking_store.py`
 
 **File Storage:**
@@ -38,7 +38,7 @@
   - `paths.log_dir` — application and per-episode log files.
 
 **Caching:**
-- No in-memory or distributed cache. Episode audio is cached as files in `paths.cache_dir`. SQLite stores all processed metadata to avoid redundant API calls.
+- No in-memory or distributed cache. Episode audio is cached as files in `paths.cache_dir`. SQLite stores all processed metadata to avoid redundant API calls on subsequent runs.
 
 ## Authentication & Identity
 
@@ -70,20 +70,27 @@
 **Outgoing RSS feed:**
 - `components/feed_publisher.py` writes an RSS 2.0 XML file to `paths.output_dir/{feed-slug}.rss`.
 - Feed `<enclosure>` URLs are constructed using `base_url` from `config.yaml` plus the relative audio file path.
-- No push/webhook — the caller is responsible for serving the output directory over HTTP (e.g. nginx, Python's `http.server`).
+- No push/webhook — the caller is responsible for serving the output directory over HTTP (e.g. nginx, `python -m http.server`).
 
-## Audio Processing (external binary)
+## Audio Processing (external binaries)
 
 **ffmpeg / ffprobe:**
 - Invoked as subprocesses via `utils/ffmpeg.py` and `components/audio_prober.py`.
 - `ffmpeg` — converts downloaded audio to mono AAC for transcription (`components/audio_preprocessor.py`), cuts ad segments and re-encodes output (`components/audio_editor.py`), chunks oversized audio files (`components/episode_transcriptor.py`).
 - `ffprobe` — reads audio duration and codec metadata (`components/audio_prober.py`).
-- No API key required; must be installed in `PATH`.
+- No API key required; must be installed in `PATH` (installed via apt in `Dockerfile`).
+
+## Scheduling (production)
+
+**supercronic v0.2.33:**
+- Runs `run.sh` on a cron schedule defined by the `CRON_SCHEDULE` env var (default `0 * * * *`).
+- Configured in `entrypoint.sh`; privilege-drop to `app` user via `gosu`.
+- Container image: `ghcr.io/otonm/podcast-ad-cutter:latest`.
 
 ## Monitoring & Observability
 
 **Error Tracking:**
-- None — no external error tracking service detected.
+- None — no external error tracking service (Sentry, Rollbar, etc.) detected.
 
 **Logs:**
 - Python `logging` module throughout.
@@ -94,10 +101,13 @@
 ## CI/CD & Deployment
 
 **Hosting:**
-- Not detected — no deployment config, Dockerfile, or CI pipeline files found.
+- Docker container, deployed to user's VPS. Image served from `ghcr.io/otonm/podcast-ad-cutter`.
+- `docker-compose.example.yml` documents the expected deployment layout with bind-mounted volumes for `/output`, `/data`, `/logs`, `/cache`, `/config`.
 
 **CI Pipeline:**
-- Not detected.
+- GitHub Actions (`.github/workflows/`) — builds and pushes the Docker image to `ghcr.io` on every push to `main` and on `workflow_dispatch`.
+- Tags: `latest` and `sha-<full-commit-sha>`.
+- Uses Docker layer caching via GitHub Actions cache (`cache-from: type=gha`).
 
 ## Webhooks & Callbacks
 
@@ -113,6 +123,10 @@
 - `GROQ_API_KEY` — required when any stage uses `provider: "groq"`
 - `OPENAI_API_KEY` — required when any stage uses `provider: "openai"`
 - `OPENROUTER_API_KEY` — required when any stage uses `provider: "openrouter"`
+
+**Container-only env vars:**
+- `CRON_SCHEDULE` — crontab expression for `supercronic` (default `0 * * * *`)
+- `APP_FEED`, `APP_MIN_CONFIDENCE`, `APP_FORCE_AI_DETECTION`, `APP_LOG_TO_FILE`, `APP_DEBUG` — optional CLI overrides passed through `run.sh`
 
 **Loading order:**
 1. `.env` file loaded via `python-dotenv` (`load_dotenv()` in `config/config_loader.py`)

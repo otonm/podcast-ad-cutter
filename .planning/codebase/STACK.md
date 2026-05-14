@@ -46,12 +46,14 @@
 **Infrastructure:**
 - `pyyaml>=6` — parses `config.yaml` at startup (`config/config_loader.py`).
 - `python-dotenv>=1` — loads `.env` before credentials are read (`config/config_loader.py`: `load_dotenv()`).
-- `python-slugify>=8` — generates URL-safe feed and episode slugs in `components/feed_publisher.py`.
+- `python-slugify>=8` — generates URL-safe feed and episode slugs in `components/pipeline.py` and `utils/episode_log.py`.
 
 ## System Dependencies (external binaries)
 
-- `ffmpeg` 7.1.3 — audio editing: cutting ad segments, re-encoding output, chunking oversized audio for transcription. Invoked as a subprocess by `utils/ffmpeg.py`.
-- `ffprobe` 7.1.3 — audio probing: reading duration and metadata. Used by `components/audio_prober.py`.
+- `ffmpeg` — audio editing: cutting ad segments, re-encoding output, chunking oversized audio for transcription. Invoked as a subprocess by `utils/ffmpeg.py`.
+- `ffprobe` — audio probing: reading duration and metadata. Used by `components/audio_prober.py`.
+- `supercronic` v0.2.33 (pinned) — cron scheduler inside the Docker container. Invoked from `entrypoint.sh`.
+- `gosu` — privilege-drop helper in the container (`entrypoint.sh` drops from root to `app` user).
 
 ## Configuration
 
@@ -80,10 +82,14 @@
 - Python 3.12+
 - uv package manager
 - `ffmpeg` and `ffprobe` in PATH
+- At least one LLM provider API key in `.env`
 
 **Production:**
-- Same as development — no containerisation or deployment config detected.
-- Output RSS feed is served externally (a `base_url` is configured; no built-in HTTP server).
+- Docker container: base image `ghcr.io/astral-sh/uv:python3.12-bookworm-slim` (Debian Bookworm slim)
+- System packages in container: `ffmpeg`, `curl`, `gosu` (installed via apt in `Dockerfile`)
+- `supercronic` v0.2.33 handles cron scheduling inside the container (`CRON_SCHEDULE` env var, default `0 * * * *`)
+- Published image: `ghcr.io/otonm/podcast-ad-cutter:latest` (pushed by GitHub Actions on every `main` push)
+- Output RSS feed served externally — no built-in HTTP server; `base_url` in `config.yaml` must point to the host serving `paths.output_dir`
 
 ---
 
