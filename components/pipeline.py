@@ -465,7 +465,9 @@ class Pipeline:
                         await stores.audio_metadata.save_all([meta])
 
                     if cut_ranges:
-                        assert meta is not None  # noqa: S101
+                        if meta is None:
+                            msg = f"Episode '{episode.guid}': expected audio metadata but got None"
+                            raise RuntimeError(msg)
                         output_path = await self._audio_editor.edit(
                             episode.guid,
                             raw_path,
@@ -538,6 +540,9 @@ class Pipeline:
                 # ── Guard 4: transcript exists → extract topic ─────────────────
                 if episode.guid in stores.transcribed_guids:
                     transcription_text = await stores.transcription.get_transcription_text(episode.guid)
+                    if transcription_text is None:
+                        msg = f"Episode '{episode.guid}': transcription row exists but text is None"
+                        raise RuntimeError(msg)
                     _, topic_obj, topic_cost = await self._topic_extractor.extract(
                         episode.guid,
                         feed.config_title,

@@ -3093,3 +3093,79 @@ async def test_trim_output_dir_deletes_unrecognized_filename_before_named_episod
 
     assert episode_file.exists()
     assert not unknown.exists(), "unrecognized filenames sort as oldest and must be trimmed"
+
+
+# ---------------------------------------------------------------------------
+# Concern fixes: null transcription text (High) & assert meta is not None (High)
+# ---------------------------------------------------------------------------
+
+
+async def test_guard4_does_not_call_topic_extractor_when_transcription_text_is_none(
+    tmp_path: Path,
+) -> None:
+    """Guard 4: when get_transcription_text returns None, topic extraction must not be attempted."""
+    config, ep, parsed = _branch_config(MagicMock())
+
+    with (
+        patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub,
+        patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts,
+        patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl,
+        patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans,
+        patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext,
+        patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector,
+        patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor,
+        patch(_PATCHES[18]) as m_episode_copier,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
+            episodes=[ep], parsed=parsed, transcribed_guids={"ep-1"},
+        )
+        # DB inconsistency: row exists but text is missing
+        m_ts.return_value.get_transcription_text = AsyncMock(return_value=None)
+        pipeline = Pipeline(config)
+        await pipeline.run()
+
+    # Topic extraction must not have been attempted when transcription text is None
+    m_topic_ext.return_value.extract.assert_not_called()
+
+
+async def test_guard2_logs_descriptive_error_when_probe_returns_none_and_cuts_exist(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Guard 2: RuntimeError with a descriptive message must be logged when meta is None but cuts exist."""
+    config, ep, parsed = _branch_config(MagicMock())
+
+    with (
+        patch(_PATCHES[0]) as m_dl, patch(_PATCHES[1]) as m_fp, patch(_PATCHES[2]) as m_pub,
+        patch(_PATCHES[3]) as m_db, patch(_PATCHES[4]) as m_store, patch(_PATCHES[5]) as m_ts,
+        patch(_PATCHES[6]) as m_ams, patch(_PATCHES[7]) as m_cs, patch(_PATCHES[8]) as m_ep_dl,
+        patch(_PATCHES[9]) as m_prober, patch(_PATCHES[10]) as m_prep, patch(_PATCHES[11]) as m_trans,
+        patch(_PATCHES[12]) as m_ad_store, patch(_PATCHES[13]) as m_topic_ext,
+        patch(_PATCHES[14]) as m_topic_store, patch(_PATCHES[15]) as m_ad_detector,
+        patch(_PATCHES[16]) as m_ad_parser, patch(_PATCHES[17]) as m_audio_editor,
+        patch(_PATCHES[18]) as m_episode_copier,
+    ):
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+            ad_segments=[_DEFAULT_AD_SEGMENT],
+        )
+        # Guard 2: ad detection cached, cuts are non-empty, probe returns None
+        m_ad_store.return_value.get_detected_guids = AsyncMock(return_value={"ep-1"})
+        m_ad_parser.return_value.parse = MagicMock(return_value=[_DEFAULT_CUT_RANGE])
+        m_prober.return_value.probe = AsyncMock(return_value=None)
+
+        pipeline = Pipeline(config)
+        with caplog.at_level(logging.ERROR, logger="components.pipeline"):
+            await pipeline.run()
+
+    # Must log RuntimeError with a descriptive message, not a bare AssertionError
+    assert any(
+        r.exc_info and isinstance(r.exc_info[1], RuntimeError)
+        and "audio metadata" in str(r.exc_info[1])
+        for r in caplog.records
+    ), "Expected a RuntimeError mentioning 'audio metadata' in the pipeline error log"

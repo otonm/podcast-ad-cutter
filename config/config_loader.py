@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from utils.exceptions import ConfigError
@@ -64,8 +65,16 @@ class AdDetectionConfig(BaseModel):
 class OutputConfig(BaseModel):
     """Settings for the processed audio output files."""
 
-    file_type: str
+    file_type: Literal["mp3", "m4a", "ogg", "opus", "flac"]
     bitrate: str
+
+    @field_validator("bitrate")
+    @classmethod
+    def _validate_bitrate(cls, v: str) -> str:
+        if not re.fullmatch(r"\d+k", v):
+            msg = f"bitrate must be in '<number>k' format (e.g. '128k'), got {v!r}"
+            raise ValueError(msg)
+        return v
 
 
 class LoggingConfig(BaseModel):

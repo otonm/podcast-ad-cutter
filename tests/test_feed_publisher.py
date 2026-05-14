@@ -1141,3 +1141,29 @@ async def test_update_episode_url_updates_length_attribute(
     enclosure = item.find("enclosure")
     assert enclosure is not None
     assert enclosure.get("length") == "9876543"
+
+
+async def test_update_episode_url_uses_atomic_rename(
+    tmp_path: Path, feed_input: PublisherInput
+) -> None:
+    """update_episode_url must write to a temp file then rename — never write directly to the .rss file."""
+    from pathlib import Path as _Path
+    from unittest.mock import patch as _patch
+
+    publisher = FeedPublisher(tmp_path)
+    await publisher.publish(feed_input)
+
+    renamed: list[tuple[_Path, _Path]] = []
+    original_replace = _Path.replace
+
+    def tracking_replace(self: _Path, target: _Path) -> _Path:  # type: ignore[override]
+        renamed.append((self, target))
+        return original_replace(self, target)
+
+    with _patch.object(_Path, "replace", tracking_replace):
+        await publisher.update_episode_url("My Podcast", "guid-1", "https://local/processed.mp3")
+
+    assert len(renamed) == 1, "must rename exactly one temp file to the final path"
+    src, dst = renamed[0]
+    assert str(src).endswith(".rss.tmp"), f"source must be a .rss.tmp file, got {src}"
+    assert str(dst).endswith(".rss"), f"destination must be the .rss file, got {dst}"

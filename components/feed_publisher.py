@@ -178,7 +178,9 @@ class FeedPublisher:
                 enclosure.set("length", str(length))
                 ET.indent(root, space="  ")
                 updated_xml = ET.tostring(root, encoding="unicode", xml_declaration=True)
-                await asyncio.to_thread(feed_path.write_text, updated_xml, encoding="utf-8")
+                tmp_path = feed_path.with_suffix(".rss.tmp")
+                await asyncio.to_thread(tmp_path.write_text, updated_xml, encoding="utf-8")
+                await asyncio.to_thread(tmp_path.replace, feed_path)
                 logger.info(f"Episode '{guid}': enclosure URL updated to {new_url!r} in {feed_path}")
                 return feed_path
 

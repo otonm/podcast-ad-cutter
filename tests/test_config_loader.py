@@ -212,3 +212,25 @@ def test_logging_config_per_episode_can_be_set_true(tmp_path, monkeypatch):
     with patch("config.config_loader.load_dotenv"):
         cfg = load_config(p)
     assert cfg.app.log.per_episode is True
+
+
+def test_invalid_file_type_raises_config_error(tmp_path: Path, monkeypatch) -> None:
+    """OutputConfig.file_type must reject values outside the allowed audio format set."""
+    bad_yaml = VALID_YAML.replace('file_type: "mp3"', 'file_type: "wav"')
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(bad_yaml)
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    with patch("config.config_loader.load_dotenv"):
+        with pytest.raises(ConfigError):
+            load_config(config_path)
+
+
+def test_invalid_bitrate_format_raises_config_error(tmp_path: Path, monkeypatch) -> None:
+    """OutputConfig.bitrate must reject values that are not in '<number>k' format."""
+    bad_yaml = VALID_YAML.replace('bitrate: "128k"', 'bitrate: "notvalid"')
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(bad_yaml)
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    with patch("config.config_loader.load_dotenv"):
+        with pytest.raises(ConfigError):
+            load_config(config_path)
