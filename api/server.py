@@ -49,9 +49,11 @@ async def serve(host: str, port: int) -> None:
     app = create_app(event_bus, start_time)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, host, port)
-    await site.start()
-    logger.info(f"API server listening on {host}:{port}")
-    # Block until cancelled — KeyboardInterrupt in main() → asyncio.run cancels all tasks
-    await asyncio.Event().wait()
-    await runner.cleanup()
+    try:
+        site = web.TCPSite(runner, host, port)
+        await site.start()
+        logger.info(f"API server listening on {host}:{port}")
+        # Block until cancelled — KeyboardInterrupt in main() → asyncio.run cancels all tasks
+        await asyncio.Event().wait()
+    finally:
+        await runner.cleanup()
