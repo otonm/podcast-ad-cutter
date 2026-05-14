@@ -31,7 +31,8 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. `GET /api/v1/health` returns HTTP 200 with a JSON body containing server uptime and application version
   3. An `EventBus` class exists that supports multiple concurrent subscriber queues and an `emit()` method
   4. `Pipeline` accepts an optional `EventBus` argument without breaking existing CLI behavior
-**Plans**: TBD
+**Plans**: 1 plan
+- [ ] 01-01-PLAN.md — Walking Skeleton: dual-mode entry, idling aiohttp server, /api/v1/health, EventBus, Pipeline accepts optional EventBus
 **UI hint**: no
 
 ### Phase 2: SSE Progress Stream
@@ -112,7 +113,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. API Foundation | 0/TBD | Not started | - |
+| 1. API Foundation | 0/1 | Not started | - |
 | 2. SSE Progress Stream | 0/TBD | Not started | - |
 | 3. Pipeline Control | 0/TBD | Not started | - |
 | 4. Config & Feed Management | 0/TBD | Not started | - |
