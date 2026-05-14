@@ -23,10 +23,14 @@ def _read_version() -> str:
     try:
         return importlib.metadata.version("podcast-ad-cutter")
     except importlib.metadata.PackageNotFoundError:
+        pass
+    try:
         pyproject = Path(__file__).parent.parent.parent / "pyproject.toml"
         with pyproject.open("rb") as f:
             data = tomllib.load(f)
         return str(data["project"]["version"])
+    except (FileNotFoundError, KeyError):
+        return "unknown"
 
 
 def create_health_router(start_time: float) -> web.RouteTableDef:
