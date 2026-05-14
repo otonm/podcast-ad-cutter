@@ -90,41 +90,30 @@ When composing the messages always use f-strings and never the modulo operator (
 
 ---
 
-<!-- code-review-graph MCP tools -->
-## MCP Tools: code-review-graph
+## GSD Workflow
 
-**IMPORTANT: This project has a knowledge graph. ALWAYS use the
-code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore
-the codebase.** The graph is faster, cheaper (fewer tokens), and gives
-you structural context (callers, dependents, test coverage) that file
-scanning cannot.
+This project uses the GSD planning workflow. Planning artifacts live in `.planning/`.
 
-### When to use graph tools FIRST
+**Current milestone:** Web API (6 phases)
+**State:** `.planning/STATE.md`
+**Roadmap:** `.planning/ROADMAP.md`
 
-- **Exploring code**: `semantic_search_nodes` or `query_graph` instead of Grep
-- **Understanding impact**: `get_impact_radius` instead of manually tracing imports
-- **Code review**: `detect_changes` + `get_review_context` instead of reading entire files
-- **Finding relationships**: `query_graph` with callers_of/callees_of/imports_of/tests_for
-- **Architecture questions**: `get_architecture_overview` + `list_communities`
+### Phase execution order
 
-Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
+Work through phases sequentially: 1 → 2 → 3 → 4 → 5 → 6
 
-### Key Tools
+```
+/gsd-discuss-phase N    # gather context before planning
+/gsd-plan-phase N       # create execution plan
+/gsd-execute-phase N    # execute the plan
+/gsd-verify-work N      # verify phase deliverables
+```
 
-| Tool | Use when |
-|------|----------|
-| `detect_changes` | Reviewing code changes — gives risk-scored analysis |
-| `get_review_context` | Need source snippets for review — token-efficient |
-| `get_impact_radius` | Understanding blast radius of a change |
-| `get_affected_flows` | Finding which execution paths are impacted |
-| `query_graph` | Tracing callers, callees, imports, tests, dependencies |
-| `semantic_search_nodes` | Finding functions/classes by name or keyword |
-| `get_architecture_overview` | Understanding high-level codebase structure |
-| `refactor_tool` | Planning renames, finding dead code |
+### Constraints (from research)
 
-### Workflow
+- **Never share the aiosqlite connection** between the pipeline and API read handlers — open a dedicated read-only connection with WAL mode in the API layer
+- **Never use `web.run_app()`** — it is blocking; use `AppRunner` + `TCPSite` instead
+- **Config writes must be atomic** — validate through Pydantic first, write to temp file, use `os.replace()` for the swap
+- **SSE disconnect handling** — always unregister the subscriber queue in a `finally` block
 
-1. The graph auto-updates on file changes (via hooks).
-2. Use `detect_changes` for code review.
-3. Use `get_affected_flows` to understand impact.
-4. Use `query_graph` pattern="tests_for" to check coverage.
+---
