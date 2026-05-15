@@ -3319,3 +3319,82 @@ async def test_run_started_before_episode_events_run_completed_last() -> None:
         if t in episode_event_types:
             assert i > run_started_idx
             assert i < run_completed_idx
+
+
+# ---------------------------------------------------------------------------
+# EPISODE_STAGE_CHANGED tests (02-01-05)
+# ---------------------------------------------------------------------------
+
+
+async def _run_full_pipeline_with_bus(mock_bus: MagicMock) -> list[MagicMock]:
+    """Run a full Branch D pipeline (all stages fire) with an event bus.
+
+    Returns mock_bus.emit.call_args_list for inspection.
+    """
+    config, ep, parsed = _branch_config(MagicMock())
+    with contextlib.ExitStack() as stack:
+        mocks = [stack.enter_context(patch(p)) for p in _ALL_BRANCH_PATCHES]
+        (m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+         m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
+         m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
+         m_episode_copier) = mocks
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+            ad_segments=[_DEFAULT_AD_SEGMENT],
+        )
+        # Make ad-detect produce qualifying cuts so the "edit" stage fires.
+        m_ad_parser.return_value.parse = MagicMock(return_value=[_DEFAULT_CUT_RANGE])
+        out_path = MagicMock()
+        out_path.stat.return_value.st_size = 2048
+        m_audio_editor.return_value.edit = AsyncMock(return_value=out_path)
+        pipeline = Pipeline(config, event_bus=mock_bus)
+        await pipeline.run()
+    return mock_bus.emit.call_args_list
+
+
+def _stage_events(call_args_list: list, stage: str) -> list[PipelineEvent]:
+    return [
+        c[0][0] for c in call_args_list
+        if c[0][0].type == PipelineEventType.EPISODE_STAGE_CHANGED
+        and c[0][0].payload.get("stage") == stage
+    ]
+
+
+@pytest.mark.parametrize("stage", ["download", "preprocess", "transcribe", "topic", "ad-detect", "edit"])
+async def test_stage_changed_emits_started_then_completed(stage: str) -> None:
+    mock_bus = MagicMock(spec=EventBus)
+    calls = await _run_full_pipeline_with_bus(mock_bus)
+    events = _stage_events(calls, stage)
+    statuses = [e.payload["status"] for e in events]
+    assert statuses == ["started", "completed"], f"stage={stage}: expected ['started','completed'], got {statuses}"
+
+
+@pytest.mark.parametrize("stage", ["download", "preprocess", "transcribe", "topic", "ad-detect", "edit"])
+async def test_stage_changed_payload_has_required_keys(stage: str) -> None:
+    mock_bus = MagicMock(spec=EventBus)
+    calls = await _run_full_pipeline_with_bus(mock_bus)
+    events = _stage_events(calls, stage)
+    for event in events:
+        assert set(event.payload.keys()) == {"guid", "stage", "status", "feed_slug"}, (
+            f"stage={stage}: missing keys in payload {event.payload}"
+        )
+
+
+async def test_stage_changed_guard1_output_exists_no_stage_emits(tmp_path: Path) -> None:
+    """Guard 1 (output file exists) must not emit any EPISODE_STAGE_CHANGED events."""
+    audio_file = tmp_path / "my-podcast" / "22.03.2026-my-episode.mp3"
+    audio_file.parent.mkdir(parents=True)
+    audio_file.write_bytes(b"audio")
+
+    config, ep, parsed = _branch_config(tmp_path)
+    mock_bus = MagicMock(spec=EventBus)
+    await _run_with_event_bus(config, ep, parsed, mock_bus, transcribed_guids={"ep-1"})
+
+    stage_events = [
+        c[0][0] for c in mock_bus.emit.call_args_list
+        if c[0][0].type == PipelineEventType.EPISODE_STAGE_CHANGED
+    ]
+    assert stage_events == [], f"Expected no stage events for Guard 1 path, got {stage_events}"
