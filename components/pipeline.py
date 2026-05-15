@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 
 from slugify import slugify
 
+from api.event_bus import PipelineEvent, PipelineEventType
+
 # ── Component imports ──────────────────────────────────────────────────────────
 from components.ad_detector import AdDetector
 from components.ad_parser import AdParser
@@ -37,8 +39,6 @@ from database.transcription_store import TranscriptionStore
 from models.ad_detection import AdSegment
 from models.feed import AudioMetadata, Episode, FeedParseInput, ParsedFeed, PublisherInput
 from utils.episode_log import close_episode_log, open_episode_log, rotate_episode_logs
-
-from api.event_bus import PipelineEvent, PipelineEventType
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -160,7 +160,7 @@ class Pipeline:
 
     # ── Public entry point ─────────────────────────────────────────────────────
 
-    async def run(self) -> list[ParsedFeed]:
+    async def run(self) -> list[ParsedFeed]:  # noqa: C901, PLR0912
         """Execute the pipeline for the selected feeds.
 
         High-level flow:

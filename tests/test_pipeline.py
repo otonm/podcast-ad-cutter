@@ -3439,7 +3439,7 @@ async def test_download_progress_event_emitted_with_correct_payload() -> None:
         if c[0][0].type == PipelineEventType.DOWNLOAD_PROGRESS
     ]
     assert len(dl_events) == len(progress_ticks), f"Expected {len(progress_ticks)} DOWNLOAD_PROGRESS events"
-    for event, expected_pct in zip(dl_events, progress_ticks):
+    for event, expected_pct in zip(dl_events, progress_ticks, strict=True):
         assert set(event.payload.keys()) == {"guid", "feed_slug", "percent"}
         assert event.payload["percent"] == expected_pct
         assert event.payload["guid"] == ep.guid
@@ -3509,7 +3509,7 @@ async def test_encode_progress_event_emitted_with_correct_payload() -> None:
         if c[0][0].type == PipelineEventType.ENCODE_PROGRESS
     ]
     assert len(enc_events) == len(progress_ticks), f"Expected {len(progress_ticks)} ENCODE_PROGRESS events"
-    for event, expected_pct in zip(enc_events, progress_ticks):
+    for event, expected_pct in zip(enc_events, progress_ticks, strict=True):
         assert set(event.payload.keys()) == {"guid", "feed_slug", "percent"}
         assert event.payload["percent"] == expected_pct
         assert event.payload["guid"] == ep.guid
