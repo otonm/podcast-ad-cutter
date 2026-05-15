@@ -493,16 +493,19 @@ class Pipeline:
                             or episode.source_url
                             or episode.url
                         )
+                        self._emit_stage(episode.guid, "download", "started", feed_slug)
                         raw_path = await self._episode_downloader.download(
                             episode.guid, download_url, on_progress=self._on_download_progress
                         )
                         meta = await self._audio_prober.probe(episode.guid, raw_path)
                         await stores.audio_metadata.save_all([meta])
+                        self._emit_stage(episode.guid, "download", "completed", feed_slug)
 
                     if cut_ranges:
                         if meta is None:
                             msg = f"Episode '{episode.guid}': expected audio metadata but got None"
                             raise RuntimeError(msg)
+                        self._emit_stage(episode.guid, "edit", "started", feed_slug)
                         output_path = await self._audio_editor.edit(
                             episode.guid,
                             raw_path,
@@ -522,6 +525,7 @@ class Pipeline:
                             await self._feed_publisher.update_episode_url(
                                 feed.title, episode.guid, new_url, file_size
                             )
+                            self._emit_stage(episode.guid, "edit", "completed", feed_slug)
                             return
 
                     # No qualifying cuts (or all audio classified as ads) — copy original.
@@ -550,6 +554,7 @@ class Pipeline:
                         f"{'available' if topic else 'unavailable'}"
                     )
                     segment_map = dict(enumerate(t_segments))
+                    self._emit_stage(episode.guid, "ad-detect", "started", feed_slug)
                     _, detections, ad_cost = await self._ad_detector.detect(
                         episode.guid, t_segments, topic
                     )
@@ -570,6 +575,7 @@ class Pipeline:
                     await stores.ad.mark_detected(episode.guid)
                     await stores.cost.save_cost(ad_cost)
                     stores.ad_detected_guids.add(episode.guid)
+                    self._emit_stage(episode.guid, "ad-detect", "completed", feed_slug)
                     continue
 
                 # ── Guard 4: transcript exists → extract topic ─────────────────
@@ -578,6 +584,7 @@ class Pipeline:
                     if transcription_text is None:
                         msg = f"Episode '{episode.guid}': transcription row exists but text is None"
                         raise RuntimeError(msg)
+                    self._emit_stage(episode.guid, "topic", "started", feed_slug)
                     _, topic_obj, topic_cost = await self._topic_extractor.extract(
                         episode.guid,
                         feed.config_title,
@@ -589,6 +596,7 @@ class Pipeline:
                     await stores.topic.save_topic(topic_obj)
                     await stores.cost.save_cost(topic_cost)
                     stores.extracted_guids.add(episode.guid)
+                    self._emit_stage(episode.guid, "topic", "completed", feed_slug)
                     continue
 
                 # ── Guard 5: audio on disk → probe + preprocess + transcribe ───
@@ -606,9 +614,12 @@ class Pipeline:
                         )
                     meta = await self._audio_prober.probe(episode.guid, raw_path)
                     await stores.audio_metadata.save_all([meta])
+                    self._emit_stage(episode.guid, "preprocess", "started", feed_slug)
                     mono_path = await self._audio_preprocessor.preprocess(
                         episode.guid, raw_path, meta.duration, on_progress=self._on_preprocess_progress
                     )
+                    self._emit_stage(episode.guid, "preprocess", "completed", feed_slug)
+                    self._emit_stage(episode.guid, "transcribe", "started", feed_slug)
                     try:
                         _, transcription, t_segments, cost = await self._transcriptor.transcribe(
                             episode.guid, mono_path
@@ -620,6 +631,7 @@ class Pipeline:
                     await stores.transcription.save_segments(t_segments)
                     await stores.cost.save_cost(cost)
                     stores.transcribed_guids.add(episode.guid)
+                    self._emit_stage(episode.guid, "transcribe", "completed", feed_slug)
                     continue
 
                 # ── Bottom: no audio yet → download ───────────────────────────
@@ -627,15 +639,26 @@ class Pipeline:
                 # over the potentially stale URL stored in the database.
                 logger.info(f"Episode '{episode.guid}' is new")
                 url = fresh_urls.get(episode.guid, episode.url)
+                self._emit_stage(episode.guid, "download", "started", feed_slug)
                 raw_path = await self._episode_downloader.download(
                     episode.guid, url, on_progress=self._on_download_progress
                 )
+                self._emit_stage(episode.guid, "download", "completed", feed_slug)
                 # Next iteration → guard 5 fires.
 
         finally:
             if raw_path is not None:
                 raw_path.unlink(missing_ok=True)
                 logger.debug(f"Episode '{episode.guid}': removed cached audio {raw_path}")
+
+    # ── Event helpers ─────────────────────────────────────────────────────────
+
+    def _emit_stage(self, guid: str, stage: str, status: str, feed_slug: str) -> None:
+        if self._event_bus is not None:
+            self._event_bus.emit(PipelineEvent(
+                type=PipelineEventType.EPISODE_STAGE_CHANGED,
+                payload={"guid": guid, "stage": stage, "status": status, "feed_slug": feed_slug},
+            ))
 
     # ── Progress callbacks ─────────────────────────────────────────────────────
 
