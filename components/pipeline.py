@@ -256,15 +256,41 @@ class Pipeline:
                             file_level=self._log_file_level,
                         )
                     try:
-                        await self._process_episode_until_final(
+                        outcome = await self._process_episode_until_final(
                             episode=episode,
                             feed=feed,
                             feed_slug=feed_slug,
                             output_feed_dir=output_feed_dir,
                             stores=stores,
                         )
-                    except Exception:
+                        stores.episodes_done += 1
+                        if self._event_bus is not None:
+                            self._event_bus.emit(PipelineEvent(
+                                type=PipelineEventType.EPISODE_COMPLETED,
+                                payload={
+                                    "guid": episode.guid,
+                                    "feed_slug": feed_slug,
+                                    "outcome": outcome,
+                                    "feed_done": stores.episodes_done,
+                                    "feed_failed": stores.episodes_failed,
+                                    "feed_total": stores.episodes_total,
+                                },
+                            ))
+                    except Exception as exc:
                         logger.exception(f"Episode '{episode.guid}': error, skipping")
+                        stores.episodes_failed += 1
+                        if self._event_bus is not None:
+                            self._event_bus.emit(PipelineEvent(
+                                type=PipelineEventType.EPISODE_FAILED,
+                                payload={
+                                    "guid": episode.guid,
+                                    "feed_slug": feed_slug,
+                                    "error": str(exc),
+                                    "feed_done": stores.episodes_done,
+                                    "feed_failed": stores.episodes_failed,
+                                    "feed_total": stores.episodes_total,
+                                },
+                            ))
                     finally:
                         if handler is not None:
                             close_episode_log(handler)
@@ -481,7 +507,7 @@ class Pipeline:
                     file_size = existing_audio.stat().st_size
                     await stores.episode.update_episode_url(episode.guid, new_url, file_size)
                     await self._feed_publisher.update_episode_url(feed.title, episode.guid, new_url, file_size)
-                    return
+                    return "skipped"
 
                 # ── Guard 2: ad detection result cached → export audio ─────────
                 if episode.guid in stores.ad_detected_guids:
@@ -542,7 +568,7 @@ class Pipeline:
                                 feed.title, episode.guid, new_url, file_size
                             )
                             self._emit_stage(episode.guid, "edit", "completed", feed_slug)
-                            return
+                            return "edited"
 
                     # No qualifying cuts (or all audio classified as ads) — copy original.
                     logger.info(
@@ -556,7 +582,7 @@ class Pipeline:
                     await self._feed_publisher.update_episode_url(
                         feed.title, episode.guid, new_url, file_size
                     )
-                    return
+                    return "copied"
 
                 # ── Guard 3: topic extracted → run ad detection ────────────────
                 if episode.guid in stores.extracted_guids:
