@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from api.event_bus import EventBus, PipelineEvent, PipelineEventType
 from components.pipeline import Pipeline, _Stores
 from config.config_loader import FeedConfig
 from models.ad_detection import AdDetectionCost, AdSegment, AdSegmentDetection, CutRange
@@ -3211,3 +3212,110 @@ def test_stores_episodes_failed_defaults_to_zero() -> None:
 def test_stores_episodes_total_is_required() -> None:
     with pytest.raises(TypeError):
         _Stores(**_make_stores_kwargs())  # episodes_total missing
+
+
+# ---------------------------------------------------------------------------
+# RUN_STARTED / RUN_COMPLETED event tests (02-01-03)
+# ---------------------------------------------------------------------------
+
+_ALL_BRANCH_PATCHES = [
+    "components.pipeline.FeedDownloader",
+    "components.pipeline.FeedParser",
+    "components.pipeline.FeedPublisher",
+    "components.pipeline.Database",
+    "components.pipeline.EpisodeStore",
+    "components.pipeline.TranscriptionStore",
+    "components.pipeline.AudioMetadataStore",
+    "components.pipeline.CostTrackingStore",
+    "components.pipeline.EpisodeDownloader",
+    "components.pipeline.AudioProber",
+    "components.pipeline.AudioPreprocessor",
+    "components.pipeline.EpisodeTranscriptor",
+    "components.pipeline.AdStore",
+    "components.pipeline.TopicExtractor",
+    "components.pipeline.TopicStore",
+    "components.pipeline.AdDetector",
+    "components.pipeline.AdParser",
+    "components.pipeline.AudioEditor",
+    "components.pipeline.EpisodeCopier",
+]
+
+
+def _run_all_patches() -> contextlib.AbstractContextManager:
+    return contextlib.ExitStack()
+
+
+async def _run_with_event_bus(
+    config: MagicMock,
+    ep: Episode,
+    parsed: ParsedFeed,
+    mock_bus: MagicMock,
+    *,
+    transcribed_guids: set[str] | None = None,
+) -> None:
+    """Run the pipeline with all branch mocks wired and an injected event bus."""
+    with contextlib.ExitStack() as stack:
+        mocks = [stack.enter_context(patch(p)) for p in _ALL_BRANCH_PATCHES]
+        (m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+         m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
+         m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
+         m_episode_copier) = mocks
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
+            episodes=[ep], parsed=parsed, transcribed_guids=transcribed_guids or set(),
+        )
+        pipeline = Pipeline(config, event_bus=mock_bus)
+        await pipeline.run()
+
+
+async def test_run_started_emitted_with_feeds_and_total_episodes() -> None:
+    config, ep, parsed = _branch_config(MagicMock())
+    mock_bus = MagicMock(spec=EventBus)
+    await _run_with_event_bus(config, ep, parsed, mock_bus)
+
+    emitted_types = [call_args[0][0].type for call_args in mock_bus.emit.call_args_list]
+    assert PipelineEventType.RUN_STARTED in emitted_types
+
+    run_started_event = next(
+        call_args[0][0]
+        for call_args in mock_bus.emit.call_args_list
+        if call_args[0][0].type == PipelineEventType.RUN_STARTED
+    )
+    assert set(run_started_event.payload.keys()) == {"feeds", "total_episodes"}
+    assert isinstance(run_started_event.payload["feeds"], list)
+    assert isinstance(run_started_event.payload["total_episodes"], int)
+
+
+async def test_run_completed_emitted_last_with_feeds_key() -> None:
+    config, ep, parsed = _branch_config(MagicMock())
+    mock_bus = MagicMock(spec=EventBus)
+    await _run_with_event_bus(config, ep, parsed, mock_bus)
+
+    assert mock_bus.emit.called
+    last_event: PipelineEvent = mock_bus.emit.call_args_list[-1][0][0]
+    assert last_event.type == PipelineEventType.RUN_COMPLETED
+    assert "feeds" in last_event.payload
+
+
+async def test_run_started_before_episode_events_run_completed_last() -> None:
+    config, ep, parsed = _branch_config(MagicMock())
+    mock_bus = MagicMock(spec=EventBus)
+    await _run_with_event_bus(config, ep, parsed, mock_bus)
+
+    types = [c[0][0].type for c in mock_bus.emit.call_args_list]
+    episode_event_types = {
+        PipelineEventType.EPISODE_COMPLETED,
+        PipelineEventType.EPISODE_FAILED,
+        PipelineEventType.EPISODE_STAGE_CHANGED,
+        PipelineEventType.DOWNLOAD_PROGRESS,
+        PipelineEventType.ENCODE_PROGRESS,
+    }
+    run_started_idx = types.index(PipelineEventType.RUN_STARTED)
+    run_completed_idx = len(types) - 1
+    assert types[run_completed_idx] == PipelineEventType.RUN_COMPLETED
+    for i, t in enumerate(types):
+        if t in episode_event_types:
+            assert i > run_started_idx
+            assert i < run_completed_idx
