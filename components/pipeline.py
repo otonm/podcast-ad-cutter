@@ -38,6 +38,8 @@ from models.ad_detection import AdSegment
 from models.feed import AudioMetadata, Episode, FeedParseInput, ParsedFeed, PublisherInput
 from utils.episode_log import close_episode_log, open_episode_log, rotate_episode_logs
 
+from api.event_bus import PipelineEvent, PipelineEventType
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -189,17 +191,32 @@ class Pipeline:
         async with Database(self._db_path) as db:
             store = EpisodeStore(db.conn)
 
+            # Pre-count pass: save all episodes and fetch episode lists to compute total.
+            for feed in parsed_feeds:
+                await store.save_episodes(feed.config_title, feed.episodes)
+            feed_episodes_map: dict[str, list] = {
+                feed.config_title: list(await store.get_episodes_for_feed(
+                    feed.config_title, feed_cfg_map[feed.config_title].episodes_to_keep
+                ))
+                for feed in parsed_feeds
+            }
+            total_episodes = sum(len(v) for v in feed_episodes_map.values())
+            if self._event_bus is not None:
+                self._event_bus.emit(PipelineEvent(
+                    type=PipelineEventType.RUN_STARTED,
+                    payload={
+                        "feeds": [feed.config_title for feed in parsed_feeds],
+                        "total_episodes": total_episodes,
+                    },
+                ))
+
             for feed in parsed_feeds:
                 cfg = feed_cfg_map[feed.config_title]
                 feed_slug = slugify(feed.title)
                 output_feed_dir = self._config.app.paths.output_dir / feed_slug
 
-                # ── Persist new episodes and publish RSS ───────────────────────
-                await store.save_episodes(feed.config_title, feed.episodes)
-
-                episodes = list(await store.get_episodes_for_feed(
-                    feed.config_title, cfg.episodes_to_keep
-                ))
+                # ── Publish RSS ────────────────────────────────────────────────
+                episodes = feed_episodes_map[feed.config_title]
 
                 output_path = await self._publish_feed(feed, episodes)
                 logger.info(f"Feed '{feed.config_title}' published to {output_path}")
@@ -256,6 +273,12 @@ class Pipeline:
 
                 # ── Trim output folder to episodes_to_keep ────────────────────
                 await self._trim_output_dir(output_feed_dir, cfg.episodes_to_keep)
+
+            if self._event_bus is not None:
+                self._event_bus.emit(PipelineEvent(
+                    type=PipelineEventType.RUN_COMPLETED,
+                    payload={"feeds": [feed.config_title for feed in parsed_feeds]},
+                ))
 
         return parsed_feeds
 
