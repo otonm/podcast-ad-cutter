@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import TYPE_CHECKING
 
 from aiohttp import web
 
-from api.event_bus import EventBus
+if TYPE_CHECKING:
+    from api.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 
