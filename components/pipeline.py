@@ -444,6 +444,22 @@ class Pipeline:
 
         fresh_urls = {ep.guid: ep.url for ep in feed.episodes}
 
+        async def _on_dl_progress(guid: str, percent: float) -> None:
+            await self._on_download_progress(guid, percent)
+            if self._event_bus is not None:
+                self._event_bus.emit(PipelineEvent(
+                    type=PipelineEventType.DOWNLOAD_PROGRESS,
+                    payload={"guid": guid, "feed_slug": feed_slug, "percent": percent},
+                ))
+
+        async def _on_pp_progress(guid: str, percent: float) -> None:
+            await self._on_preprocess_progress(guid, percent)
+            if self._event_bus is not None:
+                self._event_bus.emit(PipelineEvent(
+                    type=PipelineEventType.ENCODE_PROGRESS,
+                    payload={"guid": guid, "feed_slug": feed_slug, "percent": percent},
+                ))
+
         try:
             while True:
 
@@ -495,7 +511,7 @@ class Pipeline:
                         )
                         self._emit_stage(episode.guid, "download", "started", feed_slug)
                         raw_path = await self._episode_downloader.download(
-                            episode.guid, download_url, on_progress=self._on_download_progress
+                            episode.guid, download_url, on_progress=_on_dl_progress
                         )
                         meta = await self._audio_prober.probe(episode.guid, raw_path)
                         await stores.audio_metadata.save_all([meta])
@@ -616,7 +632,7 @@ class Pipeline:
                     await stores.audio_metadata.save_all([meta])
                     self._emit_stage(episode.guid, "preprocess", "started", feed_slug)
                     mono_path = await self._audio_preprocessor.preprocess(
-                        episode.guid, raw_path, meta.duration, on_progress=self._on_preprocess_progress
+                        episode.guid, raw_path, meta.duration, on_progress=_on_pp_progress
                     )
                     self._emit_stage(episode.guid, "preprocess", "completed", feed_slug)
                     self._emit_stage(episode.guid, "transcribe", "started", feed_slug)
@@ -641,7 +657,7 @@ class Pipeline:
                 url = fresh_urls.get(episode.guid, episode.url)
                 self._emit_stage(episode.guid, "download", "started", feed_slug)
                 raw_path = await self._episode_downloader.download(
-                    episode.guid, url, on_progress=self._on_download_progress
+                    episode.guid, url, on_progress=_on_dl_progress
                 )
                 self._emit_stage(episode.guid, "download", "completed", feed_slug)
                 # Next iteration → guard 5 fires.

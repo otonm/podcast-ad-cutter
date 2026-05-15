@@ -6,7 +6,7 @@ import contextlib
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -1029,7 +1029,7 @@ async def test_branch_b_transcription_exists_no_audio_redownloads_and_copies(
         await pipeline.run()
 
     m_ep_dl.return_value.download.assert_awaited_once_with(
-        "ep-1", "https://example.com/ep.mp3", on_progress=pipeline._on_download_progress
+        "ep-1", "https://example.com/ep.mp3", on_progress=ANY
     )
     m_prober.return_value.probe.assert_awaited_once()
     m_ams.return_value.save_all.assert_awaited_once()
@@ -1084,7 +1084,7 @@ async def test_branch_c_audio_exists_no_transcription_transcribes_from_output(
     m_ep_dl.return_value.download.assert_not_called()
     m_prober.return_value.probe.assert_awaited_once_with("ep-1", cached_file)
     m_prep.return_value.preprocess.assert_awaited_once_with(
-        "ep-1", cached_file, 60.0, on_progress=pipeline._on_preprocess_progress
+        "ep-1", cached_file, 60.0, on_progress=ANY
     )
     m_trans.return_value.transcribe.assert_awaited_once()
     m_ts.return_value.save_transcription.assert_awaited_once()
@@ -1204,7 +1204,7 @@ async def test_download_uses_fresh_feed_url_over_stale_db_url() -> None:
         await pipeline.run()
 
     m_ep_dl.return_value.download.assert_awaited_once_with(
-        "ep-1", fresh_url, on_progress=pipeline._on_download_progress
+        "ep-1", fresh_url, on_progress=ANY
     )
 
 
