@@ -69,7 +69,9 @@ class TestSSEEventDelivery:
         async with TestClient(TestServer(app)) as client:
             async with client.get("/api/v1/events"):
                 pass
-            await asyncio.sleep(0)
+            # Allow the handler task to observe cancellation and run the finally block.
+            for _ in range(10):
+                await asyncio.sleep(0)
             assert len(bus._subscribers) == 0
 
     async def test_events_route_supports_multiple_concurrent_clients(self) -> None:

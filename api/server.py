@@ -9,6 +9,7 @@ import time
 from aiohttp import web
 
 from api.event_bus import EventBus
+from api.routes.events import create_events_router
 from api.routes.health import create_health_router
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,7 @@ def create_app(event_bus: EventBus, start_time: float) -> web.Application:
     app = web.Application()
     app["event_bus"] = event_bus
     app.add_routes(create_health_router(start_time))
+    app.add_routes(create_events_router(event_bus))
     return app
 
 
