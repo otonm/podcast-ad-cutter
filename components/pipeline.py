@@ -66,6 +66,9 @@ class _Stores:
     transcribed_guids: set[str]   # mutated per episode; shared across all episodes in feed
     extracted_guids: set[str]
     ad_detected_guids: set[str]
+    episodes_total: int
+    episodes_done: int = 0
+    episodes_failed: int = 0
 
 
 # ── Pipeline ───────────────────────────────────────────────────────────────────
@@ -220,6 +223,7 @@ class Pipeline:
                     transcribed_guids=await t_store.get_transcribed_guids(),
                     extracted_guids=await topic_store.get_extracted_guids(),
                     ad_detected_guids=ad_detected_guids,
+                    episodes_total=len(episodes),
                 )
 
                 # ── Phase 3: Per-episode processing ───────────────────────────
