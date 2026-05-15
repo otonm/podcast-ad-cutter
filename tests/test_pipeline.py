@@ -3513,3 +3513,108 @@ async def test_encode_progress_event_emitted_with_correct_payload() -> None:
         assert set(event.payload.keys()) == {"guid", "feed_slug", "percent"}
         assert event.payload["percent"] == expected_pct
         assert event.payload["guid"] == ep.guid
+
+
+# ---------------------------------------------------------------------------
+# EPISODE_COMPLETED / EPISODE_FAILED tests (02-01-09)
+# ---------------------------------------------------------------------------
+
+
+async def test_episode_completed_event_emitted_with_correct_payload() -> None:
+    config, ep, parsed = _branch_config(MagicMock())
+    mock_bus = MagicMock(spec=EventBus)
+    await _run_with_event_bus(config, ep, parsed, mock_bus)
+
+    completed = [
+        c[0][0] for c in mock_bus.emit.call_args_list
+        if c[0][0].type == PipelineEventType.EPISODE_COMPLETED
+    ]
+    assert len(completed) == 1
+    payload = completed[0].payload
+    assert set(payload.keys()) == {"guid", "feed_slug", "outcome", "feed_done", "feed_failed", "feed_total"}
+    assert payload["guid"] == ep.guid
+    assert payload["feed_done"] == 1
+    assert payload["feed_failed"] == 0
+    assert payload["feed_total"] == 1
+
+
+async def test_episode_failed_event_emitted_on_exception() -> None:
+    config, ep, parsed = _branch_config(MagicMock())
+    mock_bus = MagicMock(spec=EventBus)
+
+    with contextlib.ExitStack() as stack:
+        mocks = [stack.enter_context(patch(p)) for p in _ALL_BRANCH_PATCHES]
+        (m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+         m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
+         m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
+         m_episode_copier) = mocks
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        m_ep_dl.return_value.download = AsyncMock(side_effect=RuntimeError("download failed"))
+        pipeline = Pipeline(config, event_bus=mock_bus)
+        await pipeline.run()
+
+    failed = [
+        c[0][0] for c in mock_bus.emit.call_args_list
+        if c[0][0].type == PipelineEventType.EPISODE_FAILED
+    ]
+    assert len(failed) == 1
+    payload = failed[0].payload
+    assert set(payload.keys()) == {"guid", "feed_slug", "error", "feed_done", "feed_failed", "feed_total"}
+    assert payload["guid"] == ep.guid
+    assert payload["feed_failed"] == 1
+    assert payload["feed_done"] == 0
+    assert payload["feed_total"] == 1
+    assert "download failed" in payload["error"]
+
+
+async def test_episode_done_failed_counters_increment_across_episodes() -> None:
+    ep1 = Episode(guid="ep-1", url="https://x.com/ep1.mp3", title="Ep 1",
+                  pub_date=datetime(2026, 3, 22, tzinfo=UTC))
+    ep2 = Episode(guid="ep-2", url="https://x.com/ep2.mp3", title="Ep 2",
+                  pub_date=datetime(2026, 3, 23, tzinfo=UTC))
+    config, _, _ = _branch_config(MagicMock(), episode=ep1)
+    parsed = ParsedFeed(
+        config_title="My Podcast", feed_url="http://x.com/feed", title="My Podcast",
+        episodes=[ep1, ep2],
+    )
+    mock_bus = MagicMock(spec=EventBus)
+
+    call_count = 0
+
+    async def flaky_download(guid: str, url: str, *, on_progress=None) -> Path:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise RuntimeError("ep2 failed")
+        return Path(f"/cache/{guid}.mp3")
+
+    with contextlib.ExitStack() as stack:
+        mocks = [stack.enter_context(patch(p)) for p in _ALL_BRANCH_PATCHES]
+        (m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+         m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
+         m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
+         m_episode_copier) = mocks
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
+            episodes=[ep1, ep2], parsed=parsed, transcribed_guids=set(),
+        )
+        m_ep_dl.return_value.download = flaky_download
+        pipeline = Pipeline(config, event_bus=mock_bus)
+        await pipeline.run()
+
+    completed = [c[0][0] for c in mock_bus.emit.call_args_list
+                 if c[0][0].type == PipelineEventType.EPISODE_COMPLETED]
+    failed = [c[0][0] for c in mock_bus.emit.call_args_list
+              if c[0][0].type == PipelineEventType.EPISODE_FAILED]
+    assert len(completed) == 1
+    assert len(failed) == 1
+    assert completed[0].payload["feed_done"] == 1
+    assert failed[0].payload["feed_failed"] == 1
+    assert failed[0].payload["feed_total"] == 2
