@@ -46,3 +46,44 @@ class TestSSERouteBasics:
             async with client.get("/api/v1/events") as resp:
                 with pytest.raises(asyncio.TimeoutError):
                     await asyncio.wait_for(resp.content.read(1), timeout=0.1)
+
+
+class TestSSEEventDelivery:
+    async def test_events_route_delivers_event_payload(self) -> None:
+        bus = EventBus()
+        app = create_app(bus, time.monotonic())
+        async with TestClient(TestServer(app)) as client:
+            async with client.get("/api/v1/events") as resp:
+                bus.emit(PipelineEvent(
+                    type=PipelineEventType.RUN_STARTED,
+                    payload={"feeds": ["slug-a"], "total_episodes": 1},
+                ))
+                chunk = await asyncio.wait_for(resp.content.read(1024), timeout=1.0)
+                text = chunk.decode()
+                assert "run.started" in text
+                assert "slug-a" in text
+
+    async def test_events_route_unsubscribes_on_disconnect(self) -> None:
+        bus = EventBus()
+        app = create_app(bus, time.monotonic())
+        async with TestClient(TestServer(app)) as client:
+            async with client.get("/api/v1/events"):
+                pass
+            await asyncio.sleep(0)
+            assert len(bus._subscribers) == 0
+
+    async def test_events_route_supports_multiple_concurrent_clients(self) -> None:
+        bus = EventBus()
+        app = create_app(bus, time.monotonic())
+        async with TestClient(TestServer(app)) as client:
+            async with client.get("/api/v1/events") as resp1:
+                async with client.get("/api/v1/events") as resp2:
+                    assert len(bus._subscribers) == 2
+                    bus.emit(PipelineEvent(
+                        type=PipelineEventType.RUN_STARTED,
+                        payload={"feeds": ["slug-b"], "total_episodes": 2},
+                    ))
+                    chunk1 = await asyncio.wait_for(resp1.content.read(1024), timeout=1.0)
+                    chunk2 = await asyncio.wait_for(resp2.content.read(1024), timeout=1.0)
+                    assert "run.started" in chunk1.decode()
+                    assert "run.started" in chunk2.decode()
