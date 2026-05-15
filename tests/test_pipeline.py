@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from components.pipeline import Pipeline
+from components.pipeline import Pipeline, _Stores
 from config.config_loader import FeedConfig
 from models.ad_detection import AdDetectionCost, AdSegment, AdSegmentDetection, CutRange
 from models.feed import AudioMetadata, Episode, FeedParseInput, ParsedFeed, PublisherInput
@@ -3169,3 +3169,45 @@ async def test_guard2_logs_descriptive_error_when_probe_returns_none_and_cuts_ex
         and "audio metadata" in str(r.exc_info[1])
         for r in caplog.records
     ), "Expected a RuntimeError mentioning 'audio metadata' in the pipeline error log"
+
+
+# ---------------------------------------------------------------------------
+# _Stores counter field tests (02-01-01)
+# ---------------------------------------------------------------------------
+
+
+def _make_stores_kwargs(**overrides: object) -> dict:
+    """Return minimal keyword args for _Stores construction."""
+    base = {
+        "episode": MagicMock(),
+        "transcription": MagicMock(),
+        "audio_metadata": MagicMock(),
+        "cost": MagicMock(),
+        "topic": MagicMock(),
+        "ad": MagicMock(),
+        "transcribed_guids": set(),
+        "extracted_guids": set(),
+        "ad_detected_guids": set(),
+    }
+    base.update(overrides)
+    return base
+
+
+def test_stores_episodes_total_stores_value() -> None:
+    stores = _Stores(**_make_stores_kwargs(episodes_total=5))
+    assert stores.episodes_total == 5
+
+
+def test_stores_episodes_done_defaults_to_zero() -> None:
+    stores = _Stores(**_make_stores_kwargs(episodes_total=3))
+    assert stores.episodes_done == 0
+
+
+def test_stores_episodes_failed_defaults_to_zero() -> None:
+    stores = _Stores(**_make_stores_kwargs(episodes_total=3))
+    assert stores.episodes_failed == 0
+
+
+def test_stores_episodes_total_is_required() -> None:
+    with pytest.raises(TypeError):
+        _Stores(**_make_stores_kwargs())  # episodes_total missing
