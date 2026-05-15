@@ -13,7 +13,7 @@ Brownfield milestone that adds a REST + SSE web API to an existing async Python 
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: API Foundation** - `--serve` flag starts aiohttp server; health check responds; EventBus and dual-mode entry are clean (completed 2026-05-14)
-- [ ] **Phase 2: SSE Progress Stream** - Connected SSE client receives live stage-transition and progress events while the pipeline runs
+- [x] **Phase 2: SSE Progress Stream** - Connected SSE client receives live stage-transition and progress events while the pipeline runs (completed 2026-05-16)
 - [ ] **Phase 3: Pipeline Control** - Client can start, stop, and inspect a pipeline run; per-feed and per-episode control works
 - [ ] **Phase 4: Config & Feed Management** - All settings and feed configuration can be read and modified via API; changes persist atomically
 - [ ] **Phase 5: Database Viewer** - All database tables exposed as read-only REST endpoints with pagination and filtering
@@ -114,7 +114,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. API Foundation | 1/1 | Complete   | 2026-05-14 |
-| 2. SSE Progress Stream | 0/TBD | Not started | - |
+| 2. SSE Progress Stream | 2/2 | Complete | 2026-05-16 |
 | 3. Pipeline Control | 0/TBD | Not started | - |
 | 4. Config & Feed Management | 0/TBD | Not started | - |
 | 5. Database Viewer | 0/TBD | Not started | - |
