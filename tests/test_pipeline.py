@@ -3398,3 +3398,118 @@ async def test_stage_changed_guard1_output_exists_no_stage_emits(tmp_path: Path)
         if c[0][0].type == PipelineEventType.EPISODE_STAGE_CHANGED
     ]
     assert stage_events == [], f"Expected no stage events for Guard 1 path, got {stage_events}"
+
+
+# ---------------------------------------------------------------------------
+# DOWNLOAD_PROGRESS / ENCODE_PROGRESS tests (02-01-07)
+# ---------------------------------------------------------------------------
+
+
+async def test_download_progress_event_emitted_with_correct_payload() -> None:
+    """DOWNLOAD_PROGRESS events must be emitted for each on_progress tick during download."""
+    config, ep, parsed = _branch_config(MagicMock())
+    mock_bus = MagicMock(spec=EventBus)
+
+    progress_ticks = [0.0, 0.5, 1.0]
+
+    async def fake_download(guid: str, url: str, *, on_progress=None) -> Path:
+        if on_progress is not None:
+            for pct in progress_ticks:
+                await on_progress(guid, pct)
+        return Path("/cache/ep.mp3")
+
+    with contextlib.ExitStack() as stack:
+        mocks = [stack.enter_context(patch(p)) for p in _ALL_BRANCH_PATCHES]
+        (m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+         m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
+         m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
+         m_episode_copier) = mocks
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        m_ep_dl.return_value.download = fake_download
+        pipeline = Pipeline(config, event_bus=mock_bus)
+        await pipeline.run()
+
+    dl_events = [
+        c[0][0] for c in mock_bus.emit.call_args_list
+        if c[0][0].type == PipelineEventType.DOWNLOAD_PROGRESS
+    ]
+    assert len(dl_events) == len(progress_ticks), f"Expected {len(progress_ticks)} DOWNLOAD_PROGRESS events"
+    for event, expected_pct in zip(dl_events, progress_ticks):
+        assert set(event.payload.keys()) == {"guid", "feed_slug", "percent"}
+        assert event.payload["percent"] == expected_pct
+        assert event.payload["guid"] == ep.guid
+
+
+async def test_download_progress_preserves_existing_log_behavior() -> None:
+    """The existing _on_download_progress log side-effects must still fire when event bus is set."""
+    config, ep, parsed = _branch_config(MagicMock())
+    mock_bus = MagicMock(spec=EventBus)
+
+    async def fake_download(guid: str, url: str, *, on_progress=None) -> Path:
+        if on_progress is not None:
+            await on_progress(guid, 0.0)
+        return Path("/cache/ep.mp3")
+
+    with contextlib.ExitStack() as stack:
+        mocks = [stack.enter_context(patch(p)) for p in _ALL_BRANCH_PATCHES]
+        (m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+         m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
+         m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
+         m_episode_copier) = mocks
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        m_ep_dl.return_value.download = fake_download
+        with patch.object(Pipeline, "_on_download_progress", new_callable=AsyncMock) as mock_dl_progress:
+            pipeline = Pipeline(config, event_bus=mock_bus)
+            await pipeline.run()
+
+    mock_dl_progress.assert_awaited_once_with(ep.guid, 0.0)
+
+
+async def test_encode_progress_event_emitted_with_correct_payload() -> None:
+    """ENCODE_PROGRESS events must be emitted for each on_progress tick during preprocessing."""
+    config, ep, parsed = _branch_config(MagicMock())
+    mock_bus = MagicMock(spec=EventBus)
+
+    progress_ticks = [0.0, 0.25, 1.0]
+
+    async def fake_preprocess(guid: str, raw: Path, duration: float, *, on_progress=None) -> Path:
+        if on_progress is not None:
+            for pct in progress_ticks:
+                await on_progress(guid, pct)
+        return Path("/cache/ep.mono.m4a")
+
+    with contextlib.ExitStack() as stack:
+        mocks = [stack.enter_context(patch(p)) for p in _ALL_BRANCH_PATCHES]
+        (m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+         m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext,
+         m_topic_store, m_ad_detector, m_ad_parser, m_audio_editor,
+         m_episode_copier) = mocks
+        _wire_branch_mocks(
+            m_dl, m_fp, m_pub, m_db, m_store, m_ts, m_ams, m_cs,
+            m_ep_dl, m_prober, m_prep, m_trans, m_ad_store, m_topic_ext, m_topic_store,
+            m_ad_detector, m_ad_parser, m_audio_editor, m_episode_copier,
+            episodes=[ep], parsed=parsed, transcribed_guids=set(),
+        )
+        m_prep.return_value.preprocess = fake_preprocess
+        pipeline = Pipeline(config, event_bus=mock_bus)
+        await pipeline.run()
+
+    enc_events = [
+        c[0][0] for c in mock_bus.emit.call_args_list
+        if c[0][0].type == PipelineEventType.ENCODE_PROGRESS
+    ]
+    assert len(enc_events) == len(progress_ticks), f"Expected {len(progress_ticks)} ENCODE_PROGRESS events"
+    for event, expected_pct in zip(enc_events, progress_ticks):
+        assert set(event.payload.keys()) == {"guid", "feed_slug", "percent"}
+        assert event.payload["percent"] == expected_pct
+        assert event.payload["guid"] == ep.guid
