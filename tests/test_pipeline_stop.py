@@ -232,3 +232,29 @@ class TestRunStateUpdates:
         counts = run_state.feeds["my-show"]
         assert counts.episodes_done == 1
         assert counts.episodes_total == 1
+
+    async def test_run_state_feed_counts_update_after_episode_failure(self) -> None:
+        ep1 = _make_episode("ep-guid-1", 1)
+        episodes = [ep1]
+        feed_cfg = make_feed("My Show")
+        config = make_config([feed_cfg])
+        config.app.paths.data_dir = MagicMock()
+        config.app.paths.output_dir = MagicMock()
+        config.app.paths.cache_dir = MagicMock()
+        config.app.base_url = "http://localhost"
+        parsed = _make_parsed_feed("My Show", episodes)
+
+        run_state = RunState()
+
+        async def fake_process_fail(**_kwargs) -> str:
+            raise RuntimeError("episode failed")
+
+        with _patch_pipeline_internals(episodes, parsed):
+            pipeline = Pipeline(config, run_state=run_state)
+            with patch.object(pipeline, "_process_episode_until_final", side_effect=fake_process_fail):
+                await pipeline.run()
+
+        assert "my-show" in run_state.feeds
+        counts = run_state.feeds["my-show"]
+        assert counts.episodes_failed == 1
+        assert counts.episodes_total == 1
