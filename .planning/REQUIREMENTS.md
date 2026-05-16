@@ -24,7 +24,7 @@
 
 ### Status & Settings
 
-- [ ] **STAT-01**: `GET /api/v1/status` returns current pipeline state (idle/running), active feed slug, per-feed episode counts, and run start time
+- [x] **STAT-01**: `GET /api/v1/status` returns current pipeline state (idle/running), active feed slug, per-feed episode counts, and run start time
 - [ ] **STAT-02**: `GET /api/v1/settings` returns the current config as JSON with all credential fields redacted
 - [ ] **STAT-03**: `PATCH /api/v1/settings` validates the merged payload through Pydantic, writes atomically to `config.yaml`, returns 422 on validation failure; changes apply on the next run
 
@@ -82,7 +82,7 @@
 | INFRA-01 | Phase 1 | Complete |
 | INFRA-02 | Phase 1 | Complete |
 | EVT-01 | Phase 2 | Pending |
-| STAT-01 | Phase 3 | Pending |
+| STAT-01 | Phase 3 | Complete |
 | CTRL-01 | Phase 3 | Pending |
 | CTRL-02 | Phase 3 | Pending |
 | CTRL-03 | Phase 3 | Pending |

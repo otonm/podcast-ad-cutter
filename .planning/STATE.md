@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: context exhaustion at 75% (2026-05-15)
-last_updated: "2026-05-16T07:43:26.660Z"
+last_updated: "2026-05-16T13:23:12.792Z"
 last_activity: 2026-05-16 -- Phase 03 planning complete
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 6
-  completed_plans: 3
+  completed_plans: 4
   percent: 33
 ---
 
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-05-14)
 ## Current Position
 
 Phase: 3
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-05-16 -- Phase 03 planning complete
+Plan: 1 of 3 complete
+Status: Executing
+Last activity: 2026-05-16 -- Phase 03 Plan 01 complete (RunState + GET /api/v1/status)
 
 Progress: [██████████] 100%
 
@@ -70,6 +70,8 @@ Recent decisions affecting current work:
 - [Phase ?]: AppRunner+TCPSite selected for non-blocking server lifecycle
 - [Phase ?]: Broadcast-all model; emit() iterates list() snapshot to prevent concurrent mutation errors
 - [Phase ?]: TYPE_CHECKING guard avoids circular import at runtime; None default preserves all existing call sites
+- [Phase 03 P01]: RunState instantiated inside async def serve() — asyncio.Event requires running loop; module-level would break
+- [Phase 03 P01]: datetime under TYPE_CHECKING in run_state.py (TC003); works with slots=True due to annotations as strings
 
 ### Pending Todos
 
@@ -91,6 +93,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-15T23:42:07.227Z
-Stopped at: context exhaustion at 75% (2026-05-15)
+Last session: 2026-05-16T16:22:07Z
+Stopped at: Completed 03-01-PLAN.md
 Resume file: None
