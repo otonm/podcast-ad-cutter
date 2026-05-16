@@ -48,7 +48,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   5. Disconnecting a client does not affect other connected clients or the pipeline
 **Plans**: 3 plans
 - [x] 03-01-PLAN.md — Foundation: RunState dataclass + control router skeleton + GET /api/v1/status (STAT-01 idle)
-- [ ] 03-02-PLAN.md — Run lifecycle: Pipeline stop/run_state hooks + POST /run + /run/stop + /feeds/{slug}/run (CTRL-01, CTRL-02, CTRL-03, STAT-01 live)
+- [x] 03-02-PLAN.md — Run lifecycle: Pipeline stop/run_state hooks + POST /run + /run/stop + /feeds/{slug}/run (CTRL-01, CTRL-02, CTRL-03, STAT-01 live)
 - [ ] 03-03-PLAN.md — Episode control: skipped column + EpisodeStore skip/reset + POST /episodes/{guid}/{skip,reprocess} + pipeline skip-guard (CTRL-04, CTRL-05)
 **UI hint**: no
 
@@ -118,7 +118,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 |-------|----------------|--------|-----------|
 | 1. API Foundation | 1/1 | Complete   | 2026-05-14 |
 | 2. SSE Progress Stream | 2/2 | Complete | 2026-05-16 |
-| 3. Pipeline Control | 1/3 | In Progress|  |
+| 3. Pipeline Control | 2/3 | In Progress|  |
 | 4. Config & Feed Management | 0/TBD | Not started | - |
 | 5. Database Viewer | 0/TBD | Not started | - |
 | 6. Log Access | 0/TBD | Not started | - |
