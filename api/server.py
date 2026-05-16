@@ -5,17 +5,28 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from typing import TYPE_CHECKING
 
 from aiohttp import web
 
 from api.event_bus import EventBus
+from api.routes.control import create_control_router
 from api.routes.events import create_events_router
 from api.routes.health import create_health_router
+from api.run_state import RunState
+
+if TYPE_CHECKING:
+    from config.config_loader import Config
 
 logger = logging.getLogger(__name__)
 
 
-def create_app(event_bus: EventBus, start_time: float) -> web.Application:
+def create_app(
+    event_bus: EventBus,
+    start_time: float,
+    run_state: RunState,
+    config: Config,
+) -> web.Application:
     """Build and return a configured aiohttp Application.
 
     No side effects — safe to call in tests with TestClient.
@@ -23,6 +34,8 @@ def create_app(event_bus: EventBus, start_time: float) -> web.Application:
     Args:
         event_bus: Shared event bus instance.
         start_time: Monotonic timestamp of server start (for uptime calculation).
+        run_state: Shared pipeline run state.
+        config: Application configuration.
 
     Returns:
         Configured web.Application instance.
@@ -30,12 +43,14 @@ def create_app(event_bus: EventBus, start_time: float) -> web.Application:
     """
     app = web.Application()
     app["event_bus"] = event_bus
+    app["run_state"] = run_state
     app.add_routes(create_health_router(start_time))
     app.add_routes(create_events_router(event_bus))
+    app.add_routes(create_control_router(config, event_bus, run_state))
     return app
 
 
-async def serve(host: str, port: int) -> None:
+async def serve(host: str, port: int, config: Config) -> None:
     """Start the aiohttp server and keep it running until cancelled.
 
     Uses AppRunner + TCPSite per CLAUDE.md mandate — blocking server calls
@@ -44,11 +59,13 @@ async def serve(host: str, port: int) -> None:
     Args:
         host: Host to bind to.
         port: Port to bind to.
+        config: Application configuration.
 
     """
     start_time = time.monotonic()
     event_bus = EventBus()
-    app = create_app(event_bus, start_time)
+    run_state = RunState()
+    app = create_app(event_bus, start_time, run_state, config)
     runner = web.AppRunner(app)
     await runner.setup()
     try:

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from aiohttp.test_utils import TestClient, TestServer
 
 from api.event_bus import EventBus
 from api.routes.health import _read_version
+from api.run_state import RunState
 from api.server import create_app
 
 # ---------------------------------------------------------------------------
@@ -16,29 +17,35 @@ from api.server import create_app
 # ---------------------------------------------------------------------------
 
 
+def _make_config() -> MagicMock:
+    cfg = MagicMock()
+    cfg.app.feeds = []
+    return cfg
+
+
 class TestHealthEndpoint:
     async def test_health_returns_200(self) -> None:
-        app = create_app(EventBus(), time.monotonic())
+        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config())
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/v1/health")
             assert resp.status == 200
 
     async def test_health_response_has_status_ok(self) -> None:
-        app = create_app(EventBus(), time.monotonic())
+        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config())
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/v1/health")
             data = await resp.json()
             assert data["status"] == "ok"
 
     async def test_health_response_uptime_is_float(self) -> None:
-        app = create_app(EventBus(), time.monotonic())
+        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config())
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/v1/health")
             data = await resp.json()
             assert isinstance(data["uptime_seconds"], float)
 
     async def test_health_response_version_is_nonempty_str(self) -> None:
-        app = create_app(EventBus(), time.monotonic())
+        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config())
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/v1/health")
             data = await resp.json()
@@ -46,7 +53,7 @@ class TestHealthEndpoint:
             assert len(data["version"]) > 0
 
     async def test_health_response_has_all_expected_keys(self) -> None:
-        app = create_app(EventBus(), time.monotonic())
+        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config())
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/v1/health")
             data = await resp.json()

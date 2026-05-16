@@ -6,6 +6,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from api.server import serve
 
+
+def _make_config() -> MagicMock:
+    cfg = MagicMock()
+    cfg.app.feeds = []
+    return cfg
+
+
 # ---------------------------------------------------------------------------
 # serve() lifecycle tests
 # ---------------------------------------------------------------------------
@@ -27,7 +34,7 @@ class TestServe:
             mock_site_cls.return_value = mock_site
             mock_event_cls.return_value.wait = AsyncMock()
 
-            await serve("127.0.0.1", 8080)
+            await serve("127.0.0.1", 8080, _make_config())
 
             mock_runner.setup.assert_awaited_once()
 
@@ -46,7 +53,7 @@ class TestServe:
             mock_site_cls.return_value = mock_site
             mock_event_cls.return_value.wait = AsyncMock()
 
-            await serve("127.0.0.1", 8080)
+            await serve("127.0.0.1", 8080, _make_config())
 
             mock_site.start.assert_awaited_once()
 
@@ -65,7 +72,7 @@ class TestServe:
             mock_site_cls.return_value = mock_site
             mock_event_cls.return_value.wait = AsyncMock()
 
-            await serve("127.0.0.1", 8080)
+            await serve("127.0.0.1", 8080, _make_config())
 
             mock_runner.cleanup.assert_awaited_once()
 
@@ -84,7 +91,7 @@ class TestServe:
             mock_site_cls.return_value = mock_site
             mock_event_cls.return_value.wait = AsyncMock()
 
-            await serve("127.0.0.1", 9000)
+            await serve("127.0.0.1", 9000, _make_config())
 
             call_args = mock_site_cls.call_args
             assert call_args[0][1] == "127.0.0.1"

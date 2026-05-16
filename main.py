@@ -181,7 +181,7 @@ async def main() -> None:
     )
 
     if args.serve:
-        await serve(args.host, args.port)
+        await serve(args.host, args.port, cfg)
         return
 
     pipeline = Pipeline(cfg, feed_name=args.feed)
