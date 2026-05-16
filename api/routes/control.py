@@ -10,7 +10,10 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 from slugify import slugify
 
+from api.run_state import VALID_STAGES
 from components.pipeline import Pipeline
+from database.connection import Database
+from database.episode_store import EpisodeStore
 
 if TYPE_CHECKING:
     from api.event_bus import EventBus
@@ -58,7 +61,7 @@ def _run_state_to_dict(rs: RunState) -> dict:  # type: ignore[type-arg]
     }
 
 
-def create_control_router(
+def create_control_router(  # noqa: C901, PLR0915
     config: Config,
     event_bus: EventBus,
     run_state: RunState,
@@ -75,6 +78,7 @@ def create_control_router(
 
     """
     routes = web.RouteTableDef()
+    db_path = config.app.paths.data_dir / "data.db"
 
     @routes.get("/api/v1/status")
     async def status(_request: web.Request) -> web.Response:
@@ -155,5 +159,47 @@ def create_control_router(
             },
             status=202,
         )
+
+    @routes.post("/api/v1/episodes/{guid}/skip")
+    async def skip_episode_handler(request: web.Request) -> web.Response:
+        if run_state.state != "idle":
+            raise web.HTTPConflict(
+                text='{"error": "cannot modify episodes while a run is active"}',
+                content_type="application/json",
+            )
+        guid = request.match_info["guid"]
+        async with Database(db_path) as db:
+            store = EpisodeStore(db.conn)
+            ok = await store.skip_episode(guid)
+        if not ok:
+            raise web.HTTPNotFound(
+                text=f'{{"error": "episode not found: {guid}"}}',
+                content_type="application/json",
+            )
+        return web.json_response({"status": "skipped", "guid": guid})
+
+    @routes.post("/api/v1/episodes/{guid}/reprocess")
+    async def reprocess_handler(request: web.Request) -> web.Response:
+        if run_state.state != "idle":
+            raise web.HTTPConflict(
+                text='{"error": "cannot modify episodes while a run is active"}',
+                content_type="application/json",
+            )
+        guid = request.match_info["guid"]
+        stage = request.rel_url.query.get("stage")
+        if stage is not None and stage not in VALID_STAGES:
+            raise web.HTTPUnprocessableEntity(
+                text=f'{{"error": "invalid stage: {stage}"}}',
+                content_type="application/json",
+            )
+        async with Database(db_path) as db:
+            store = EpisodeStore(db.conn)
+            ok = await store.reset_episode(guid, from_stage=stage)
+        if not ok:
+            raise web.HTTPNotFound(
+                text=f'{{"error": "episode not found: {guid}"}}',
+                content_type="application/json",
+            )
+        return web.json_response({"status": "reset", "guid": guid, "from_stage": stage})
 
     return routes

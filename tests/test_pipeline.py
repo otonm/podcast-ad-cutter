@@ -145,6 +145,7 @@ def _wire_branch_mocks(
     mock_store.get_episodes_for_feed = AsyncMock(return_value=episodes)
     mock_store.get_guids_for_feed = AsyncMock(return_value=set())
     mock_store.update_episode_url = AsyncMock()
+    mock_store.is_skipped = AsyncMock(return_value=False)
     m_store.return_value = mock_store
 
     m_pub.return_value.publish = AsyncMock(return_value=Path("/out/my-podcast.rss"))
@@ -3241,7 +3242,7 @@ _ALL_BRANCH_PATCHES = [
 ]
 
 
-def _run_all_patches() -> contextlib.AbstractContextManager:
+def _run_all_patches() -> contextlib.AbstractContextManager:  # pragma: no cover
     return contextlib.ExitStack()
 
 

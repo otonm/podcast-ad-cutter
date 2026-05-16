@@ -252,6 +252,9 @@ class Pipeline:
 
                 # ── Phase 3: Per-episode processing ───────────────────────────
                 for episode in episodes:
+                    if await stores.episode.is_skipped(episode.guid):
+                        logger.info(f"Episode {episode.guid!r}: skipped (permanently marked); skipping")
+                        continue
                     handler = None
                     log_path = None
                     if self._per_episode_log:

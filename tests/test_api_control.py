@@ -219,3 +219,137 @@ class TestResolveSlug:
     def test_returns_none_for_unknown_slug(self) -> None:
         feeds = [_make_feed("My Show")]
         assert _resolve_slug("not-found", feeds) is None
+
+
+def _make_db_patch(*, skip_episode_return: bool = True, reset_episode_return: bool = True):
+    """Return a context manager that patches Database and EpisodeStore for handler tests."""
+    mock_db_conn = MagicMock()
+    mock_db_obj = MagicMock()
+    mock_db_obj.conn = mock_db_conn
+
+    mock_db_cm = MagicMock()
+    mock_db_cm.__aenter__ = AsyncMock(return_value=mock_db_obj)
+    mock_db_cm.__aexit__ = AsyncMock(return_value=False)
+
+    mock_store_instance = MagicMock()
+    mock_store_instance.skip_episode = AsyncMock(return_value=skip_episode_return)
+    mock_store_instance.reset_episode = AsyncMock(return_value=reset_episode_return)
+
+    import contextlib
+
+    @contextlib.contextmanager
+    def _patches():
+        with (
+            patch("api.routes.control.Database", return_value=mock_db_cm) as mock_db_cls,
+            patch("api.routes.control.EpisodeStore", return_value=mock_store_instance),
+        ):
+            yield mock_db_cls, mock_store_instance
+
+    return _patches()
+
+
+class TestSkipEpisode:
+    async def test_skip_returns_200_on_success(self) -> None:
+        run_state = RunState()
+        cfg = _make_config()
+        cfg.app.paths.data_dir = MagicMock()
+        app = create_app(EventBus(), time.monotonic(), run_state, cfg)
+        async with TestClient(TestServer(app)) as client:
+            with _make_db_patch(skip_episode_return=True):
+                resp = await client.post("/api/v1/episodes/g123/skip")
+                assert resp.status == 200
+                data = await resp.json()
+                assert data == {"status": "skipped", "guid": "g123"}
+
+    async def test_skip_returns_404_when_not_found(self) -> None:
+        run_state = RunState()
+        cfg = _make_config()
+        cfg.app.paths.data_dir = MagicMock()
+        app = create_app(EventBus(), time.monotonic(), run_state, cfg)
+        async with TestClient(TestServer(app)) as client:
+            with _make_db_patch(skip_episode_return=False):
+                resp = await client.post("/api/v1/episodes/g123/skip")
+                assert resp.status == 404
+                data = await resp.json()
+                assert "error" in data
+
+    async def test_skip_returns_409_when_active(self) -> None:
+        run_state = RunState()
+        run_state.state = "running"
+        cfg = _make_config()
+        cfg.app.paths.data_dir = MagicMock()
+        app = create_app(EventBus(), time.monotonic(), run_state, cfg)
+        async with TestClient(TestServer(app)) as client:
+            with _make_db_patch() as (mock_db_cls, _):
+                resp = await client.post("/api/v1/episodes/g123/skip")
+                assert resp.status == 409
+                data = await resp.json()
+                assert "error" in data
+                mock_db_cls.assert_not_called()
+
+
+class TestReprocess:
+    async def test_full_reset_returns_200(self) -> None:
+        run_state = RunState()
+        cfg = _make_config()
+        cfg.app.paths.data_dir = MagicMock()
+        app = create_app(EventBus(), time.monotonic(), run_state, cfg)
+        async with TestClient(TestServer(app)) as client:
+            with _make_db_patch(reset_episode_return=True):
+                resp = await client.post("/api/v1/episodes/g1/reprocess")
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["status"] == "reset"
+                assert data["guid"] == "g1"
+                assert data["from_stage"] is None
+
+    async def test_reset_with_valid_stage_returns_200(self) -> None:
+        run_state = RunState()
+        cfg = _make_config()
+        cfg.app.paths.data_dir = MagicMock()
+        app = create_app(EventBus(), time.monotonic(), run_state, cfg)
+        async with TestClient(TestServer(app)) as client:
+            with _make_db_patch(reset_episode_return=True):
+                resp = await client.post("/api/v1/episodes/g1/reprocess?stage=transcribe")
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["from_stage"] == "transcribe"
+
+    async def test_reset_with_invalid_stage_returns_422(self) -> None:
+        run_state = RunState()
+        cfg = _make_config()
+        cfg.app.paths.data_dir = MagicMock()
+        app = create_app(EventBus(), time.monotonic(), run_state, cfg)
+        async with TestClient(TestServer(app)) as client:
+            with _make_db_patch() as (mock_db_cls, _):
+                resp = await client.post("/api/v1/episodes/g1/reprocess?stage=bogus")
+                assert resp.status == 422
+                data = await resp.json()
+                assert "error" in data
+                mock_db_cls.assert_not_called()
+
+    async def test_reset_unknown_guid_returns_404(self) -> None:
+        run_state = RunState()
+        cfg = _make_config()
+        cfg.app.paths.data_dir = MagicMock()
+        app = create_app(EventBus(), time.monotonic(), run_state, cfg)
+        async with TestClient(TestServer(app)) as client:
+            with _make_db_patch(reset_episode_return=False):
+                resp = await client.post("/api/v1/episodes/unknown-guid/reprocess")
+                assert resp.status == 404
+                data = await resp.json()
+                assert "error" in data
+
+    async def test_reset_returns_409_when_active(self) -> None:
+        run_state = RunState()
+        run_state.state = "running"
+        cfg = _make_config()
+        cfg.app.paths.data_dir = MagicMock()
+        app = create_app(EventBus(), time.monotonic(), run_state, cfg)
+        async with TestClient(TestServer(app)) as client:
+            with _make_db_patch() as (mock_db_cls, _):
+                resp = await client.post("/api/v1/episodes/g1/reprocess")
+                assert resp.status == 409
+                data = await resp.json()
+                assert "error" in data
+                mock_db_cls.assert_not_called()

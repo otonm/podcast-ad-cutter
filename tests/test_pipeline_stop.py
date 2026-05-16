@@ -69,6 +69,7 @@ def _patch_pipeline_internals(episodes: list[Episode], parsed: ParsedFeed):
     mock_store.save_episodes = AsyncMock()
     mock_store.get_episodes_for_feed = AsyncMock(return_value=episodes)
     mock_store.update_episode_url = AsyncMock()
+    mock_store.is_skipped = AsyncMock(return_value=False)
 
     import contextlib
 
@@ -258,3 +259,41 @@ class TestRunStateUpdates:
         counts = run_state.feeds["my-show"]
         assert counts.episodes_failed == 1
         assert counts.episodes_total == 1
+
+
+class TestSkippedEpisodeGuard:
+    async def test_skipped_episode_is_not_processed(self) -> None:
+        ep_skipped = _make_episode("ep-skipped", 1)
+        ep_normal = _make_episode("ep-normal", 2)
+        episodes = [ep_skipped, ep_normal]
+        feed_cfg = make_feed("My Show")
+        config = make_config([feed_cfg])
+        config.app.paths.data_dir = MagicMock()
+        config.app.paths.output_dir = MagicMock()
+        config.app.paths.cache_dir = MagicMock()
+        config.app.base_url = "http://localhost"
+        parsed = _make_parsed_feed("My Show", episodes)
+
+        processed_guids: list[str] = []
+        skipped_guids = {"ep-skipped"}
+
+        async def fake_process(*, episode: Episode, **_kwargs) -> str:
+            processed_guids.append(episode.guid)
+            return "done"
+
+        async def guid_aware_is_skipped(guid: str) -> bool:
+            return guid in skipped_guids
+
+        with _patch_pipeline_internals(episodes, parsed):
+            with patch("components.pipeline.EpisodeStore") as mock_store_cls:
+                mock_store_cls.return_value.save_episodes = AsyncMock()
+                mock_store_cls.return_value.get_episodes_for_feed = AsyncMock(return_value=episodes)
+                mock_store_cls.return_value.update_episode_url = AsyncMock()
+                mock_store_cls.return_value.is_skipped = guid_aware_is_skipped
+                pipeline = Pipeline(config)
+                with patch.object(pipeline, "_process_episode_until_final", side_effect=fake_process):
+                    await pipeline.run()
+
+        assert "ep-normal" in processed_guids
+        assert "ep-skipped" not in processed_guids
+        assert len(processed_guids) == 1

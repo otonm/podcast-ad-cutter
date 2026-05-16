@@ -196,6 +196,14 @@ class EpisodeStore:
             rows = await cursor.fetchall()
         return {row[0] for row in rows}
 
+    async def is_skipped(self, guid: str) -> bool:
+        """Return True if the episode has been permanently marked as skipped."""
+        async with self._conn.execute(
+            "SELECT skipped FROM episodes WHERE guid = ?", (guid,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        return row is not None and bool(row[0])
+
     async def skip_episode(self, guid: str) -> bool:
         """Mark episode as permanently skipped. Returns False if GUID not found."""
         result = await self._conn.execute(

@@ -682,3 +682,23 @@ class TestResetEpisode:
             store = EpisodeStore(db.conn)
             ok = await store.reset_episode("does-not-exist")
         assert ok is False
+
+
+class TestIsSkipped:
+    async def test_returns_true_for_skipped_episode(self, db_path: Path) -> None:
+        async with Database(db_path) as db:
+            await _insert_episode_row(db.conn, "ep-s")
+            store = EpisodeStore(db.conn)
+            await store.skip_episode("ep-s")
+            assert await store.is_skipped("ep-s") is True
+
+    async def test_returns_false_for_non_skipped_episode(self, db_path: Path) -> None:
+        async with Database(db_path) as db:
+            await _insert_episode_row(db.conn, "ep-ns")
+            store = EpisodeStore(db.conn)
+            assert await store.is_skipped("ep-ns") is False
+
+    async def test_returns_false_for_unknown_guid(self, db_path: Path) -> None:
+        async with Database(db_path) as db:
+            store = EpisodeStore(db.conn)
+            assert await store.is_skipped("no-such-guid") is False
