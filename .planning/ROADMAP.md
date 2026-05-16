@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: API Foundation** - `--serve` flag starts aiohttp server; health check responds; EventBus and dual-mode entry are clean (completed 2026-05-14)
 - [x] **Phase 2: SSE Progress Stream** - Connected SSE client receives live stage-transition and progress events while the pipeline runs (completed 2026-05-16)
-- [ ] **Phase 3: Pipeline Control** - Client can start, stop, and inspect a pipeline run; per-feed and per-episode control works
+- [x] **Phase 3: Pipeline Control** - Client can start, stop, and inspect a pipeline run; per-feed and per-episode control works (completed 2026-05-16)
 - [ ] **Phase 4: Config & Feed Management** - All settings and feed configuration can be read and modified via API; changes persist atomically
 - [ ] **Phase 5: Database Viewer** - All database tables exposed as read-only REST endpoints with pagination and filtering
 - [ ] **Phase 6: Log Access** - All log files can be listed, downloaded, and tailed in real time via SSE
@@ -49,7 +49,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 3 plans
 - [x] 03-01-PLAN.md — Foundation: RunState dataclass + control router skeleton + GET /api/v1/status (STAT-01 idle)
 - [x] 03-02-PLAN.md — Run lifecycle: Pipeline stop/run_state hooks + POST /run + /run/stop + /feeds/{slug}/run (CTRL-01, CTRL-02, CTRL-03, STAT-01 live)
-- [ ] 03-03-PLAN.md — Episode control: skipped column + EpisodeStore skip/reset + POST /episodes/{guid}/{skip,reprocess} + pipeline skip-guard (CTRL-04, CTRL-05)
+- [x] 03-03-PLAN.md — Episode control: skipped column + EpisodeStore skip/reset + POST /episodes/{guid}/{skip,reprocess} + pipeline skip-guard (CTRL-04, CTRL-05)
 **UI hint**: no
 
 ### Phase 3: Pipeline Control
@@ -118,7 +118,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 |-------|----------------|--------|-----------|
 | 1. API Foundation | 1/1 | Complete   | 2026-05-14 |
 | 2. SSE Progress Stream | 2/2 | Complete | 2026-05-16 |
-| 3. Pipeline Control | 2/3 | In Progress|  |
+| 3. Pipeline Control | 3/3 | Complete   | 2026-05-16 |
 | 4. Config & Feed Management | 0/TBD | Not started | - |
 | 5. Database Viewer | 0/TBD | Not started | - |
 | 6. Log Access | 0/TBD | Not started | - |

@@ -15,8 +15,8 @@
 - [x] **CTRL-01**: `POST /api/v1/run` triggers a full pipeline run across all configured feeds; returns 409 if a run is already active
 - [x] **CTRL-02**: `POST /api/v1/run/stop` signals the active pipeline run to stop gracefully; returns 409 if nothing is running
 - [x] **CTRL-03**: `POST /api/v1/feeds/{slug}/run` triggers pipeline processing for a specific feed only
-- [ ] **CTRL-04**: `POST /api/v1/episodes/{guid}/reprocess` resets DB state for one episode (full reset or from a specified stage) and requeues it for the next run
-- [ ] **CTRL-05**: `POST /api/v1/episodes/{guid}/skip` marks an episode as permanently skipped so the pipeline will not process it
+- [x] **CTRL-04**: `POST /api/v1/episodes/{guid}/reprocess` resets DB state for one episode (full reset or from a specified stage) and requeues it for the next run
+- [x] **CTRL-05**: `POST /api/v1/episodes/{guid}/skip` marks an episode as permanently skipped so the pipeline will not process it
 
 ### Progress Streaming
 
@@ -86,8 +86,8 @@
 | CTRL-01 | Phase 3 | Complete |
 | CTRL-02 | Phase 3 | Complete |
 | CTRL-03 | Phase 3 | Complete |
-| CTRL-04 | Phase 3 | Pending |
-| CTRL-05 | Phase 3 | Pending |
+| CTRL-04 | Phase 3 | Complete |
+| CTRL-05 | Phase 3 | Complete |
 | STAT-02 | Phase 4 | Pending |
 | STAT-03 | Phase 4 | Pending |
 | FEED-01 | Phase 4 | Pending |
