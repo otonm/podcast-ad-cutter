@@ -23,56 +23,13 @@
       "Bash(git tag:*)",
       "Bash(git check-ignore:*)",
       "Bash(git -C:*)",
-      "mcp__code-review-graph__get_review_context_tool",
-      "mcp__code-review-graph__get_architecture_overview_tool",
-      "mcp__code-review-graph__semantic_search_nodes_tool",
-      "mcp__code-review-graph__detect_changes_tool",
-      "mcp__code-review-graph__query_graph_tool",
-      "mcp__code-review-graph__list_graph_stats_tool",
-      "mcp__code-review-graph__list_flows_tool",
-      "mcp__code-review-graph__get_flow_tool",
-      "mcp__code-review-graph__list_communities_tool",
-      "mcp__code-review-graph__list_repos_tool",
       "Bash(git worktree *)",
       "Bash(git checkout *)",
       "Bash(git pull *)",
       "Bash(git merge *)",
       "Bash(git branch *)"
-    ],
-    "additionalDirectories": [
-      "/home/oton/.claude/plans",
-      "/home/oton/projects/podcast-ad-cutter/docs/superpowers/specs"
     ]
   },
   "enableAllProjectMcpServers": true,
-  "enabledMcpjsonServers": [
-    "code-review-graph"
-  ],
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write|Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "code-review-graph update --skip-flows",
-            "timeout": 30
-          }
-        ]
-      }
-    ],
-    "SessionStart": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "code-review-graph status",
-            "timeout": 10
-          }
-        ]
-      }
-    ]
-  },
   "outputStyle": "Critical Engineer"
 }
