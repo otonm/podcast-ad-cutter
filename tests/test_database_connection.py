@@ -292,3 +292,29 @@ async def test_source_url_column_migration_on_existing_db(db_path: Path) -> None
         pass
 
     assert "source_url" in await _column_names(db_path)
+
+
+async def test_episodes_table_has_skipped_column(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    assert "skipped" in await _column_names(db_path)
+
+
+async def test_skipped_column_has_not_null_default_zero(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    async with aiosqlite.connect(db_path) as conn:
+        cursor = await conn.execute("PRAGMA table_info(episodes)")
+        rows = await cursor.fetchall()
+    skipped_col = next(r for r in rows if r[1] == "skipped")
+    assert skipped_col[3] == 1  # notnull
+    assert skipped_col[4] == "0"  # dflt_value
+
+
+async def test_skipped_column_migration_is_idempotent(db_path: Path) -> None:
+    """Opening Database twice on the same path must not raise."""
+    async with Database(db_path):
+        pass
+    async with Database(db_path):
+        pass
+    assert "skipped" in await _column_names(db_path)

@@ -482,3 +482,203 @@ async def test_update_episode_url_does_not_change_source_url(
     ep1 = next(e for e in result if e.guid == "guid-1")
     assert ep1.url == "https://local/processed.mp3"
     assert ep1.source_url == "https://example.com/ep1.mp3"
+
+
+# ---------------------------------------------------------------------------
+# Helpers for skip/reset tests
+# ---------------------------------------------------------------------------
+
+async def _insert_episode_row(
+    conn: aiosqlite.Connection,
+    guid: str,
+    url: str = "https://cdn.example.com/ep.mp3",
+    source_url: str = "https://cdn.example.com/ep.mp3",
+) -> None:
+    await conn.execute(
+        "INSERT INTO episodes (podcast, title, guid, url, source_url) VALUES (?, ?, ?, ?, ?)",
+        ("Pod", "Ep", guid, url, source_url),
+    )
+    await conn.commit()
+
+
+async def _populate_all_downstream(conn: aiosqlite.Connection, guid: str) -> None:
+    """Insert one row in every downstream table for the given guid."""
+    await conn.execute(
+        "INSERT INTO episode_audio_metadata (guid, duration, codec, channels, bitrate) "
+        "VALUES (?, 60.0, 'aac', 2, 128000)",
+        (guid,),
+    )
+    await conn.execute(
+        "INSERT INTO transcriptions (guid, transcription) VALUES (?, ?)",
+        (guid, "text"),
+    )
+    await conn.execute(
+        "INSERT INTO transcription_segments (guid, start_ms, end_ms, text) VALUES (?, 0, 1000, 'hi')",
+        (guid,),
+    )
+    await conn.execute(
+        "INSERT INTO topic_extractions (guid, podcast, title, topic, hosts, show) "
+        "VALUES (?, 'Pod', 'Ep', 'tech', '[]', 'My Show')",
+        (guid,),
+    )
+    await conn.execute(
+        "INSERT INTO ad_segments (guid, start_ms, end_ms, confidence, sponsor, ad_topic) "
+        "VALUES (?, 0, 1000, 0.9, 'Acme', 'vpn')",
+        (guid,),
+    )
+    await conn.execute(
+        "INSERT INTO ad_detection_runs (guid) VALUES (?)",
+        (guid,),
+    )
+    await conn.commit()
+
+
+async def _count_rows(conn: aiosqlite.Connection, table: str, guid: str) -> int:
+    cursor = await conn.execute(f"SELECT COUNT(*) FROM {table} WHERE guid = ?", (guid,))  # noqa: S608
+    row = await cursor.fetchone()
+    return row[0]  # type: ignore[index]
+
+
+# ---------------------------------------------------------------------------
+# Tests: skip_episode
+# ---------------------------------------------------------------------------
+
+
+class TestSkipEpisode:
+    async def test_skip_returns_true_and_sets_column(self, db_path: Path) -> None:
+        async with Database(db_path) as db:
+            await _insert_episode_row(db.conn, "ep-skip-1")
+            store = EpisodeStore(db.conn)
+            result = await store.skip_episode("ep-skip-1")
+            assert result is True
+            cursor = await db.conn.execute(
+                "SELECT skipped FROM episodes WHERE guid = ?", ("ep-skip-1",)
+            )
+            row = await cursor.fetchone()
+        assert row is not None
+        assert row[0] == 1
+
+    async def test_skip_returns_false_for_unknown_guid(self, db_path: Path) -> None:
+        async with Database(db_path) as db:
+            store = EpisodeStore(db.conn)
+            result = await store.skip_episode("nonexistent-guid")
+        assert result is False
+
+    async def test_skip_does_not_mutate_other_rows(
+        self, db_path: Path, episodes: list[Episode]
+    ) -> None:
+        async with Database(db_path) as db:
+            store = EpisodeStore(db.conn)
+            await store.save_episodes("Pod", episodes)
+            await store.skip_episode("guid-1")
+            cursor = await db.conn.execute(
+                "SELECT skipped FROM episodes WHERE guid = ?", ("guid-2",)
+            )
+            row = await cursor.fetchone()
+        assert row is not None
+        assert row[0] == 0
+
+
+# ---------------------------------------------------------------------------
+# Tests: reset_episode
+# ---------------------------------------------------------------------------
+
+
+class TestResetEpisode:
+    async def test_full_reset_deletes_all_downstream_and_resets_url(
+        self, db_path: Path
+    ) -> None:
+        guid = "ep-full-reset"
+        async with Database(db_path) as db:
+            await _insert_episode_row(
+                db.conn, guid,
+                url="https://local/processed.mp3",
+                source_url="https://cdn.example.com/ep.mp3",
+            )
+            await _populate_all_downstream(db.conn, guid)
+            store = EpisodeStore(db.conn)
+            ok = await store.reset_episode(guid)
+            assert ok is True
+            for table in [
+                "episode_audio_metadata", "transcriptions", "transcription_segments",
+                "topic_extractions", "ad_segments", "ad_detection_runs",
+            ]:
+                assert await _count_rows(db.conn, table, guid) == 0
+            cursor = await db.conn.execute(
+                "SELECT url, source_url FROM episodes WHERE guid = ?", (guid,)
+            )
+            row = await cursor.fetchone()
+        assert row is not None
+        assert row[0] == row[1]  # url == source_url after full reset
+
+    async def test_reset_from_transcribe_preserves_audio_metadata(
+        self, db_path: Path
+    ) -> None:
+        guid = "ep-from-transcribe"
+        async with Database(db_path) as db:
+            await _insert_episode_row(db.conn, guid)
+            await _populate_all_downstream(db.conn, guid)
+            store = EpisodeStore(db.conn)
+            ok = await store.reset_episode(guid, from_stage="transcribe")
+            assert ok is True
+            assert await _count_rows(db.conn, "episode_audio_metadata", guid) == 1
+            assert await _count_rows(db.conn, "transcriptions", guid) == 0
+            assert await _count_rows(db.conn, "transcription_segments", guid) == 0
+            assert await _count_rows(db.conn, "topic_extractions", guid) == 0
+            assert await _count_rows(db.conn, "ad_segments", guid) == 0
+            assert await _count_rows(db.conn, "ad_detection_runs", guid) == 0
+            cursor = await db.conn.execute(
+                "SELECT url, source_url FROM episodes WHERE guid = ?", (guid,)
+            )
+            row = await cursor.fetchone()
+        assert row is not None
+        assert row[0] == row[1]  # url unchanged (same as source)
+
+    async def test_reset_from_topic_preserves_transcript(self, db_path: Path) -> None:
+        guid = "ep-from-topic"
+        async with Database(db_path) as db:
+            await _insert_episode_row(db.conn, guid)
+            await _populate_all_downstream(db.conn, guid)
+            store = EpisodeStore(db.conn)
+            await store.reset_episode(guid, from_stage="topic")
+            assert await _count_rows(db.conn, "episode_audio_metadata", guid) == 1
+            assert await _count_rows(db.conn, "transcriptions", guid) == 1
+            assert await _count_rows(db.conn, "transcription_segments", guid) == 1
+            assert await _count_rows(db.conn, "topic_extractions", guid) == 0
+            assert await _count_rows(db.conn, "ad_segments", guid) == 0
+            assert await _count_rows(db.conn, "ad_detection_runs", guid) == 0
+
+    async def test_reset_from_ad_detect_only_deletes_ad_tables(
+        self, db_path: Path
+    ) -> None:
+        guid = "ep-from-ad-detect"
+        async with Database(db_path) as db:
+            await _insert_episode_row(db.conn, guid)
+            await _populate_all_downstream(db.conn, guid)
+            store = EpisodeStore(db.conn)
+            await store.reset_episode(guid, from_stage="ad-detect")
+            assert await _count_rows(db.conn, "episode_audio_metadata", guid) == 1
+            assert await _count_rows(db.conn, "transcriptions", guid) == 1
+            assert await _count_rows(db.conn, "topic_extractions", guid) == 1
+            assert await _count_rows(db.conn, "ad_segments", guid) == 0
+            assert await _count_rows(db.conn, "ad_detection_runs", guid) == 0
+
+    async def test_reset_from_edit_no_db_changes(self, db_path: Path) -> None:
+        guid = "ep-from-edit"
+        async with Database(db_path) as db:
+            await _insert_episode_row(db.conn, guid)
+            await _populate_all_downstream(db.conn, guid)
+            store = EpisodeStore(db.conn)
+            ok = await store.reset_episode(guid, from_stage="edit")
+            assert ok is True
+            for table in [
+                "episode_audio_metadata", "transcriptions", "transcription_segments",
+                "topic_extractions", "ad_segments", "ad_detection_runs",
+            ]:
+                assert await _count_rows(db.conn, table, guid) == 1
+
+    async def test_reset_nonexistent_guid_returns_false(self, db_path: Path) -> None:
+        async with Database(db_path) as db:
+            store = EpisodeStore(db.conn)
+            ok = await store.reset_episode("does-not-exist")
+        assert ok is False

@@ -11,6 +11,34 @@ from models.feed import Episode
 if TYPE_CHECKING:
     import aiosqlite
 
+STAGE_CASCADE: dict[str, list[str]] = {
+    "download": [
+        "episode_audio_metadata",
+        "transcriptions",
+        "transcription_segments",
+        "topic_extractions",
+        "ad_segments",
+        "ad_detection_runs",
+    ],
+    "transcribe": [
+        "transcriptions",
+        "transcription_segments",
+        "topic_extractions",
+        "ad_segments",
+        "ad_detection_runs",
+    ],
+    "topic": [
+        "topic_extractions",
+        "ad_segments",
+        "ad_detection_runs",
+    ],
+    "ad-detect": [
+        "ad_segments",
+        "ad_detection_runs",
+    ],
+    "edit": [],
+}
+
 # Exact shape of rows returned by the SELECT in get_episodes_for_feed.
 # Column order: guid, url, title, pubdate, description, explicit, duration,
 # image_url, episode_type, itunes_author, itunes_subtitle, itunes_summary,
@@ -167,6 +195,46 @@ class EpisodeStore:
         ) as cursor:
             rows = await cursor.fetchall()
         return {row[0] for row in rows}
+
+    async def skip_episode(self, guid: str) -> bool:
+        """Mark episode as permanently skipped. Returns False if GUID not found."""
+        result = await self._conn.execute(
+            "UPDATE episodes SET skipped = 1 WHERE guid = ?",
+            (guid,),
+        )
+        await self._conn.commit()
+        if result.rowcount > 0:
+            logger.info(f"Episode {guid!r}: marked as permanently skipped")
+            return True
+        logger.warning(f"Episode {guid!r}: skip requested but not found in DB")
+        return False
+
+    async def reset_episode(self, guid: str, *, from_stage: str | None = None) -> bool:
+        """Reset episode for reprocessing. Returns False if GUID not found."""
+        tables = STAGE_CASCADE[from_stage] if from_stage else STAGE_CASCADE["download"]
+        for table in tables:
+            await self._conn.execute(
+                f"DELETE FROM {table} WHERE guid = ?",  # noqa: S608
+                (guid,),
+            )
+        if from_stage in (None, "download"):
+            result = await self._conn.execute(
+                "UPDATE episodes SET url = source_url WHERE guid = ?", (guid,)
+            )
+            await self._conn.commit()
+            found = result.rowcount > 0
+        else:
+            async with self._conn.execute(
+                "SELECT id FROM episodes WHERE guid = ?", (guid,)
+            ) as cursor:
+                row = await cursor.fetchone()
+            await self._conn.commit()
+            found = row is not None
+        if found:
+            logger.info(f"Episode {guid!r}: reset from stage {from_stage!r}")
+        else:
+            logger.warning(f"Episode {guid!r}: reset requested but not found in DB")
+        return found
 
     async def update_episode_url(self, guid: str, new_url: str, length: int = 0) -> None:
         """Replace the enclosure URL and file size for a specific episode.
