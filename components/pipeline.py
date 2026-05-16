@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from slugify import slugify
 
 from api.event_bus import PipelineEvent, PipelineEventType
+from api.run_state import FeedRunCounts
 
 # ── Component imports ──────────────────────────────────────────────────────────
 from components.ad_detector import AdDetector
@@ -41,9 +42,11 @@ from models.feed import AudioMetadata, Episode, FeedParseInput, ParsedFeed, Publ
 from utils.episode_log import close_episode_log, open_episode_log, rotate_episode_logs
 
 if TYPE_CHECKING:
+    import asyncio
     from pathlib import Path
 
     from api.event_bus import EventBus
+    from api.run_state import RunState
     from config.config_loader import Config, FeedConfig
 
 logger = logging.getLogger(__name__)
@@ -101,10 +104,14 @@ class Pipeline:
         feed_name: str | None = None,
         *,
         event_bus: EventBus | None = None,
+        stop_event: asyncio.Event | None = None,
+        run_state: RunState | None = None,
     ) -> None:
         self._config = config
         self._feed_name = feed_name
         self._event_bus = event_bus
+        self._stop_event = stop_event
+        self._run_state = run_state
         self._db_path: Path = config.app.paths.data_dir / "data.db"
 
         # ── Feed-level components ──────────────────────────────────────────────
@@ -160,7 +167,7 @@ class Pipeline:
 
     # ── Public entry point ─────────────────────────────────────────────────────
 
-    async def run(self) -> list[ParsedFeed]:  # noqa: C901, PLR0912
+    async def run(self) -> list[ParsedFeed]:  # noqa: C901, PLR0912, PLR0915
         """Execute the pipeline for the selected feeds.
 
         High-level flow:
@@ -255,6 +262,8 @@ class Pipeline:
                             log_dir=self._log_dir,
                             file_level=self._log_file_level,
                         )
+                    if self._run_state is not None:
+                        self._run_state.current_episode_guid = episode.guid
                     try:
                         outcome = await self._process_episode_until_final(
                             episode=episode,
@@ -264,6 +273,12 @@ class Pipeline:
                             stores=stores,
                         )
                         stores.episodes_done += 1
+                        if self._run_state is not None:
+                            self._run_state.feeds[feed_slug] = FeedRunCounts(
+                                episodes_total=stores.episodes_total,
+                                episodes_done=stores.episodes_done,
+                                episodes_failed=stores.episodes_failed,
+                            )
                         if self._event_bus is not None:
                             self._event_bus.emit(PipelineEvent(
                                 type=PipelineEventType.EPISODE_COMPLETED,
@@ -279,6 +294,12 @@ class Pipeline:
                     except Exception as exc:
                         logger.exception(f"Episode '{episode.guid}': error, skipping")
                         stores.episodes_failed += 1
+                        if self._run_state is not None:
+                            self._run_state.feeds[feed_slug] = FeedRunCounts(
+                                episodes_total=stores.episodes_total,
+                                episodes_done=stores.episodes_done,
+                                episodes_failed=stores.episodes_failed,
+                            )
                         if self._event_bus is not None:
                             self._event_bus.emit(PipelineEvent(
                                 type=PipelineEventType.EPISODE_FAILED,
@@ -296,6 +317,11 @@ class Pipeline:
                             close_episode_log(handler)
                         if log_path is not None and self._log_rotate:
                             rotate_episode_logs(log_path.parent, self._log_keep_last)
+                        if self._run_state is not None:
+                            self._run_state.current_episode_guid = None
+                    if self._stop_event is not None and self._stop_event.is_set():
+                        logger.info(f"Graceful stop requested — halting after episode {episode.guid!r}")
+                        break
 
                 # ── Trim output folder to episodes_to_keep ────────────────────
                 await self._trim_output_dir(output_feed_dir, cfg.episodes_to_keep)
