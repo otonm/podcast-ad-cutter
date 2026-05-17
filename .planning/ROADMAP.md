@@ -79,7 +79,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. `POST /api/v1/feeds` adds a validated new feed entry to `config.yaml` and rejects duplicates
   5. `PATCH /api/v1/feeds/{slug}` updates a feed's URL or per-feed settings after Pydantic validation
   6. `DELETE /api/v1/feeds/{slug}` removes the feed from `config.yaml`; returns 404 if slug does not exist
-**Plans**: TBD
+**Plans**: 2 plans
+- [ ] 04-01-PLAN.md — Settings slice: AppConfig extra='forbid', config_path plumbing, GET + PATCH /api/v1/settings with atomic write (STAT-02, STAT-03)
+- [ ] 04-02-PLAN.md — Feeds slice: GET (DB-backed counts) + POST (duplicate guard) + PATCH (title-immutable) + DELETE /api/v1/feeds (FEED-01..04)
 **UI hint**: no
 
 ### Phase 5: Database Viewer
