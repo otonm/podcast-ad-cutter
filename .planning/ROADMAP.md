@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: API Foundation** - `--serve` flag starts aiohttp server; health check responds; EventBus and dual-mode entry are clean (completed 2026-05-14)
 - [x] **Phase 2: SSE Progress Stream** - Connected SSE client receives live stage-transition and progress events while the pipeline runs (completed 2026-05-16)
 - [x] **Phase 3: Pipeline Control** - Client can start, stop, and inspect a pipeline run; per-feed and per-episode control works (completed 2026-05-16)
-- [ ] **Phase 4: Config & Feed Management** - All settings and feed configuration can be read and modified via API; changes persist atomically
+- [x] **Phase 4: Config & Feed Management** - All settings and feed configuration can be read and modified via API; changes persist atomically (completed 2026-05-17)
 - [ ] **Phase 5: Database Viewer** - All database tables exposed as read-only REST endpoints with pagination and filtering
 - [ ] **Phase 6: Log Access** - All log files can be listed, downloaded, and tailed in real time via SSE
 
@@ -80,8 +80,8 @@ Decimal phases appear between their surrounding integers in numeric order.
   5. `PATCH /api/v1/feeds/{slug}` updates a feed's URL or per-feed settings after Pydantic validation
   6. `DELETE /api/v1/feeds/{slug}` removes the feed from `config.yaml`; returns 404 if slug does not exist
 **Plans**: 2 plans
-- [ ] 04-01-PLAN.md — Settings slice: AppConfig extra='forbid', config_path plumbing, GET + PATCH /api/v1/settings with atomic write (STAT-02, STAT-03)
-- [ ] 04-02-PLAN.md — Feeds slice: GET (DB-backed counts) + POST (duplicate guard) + PATCH (title-immutable) + DELETE /api/v1/feeds (FEED-01..04)
+- [x] 04-01-PLAN.md — Settings slice: AppConfig extra='forbid', config_path plumbing, GET + PATCH /api/v1/settings with atomic write (STAT-02, STAT-03)
+- [x] 04-02-PLAN.md — Feeds slice: GET (DB-backed counts) + POST (duplicate guard) + PATCH (title-immutable) + DELETE /api/v1/feeds (FEED-01..04)
 **UI hint**: no
 
 ### Phase 5: Database Viewer
@@ -121,6 +121,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 1. API Foundation | 1/1 | Complete   | 2026-05-14 |
 | 2. SSE Progress Stream | 2/2 | Complete | 2026-05-16 |
 | 3. Pipeline Control | 3/3 | Complete   | 2026-05-16 |
-| 4. Config & Feed Management | 0/TBD | Not started | - |
+| 4. Config & Feed Management | 2/2 | Complete | 2026-05-17 |
 | 5. Database Viewer | 0/TBD | Not started | - |
 | 6. Log Access | 0/TBD | Not started | - |
