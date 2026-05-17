@@ -24,36 +24,36 @@ def _make_config() -> MagicMock:
 
 
 class TestHealthEndpoint:
-    async def test_health_returns_200(self) -> None:
-        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config())
+    async def test_health_returns_200(self, tmp_path) -> None:
+        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/v1/health")
             assert resp.status == 200
 
-    async def test_health_response_has_status_ok(self) -> None:
-        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config())
+    async def test_health_response_has_status_ok(self, tmp_path) -> None:
+        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/v1/health")
             data = await resp.json()
             assert data["status"] == "ok"
 
-    async def test_health_response_uptime_is_float(self) -> None:
-        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config())
+    async def test_health_response_uptime_is_float(self, tmp_path) -> None:
+        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/v1/health")
             data = await resp.json()
             assert isinstance(data["uptime_seconds"], float)
 
-    async def test_health_response_version_is_nonempty_str(self) -> None:
-        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config())
+    async def test_health_response_version_is_nonempty_str(self, tmp_path) -> None:
+        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/v1/health")
             data = await resp.json()
             assert isinstance(data["version"], str)
             assert len(data["version"]) > 0
 
-    async def test_health_response_has_all_expected_keys(self) -> None:
-        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config())
+    async def test_health_response_has_all_expected_keys(self, tmp_path) -> None:
+        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/v1/health")
             data = await resp.json()

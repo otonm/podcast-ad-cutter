@@ -31,9 +31,9 @@ def _make_config() -> MagicMock:
 
 
 class TestStatus:
-    async def test_status_returns_200_when_idle(self) -> None:
+    async def test_status_returns_200_when_idle(self, tmp_path) -> None:
         run_state = RunState()
-        app = create_app(EventBus(), time.monotonic(), run_state, _make_config())
+        app = create_app(EventBus(), time.monotonic(), run_state, _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/v1/status")
             assert resp.status == 200
@@ -44,12 +44,12 @@ class TestStatus:
             assert data["current_episode_guid"] is None
             assert data["feeds"] == {}
 
-    async def test_status_returns_running_when_state_set(self) -> None:
+    async def test_status_returns_running_when_state_set(self, tmp_path) -> None:
         run_state = RunState()
         run_state.state = "running"
         run_state.started_at = datetime.now(UTC)
         run_state.active_feed_slug = "my-show"
-        app = create_app(EventBus(), time.monotonic(), run_state, _make_config())
+        app = create_app(EventBus(), time.monotonic(), run_state, _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/v1/status")
             assert resp.status == 200
@@ -58,10 +58,10 @@ class TestStatus:
             assert isinstance(data["started_at"], str)
             assert data["active_feed_slug"] == "my-show"
 
-    async def test_status_returns_stopping_state(self) -> None:
+    async def test_status_returns_stopping_state(self, tmp_path) -> None:
         run_state = RunState()
         run_state.state = "stopping"
-        app = create_app(EventBus(), time.monotonic(), run_state, _make_config())
+        app = create_app(EventBus(), time.monotonic(), run_state, _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/v1/status")
             assert resp.status == 200
@@ -70,9 +70,9 @@ class TestStatus:
 
 
 class TestStartRun:
-    async def test_run_returns_202_when_idle(self) -> None:
+    async def test_run_returns_202_when_idle(self, tmp_path) -> None:
         run_state = RunState()
-        app = create_app(EventBus(), time.monotonic(), run_state, _make_config())
+        app = create_app(EventBus(), time.monotonic(), run_state, _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             with (
                 patch("api.routes.control.Pipeline"),
@@ -87,10 +87,10 @@ class TestStartRun:
                 assert run_state.task is not None
                 assert mock_create_task.called
 
-    async def test_run_returns_409_when_active(self) -> None:
+    async def test_run_returns_409_when_active(self, tmp_path) -> None:
         run_state = RunState()
         run_state.state = "running"
-        app = create_app(EventBus(), time.monotonic(), run_state, _make_config())
+        app = create_app(EventBus(), time.monotonic(), run_state, _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             resp = await client.post("/api/v1/run")
             assert resp.status == 409
@@ -99,11 +99,11 @@ class TestStartRun:
 
 
 class TestStopRun:
-    async def test_stop_graceful_sets_stop_event(self) -> None:
+    async def test_stop_graceful_sets_stop_event(self, tmp_path) -> None:
         run_state = RunState()
         run_state.state = "running"
         run_state.task = MagicMock()
-        app = create_app(EventBus(), time.monotonic(), run_state, _make_config())
+        app = create_app(EventBus(), time.monotonic(), run_state, _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             resp = await client.post("/api/v1/run/stop")
             assert resp.status == 202
@@ -112,11 +112,11 @@ class TestStopRun:
             assert run_state.stop_event.is_set()
             assert run_state.state == "stopping"
 
-    async def test_stop_force_cancels_task(self) -> None:
+    async def test_stop_force_cancels_task(self, tmp_path) -> None:
         run_state = RunState()
         run_state.state = "running"
         run_state.task = MagicMock()
-        app = create_app(EventBus(), time.monotonic(), run_state, _make_config())
+        app = create_app(EventBus(), time.monotonic(), run_state, _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             resp = await client.post("/api/v1/run/stop?force=true")
             assert resp.status == 202
@@ -124,9 +124,9 @@ class TestStopRun:
             assert data["mode"] == "force"
             assert run_state.task.cancel.called
 
-    async def test_stop_returns_409_when_idle(self) -> None:
+    async def test_stop_returns_409_when_idle(self, tmp_path) -> None:
         run_state = RunState()
-        app = create_app(EventBus(), time.monotonic(), run_state, _make_config())
+        app = create_app(EventBus(), time.monotonic(), run_state, _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             resp = await client.post("/api/v1/run/stop")
             assert resp.status == 409
@@ -135,9 +135,9 @@ class TestStopRun:
 
 
 class TestFeedRun:
-    async def test_feed_run_resolves_slug_and_returns_202(self) -> None:
+    async def test_feed_run_resolves_slug_and_returns_202(self, tmp_path) -> None:
         run_state = RunState()
-        app = create_app(EventBus(), time.monotonic(), run_state, _make_config())
+        app = create_app(EventBus(), time.monotonic(), run_state, _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             with (
                 patch("api.routes.control.Pipeline"),
@@ -151,19 +151,19 @@ class TestFeedRun:
                 assert isinstance(data["started_at"], str)
                 assert run_state.active_feed_slug == "my-show"
 
-    async def test_feed_run_unknown_slug_returns_404(self) -> None:
+    async def test_feed_run_unknown_slug_returns_404(self, tmp_path) -> None:
         run_state = RunState()
-        app = create_app(EventBus(), time.monotonic(), run_state, _make_config())
+        app = create_app(EventBus(), time.monotonic(), run_state, _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             resp = await client.post("/api/v1/feeds/does-not-exist/run")
             assert resp.status == 404
             data = await resp.json()
             assert "error" in data
 
-    async def test_feed_run_returns_409_when_active(self) -> None:
+    async def test_feed_run_returns_409_when_active(self, tmp_path) -> None:
         run_state = RunState()
         run_state.state = "running"
-        app = create_app(EventBus(), time.monotonic(), run_state, _make_config())
+        app = create_app(EventBus(), time.monotonic(), run_state, _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             resp = await client.post("/api/v1/feeds/my-show/run")
             assert resp.status == 409
@@ -249,11 +249,11 @@ def _make_db_patch(*, skip_episode_return: bool = True, reset_episode_return: bo
 
 
 class TestSkipEpisode:
-    async def test_skip_returns_200_on_success(self) -> None:
+    async def test_skip_returns_200_on_success(self, tmp_path) -> None:
         run_state = RunState()
         cfg = _make_config()
         cfg.app.paths.data_dir = MagicMock()
-        app = create_app(EventBus(), time.monotonic(), run_state, cfg)
+        app = create_app(EventBus(), time.monotonic(), run_state, cfg, tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             with _make_db_patch(skip_episode_return=True):
                 resp = await client.post("/api/v1/episodes/g123/skip")
@@ -261,11 +261,11 @@ class TestSkipEpisode:
                 data = await resp.json()
                 assert data == {"status": "skipped", "guid": "g123"}
 
-    async def test_skip_returns_404_when_not_found(self) -> None:
+    async def test_skip_returns_404_when_not_found(self, tmp_path) -> None:
         run_state = RunState()
         cfg = _make_config()
         cfg.app.paths.data_dir = MagicMock()
-        app = create_app(EventBus(), time.monotonic(), run_state, cfg)
+        app = create_app(EventBus(), time.monotonic(), run_state, cfg, tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             with _make_db_patch(skip_episode_return=False):
                 resp = await client.post("/api/v1/episodes/g123/skip")
@@ -273,12 +273,12 @@ class TestSkipEpisode:
                 data = await resp.json()
                 assert "error" in data
 
-    async def test_skip_returns_409_when_active(self) -> None:
+    async def test_skip_returns_409_when_active(self, tmp_path) -> None:
         run_state = RunState()
         run_state.state = "running"
         cfg = _make_config()
         cfg.app.paths.data_dir = MagicMock()
-        app = create_app(EventBus(), time.monotonic(), run_state, cfg)
+        app = create_app(EventBus(), time.monotonic(), run_state, cfg, tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             with _make_db_patch() as (mock_db_cls, _):
                 resp = await client.post("/api/v1/episodes/g123/skip")
@@ -289,11 +289,11 @@ class TestSkipEpisode:
 
 
 class TestReprocess:
-    async def test_full_reset_returns_200(self) -> None:
+    async def test_full_reset_returns_200(self, tmp_path) -> None:
         run_state = RunState()
         cfg = _make_config()
         cfg.app.paths.data_dir = MagicMock()
-        app = create_app(EventBus(), time.monotonic(), run_state, cfg)
+        app = create_app(EventBus(), time.monotonic(), run_state, cfg, tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             with _make_db_patch(reset_episode_return=True):
                 resp = await client.post("/api/v1/episodes/g1/reprocess")
@@ -303,11 +303,11 @@ class TestReprocess:
                 assert data["guid"] == "g1"
                 assert data["from_stage"] is None
 
-    async def test_reset_with_valid_stage_returns_200(self) -> None:
+    async def test_reset_with_valid_stage_returns_200(self, tmp_path) -> None:
         run_state = RunState()
         cfg = _make_config()
         cfg.app.paths.data_dir = MagicMock()
-        app = create_app(EventBus(), time.monotonic(), run_state, cfg)
+        app = create_app(EventBus(), time.monotonic(), run_state, cfg, tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             with _make_db_patch(reset_episode_return=True):
                 resp = await client.post("/api/v1/episodes/g1/reprocess?stage=transcribe")
@@ -315,11 +315,11 @@ class TestReprocess:
                 data = await resp.json()
                 assert data["from_stage"] == "transcribe"
 
-    async def test_reset_with_invalid_stage_returns_422(self) -> None:
+    async def test_reset_with_invalid_stage_returns_422(self, tmp_path) -> None:
         run_state = RunState()
         cfg = _make_config()
         cfg.app.paths.data_dir = MagicMock()
-        app = create_app(EventBus(), time.monotonic(), run_state, cfg)
+        app = create_app(EventBus(), time.monotonic(), run_state, cfg, tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             with _make_db_patch() as (mock_db_cls, _):
                 resp = await client.post("/api/v1/episodes/g1/reprocess?stage=bogus")
@@ -328,11 +328,11 @@ class TestReprocess:
                 assert "error" in data
                 mock_db_cls.assert_not_called()
 
-    async def test_reset_unknown_guid_returns_404(self) -> None:
+    async def test_reset_unknown_guid_returns_404(self, tmp_path) -> None:
         run_state = RunState()
         cfg = _make_config()
         cfg.app.paths.data_dir = MagicMock()
-        app = create_app(EventBus(), time.monotonic(), run_state, cfg)
+        app = create_app(EventBus(), time.monotonic(), run_state, cfg, tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             with _make_db_patch(reset_episode_return=False):
                 resp = await client.post("/api/v1/episodes/unknown-guid/reprocess")
@@ -340,12 +340,12 @@ class TestReprocess:
                 data = await resp.json()
                 assert "error" in data
 
-    async def test_reset_returns_409_when_active(self) -> None:
+    async def test_reset_returns_409_when_active(self, tmp_path) -> None:
         run_state = RunState()
         run_state.state = "running"
         cfg = _make_config()
         cfg.app.paths.data_dir = MagicMock()
-        app = create_app(EventBus(), time.monotonic(), run_state, cfg)
+        app = create_app(EventBus(), time.monotonic(), run_state, cfg, tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             with _make_db_patch() as (mock_db_cls, _):
                 resp = await client.post("/api/v1/episodes/g1/reprocess")

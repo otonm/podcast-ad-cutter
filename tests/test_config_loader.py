@@ -234,3 +234,16 @@ def test_invalid_bitrate_format_raises_config_error(tmp_path: Path, monkeypatch)
     with patch("config.config_loader.load_dotenv"):
         with pytest.raises(ConfigError):
             load_config(config_path)
+
+
+def test_extra_key_raises_validation_error(tmp_path: Path) -> None:
+    """AppConfig must reject unknown top-level keys with ValidationError."""
+    import yaml as _yaml
+    from pydantic import ValidationError
+
+    from config.config_loader import AppConfig
+
+    raw = _yaml.safe_load(VALID_YAML)
+    raw["nonsense"] = 1
+    with pytest.raises(ValidationError):
+        AppConfig.model_validate(raw)

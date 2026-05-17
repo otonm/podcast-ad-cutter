@@ -21,35 +21,35 @@ def _make_config() -> MagicMock:
 
 
 class TestSSERouteBasics:
-    async def test_events_route_returns_200_with_event_stream_content_type(self) -> None:
+    async def test_events_route_returns_200_with_event_stream_content_type(self, tmp_path) -> None:
         bus = EventBus()
-        app = create_app(bus, time.monotonic(), RunState(), _make_config())
+        app = create_app(bus, time.monotonic(), RunState(), _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             bus.emit(PipelineEvent(type=PipelineEventType.RUN_STARTED, payload={"feeds": [], "total_episodes": 0}))
             async with client.get("/api/v1/events") as resp:
                 assert resp.status == 200
                 assert "text/event-stream" in resp.headers["Content-Type"]
 
-    async def test_events_route_sets_cache_and_buffering_headers(self) -> None:
+    async def test_events_route_sets_cache_and_buffering_headers(self, tmp_path) -> None:
         bus = EventBus()
-        app = create_app(bus, time.monotonic(), RunState(), _make_config())
+        app = create_app(bus, time.monotonic(), RunState(), _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             bus.emit(PipelineEvent(type=PipelineEventType.RUN_STARTED, payload={"feeds": [], "total_episodes": 0}))
             async with client.get("/api/v1/events") as resp:
                 assert resp.headers["Cache-Control"] == "no-cache"
                 assert resp.headers["X-Accel-Buffering"] == "no"
 
-    async def test_events_route_registered_on_app(self) -> None:
+    async def test_events_route_registered_on_app(self, tmp_path) -> None:
         bus = EventBus()
-        app = create_app(bus, time.monotonic(), RunState(), _make_config())
+        app = create_app(bus, time.monotonic(), RunState(), _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             bus.emit(PipelineEvent(type=PipelineEventType.RUN_STARTED, payload={"feeds": [], "total_episodes": 0}))
             async with client.get("/api/v1/events") as resp:
                 assert resp.status != 404
 
-    async def test_events_route_delivers_no_event_when_bus_is_idle(self) -> None:
+    async def test_events_route_delivers_no_event_when_bus_is_idle(self, tmp_path) -> None:
         bus = EventBus()
-        app = create_app(bus, time.monotonic(), RunState(), _make_config())
+        app = create_app(bus, time.monotonic(), RunState(), _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             async with client.get("/api/v1/events") as resp:
                 with pytest.raises(asyncio.TimeoutError):
@@ -57,9 +57,9 @@ class TestSSERouteBasics:
 
 
 class TestSSEEventDelivery:
-    async def test_events_route_delivers_event_payload(self) -> None:
+    async def test_events_route_delivers_event_payload(self, tmp_path) -> None:
         bus = EventBus()
-        app = create_app(bus, time.monotonic(), RunState(), _make_config())
+        app = create_app(bus, time.monotonic(), RunState(), _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             async with client.get("/api/v1/events") as resp:
                 bus.emit(PipelineEvent(
@@ -71,9 +71,9 @@ class TestSSEEventDelivery:
                 assert "run.started" in text
                 assert "slug-a" in text
 
-    async def test_events_route_unsubscribes_on_disconnect(self) -> None:
+    async def test_events_route_unsubscribes_on_disconnect(self, tmp_path) -> None:
         bus = EventBus()
-        app = create_app(bus, time.monotonic(), RunState(), _make_config())
+        app = create_app(bus, time.monotonic(), RunState(), _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             async with client.get("/api/v1/events"):
                 pass
@@ -82,9 +82,9 @@ class TestSSEEventDelivery:
                 await asyncio.sleep(0)
             assert len(bus._subscribers) == 0
 
-    async def test_events_route_supports_multiple_concurrent_clients(self) -> None:
+    async def test_events_route_supports_multiple_concurrent_clients(self, tmp_path) -> None:
         bus = EventBus()
-        app = create_app(bus, time.monotonic(), RunState(), _make_config())
+        app = create_app(bus, time.monotonic(), RunState(), _make_config(), tmp_path / "config.yaml")
         async with TestClient(TestServer(app)) as client:
             async with client.get("/api/v1/events") as resp1:
                 async with client.get("/api/v1/events") as resp2:

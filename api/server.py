@@ -16,6 +16,8 @@ from api.routes.health import create_health_router
 from api.run_state import RunState
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from config.config_loader import Config
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,7 @@ def create_app(
     start_time: float,
     run_state: RunState,
     config: Config,
+    config_path: Path,
 ) -> web.Application:
     """Build and return a configured aiohttp Application.
 
@@ -36,6 +39,7 @@ def create_app(
         start_time: Monotonic timestamp of server start (for uptime calculation).
         run_state: Shared pipeline run state.
         config: Application configuration.
+        config_path: Path to the config.yaml file on disk.
 
     Returns:
         Configured web.Application instance.
@@ -44,13 +48,14 @@ def create_app(
     app = web.Application()
     app["event_bus"] = event_bus
     app["run_state"] = run_state
+    app["config_path"] = config_path
     app.add_routes(create_health_router(start_time))
     app.add_routes(create_events_router(event_bus))
     app.add_routes(create_control_router(config, event_bus, run_state))
     return app
 
 
-async def serve(host: str, port: int, config: Config) -> None:
+async def serve(host: str, port: int, config: Config, config_path: Path) -> None:
     """Start the aiohttp server and keep it running until cancelled.
 
     Uses AppRunner + TCPSite per CLAUDE.md mandate — blocking server calls
@@ -60,12 +65,13 @@ async def serve(host: str, port: int, config: Config) -> None:
         host: Host to bind to.
         port: Port to bind to.
         config: Application configuration.
+        config_path: Path to the config.yaml file on disk.
 
     """
     start_time = time.monotonic()
     event_bus = EventBus()
     run_state = RunState()
-    app = create_app(event_bus, start_time, run_state, config)
+    app = create_app(event_bus, start_time, run_state, config, config_path)
     runner = web.AppRunner(app)
     await runner.setup()
     try:

@@ -19,7 +19,7 @@ def _make_config() -> MagicMock:
 
 
 class TestServe:
-    async def test_serve_sets_up_runner(self) -> None:
+    async def test_serve_sets_up_runner(self, tmp_path) -> None:
         with (
             patch("api.server.web.AppRunner") as mock_runner_cls,
             patch("api.server.web.TCPSite") as mock_site_cls,
@@ -34,11 +34,11 @@ class TestServe:
             mock_site_cls.return_value = mock_site
             mock_event_cls.return_value.wait = AsyncMock()
 
-            await serve("127.0.0.1", 8080, _make_config())
+            await serve("127.0.0.1", 8080, _make_config(), tmp_path / "config.yaml")
 
             mock_runner.setup.assert_awaited_once()
 
-    async def test_serve_starts_site(self) -> None:
+    async def test_serve_starts_site(self, tmp_path) -> None:
         with (
             patch("api.server.web.AppRunner") as mock_runner_cls,
             patch("api.server.web.TCPSite") as mock_site_cls,
@@ -53,11 +53,11 @@ class TestServe:
             mock_site_cls.return_value = mock_site
             mock_event_cls.return_value.wait = AsyncMock()
 
-            await serve("127.0.0.1", 8080, _make_config())
+            await serve("127.0.0.1", 8080, _make_config(), tmp_path / "config.yaml")
 
             mock_site.start.assert_awaited_once()
 
-    async def test_serve_cleans_up_runner(self) -> None:
+    async def test_serve_cleans_up_runner(self, tmp_path) -> None:
         with (
             patch("api.server.web.AppRunner") as mock_runner_cls,
             patch("api.server.web.TCPSite") as mock_site_cls,
@@ -72,11 +72,11 @@ class TestServe:
             mock_site_cls.return_value = mock_site
             mock_event_cls.return_value.wait = AsyncMock()
 
-            await serve("127.0.0.1", 8080, _make_config())
+            await serve("127.0.0.1", 8080, _make_config(), tmp_path / "config.yaml")
 
             mock_runner.cleanup.assert_awaited_once()
 
-    async def test_serve_passes_host_and_port_to_site(self) -> None:
+    async def test_serve_passes_host_and_port_to_site(self, tmp_path) -> None:
         with (
             patch("api.server.web.AppRunner") as mock_runner_cls,
             patch("api.server.web.TCPSite") as mock_site_cls,
@@ -91,7 +91,7 @@ class TestServe:
             mock_site_cls.return_value = mock_site
             mock_event_cls.return_value.wait = AsyncMock()
 
-            await serve("127.0.0.1", 9000, _make_config())
+            await serve("127.0.0.1", 9000, _make_config(), tmp_path / "config.yaml")
 
             call_args = mock_site_cls.call_args
             assert call_args[0][1] == "127.0.0.1"

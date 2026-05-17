@@ -353,7 +353,7 @@ class TestMain:
             patch("main.Pipeline") as mock_pipeline_cls,
         ):
             await main()
-        mock_serve.assert_awaited_once_with("0.0.0.0", 8080, mock_cfg)
+        mock_serve.assert_awaited_once_with("0.0.0.0", 8080, mock_cfg, Path("config.yaml"))
         mock_pipeline_cls.assert_not_called()
 
     async def test_no_serve_flag_runs_pipeline_not_serve(

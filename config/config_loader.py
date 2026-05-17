@@ -8,7 +8,7 @@ from typing import Any, ClassVar, Literal
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from utils.exceptions import ConfigError
@@ -90,6 +90,8 @@ class LoggingConfig(BaseModel):
 
 class AppConfig(BaseModel):
     """Top-level application configuration loaded from YAML."""
+
+    model_config = ConfigDict(extra="forbid")
 
     feeds: list[FeedConfig] = Field(min_length=1)
     models: ModelsConfig
