@@ -6,7 +6,6 @@ import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 import yaml
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -14,7 +13,6 @@ from api.event_bus import EventBus
 from api.run_state import RunState
 from api.server import create_app
 from tests.test_config_loader import VALID_YAML
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -124,9 +122,6 @@ class TestGetFeeds:
 
     async def test_slug_matches_slugify_of_title(self, tmp_path) -> None:
         """Slug is produced by slugify(feed.title)."""
-        yaml_content = _TWO_FEEDS_YAML.replace('"Show A"', '"My Cool Show!"').replace(
-            "show-a", "my-cool-show"
-        )
         # Write explicit yaml with special title
         config_path = tmp_path / "config.yaml"
         yaml_data = {
@@ -220,7 +215,7 @@ class TestPostFeed:
 
     async def test_post_missing_url_returns_422(self, tmp_path) -> None:
         """POST with missing url returns 422 with field-level error body."""
-        app, config_path = _make_app(tmp_path)
+        app, _ = _make_app(tmp_path)
         with _make_db_patch():
             async with TestClient(TestServer(app)) as client:
                 resp = await client.post(
@@ -231,7 +226,7 @@ class TestPostFeed:
 
     async def test_post_extra_key_returns_422(self, tmp_path) -> None:
         """POST with extra key returns 422 (FeedConfig extra='forbid')."""
-        app, config_path = _make_app(tmp_path)
+        app, _ = _make_app(tmp_path)
         with _make_db_patch():
             async with TestClient(TestServer(app)) as client:
                 resp = await client.post(
@@ -280,7 +275,7 @@ class TestPatchFeed:
 
     async def test_patch_multi_field_updates_both(self, tmp_path) -> None:
         """PATCH with multiple fields updates all of them."""
-        app, config_path = _make_app(tmp_path)
+        app, _ = _make_app(tmp_path)
         with _make_db_patch():
             async with TestClient(TestServer(app)) as client:
                 resp = await client.patch(

@@ -24,10 +24,12 @@ PROVIDER_KEY_MAP: dict[str, str] = {
 class FeedConfig(BaseModel):
     """Configuration for a single podcast feed."""
 
+    model_config = ConfigDict(extra="forbid")
+
     title: str
     url: str
-    enabled: bool
-    episodes_to_keep: int = Field(ge=1)
+    enabled: bool = True
+    episodes_to_keep: int = Field(default=10, ge=1)
 
 
 class LLMConfig(BaseModel):
