@@ -13,6 +13,7 @@ from api.event_bus import EventBus
 from api.routes.control import create_control_router
 from api.routes.events import create_events_router
 from api.routes.health import create_health_router
+from api.routes.settings import create_settings_router
 from api.run_state import RunState
 
 if TYPE_CHECKING:
@@ -52,6 +53,7 @@ def create_app(
     app.add_routes(create_health_router(start_time))
     app.add_routes(create_events_router(event_bus))
     app.add_routes(create_control_router(config, event_bus, run_state))
+    app.add_routes(create_settings_router(config_path))
     return app
 
 
