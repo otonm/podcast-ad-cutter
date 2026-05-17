@@ -218,6 +218,9 @@ class Pipeline:
                 ))
 
             for feed in parsed_feeds:
+                if self._stop_event is not None and self._stop_event.is_set():
+                    logger.info("Graceful stop requested — skipping remaining feeds")
+                    break
                 cfg = feed_cfg_map[feed.config_title]
                 feed_slug = slugify(feed.title)
                 output_feed_dir = self._config.app.paths.output_dir / feed_slug
@@ -252,6 +255,9 @@ class Pipeline:
 
                 # ── Phase 3: Per-episode processing ───────────────────────────
                 for episode in episodes:
+                    if self._stop_event is not None and self._stop_event.is_set():
+                        logger.info("Graceful stop requested — halting before next episode")
+                        break
                     if await stores.episode.is_skipped(episode.guid):
                         logger.info(f"Episode {episode.guid!r}: skipped (permanently marked); skipping")
                         continue

@@ -124,7 +124,7 @@ def _patch_pipeline_internals(episodes: list[Episode], parsed: ParsedFeed):
 
 
 class TestGracefulStop:
-    async def test_stop_event_set_before_run_halts_after_first_episode(self) -> None:
+    async def test_stop_event_set_before_feed_loop_skips_all_episodes(self) -> None:
         ep1 = _make_episode("ep-1", 1)
         ep2 = _make_episode("ep-2", 2)
         episodes = [ep1, ep2]
@@ -141,9 +141,38 @@ class TestGracefulStop:
 
         call_count = 0
 
-        async def fake_process(**_kwargs) -> str:
+        async def fake_process(**_kwargs) -> str:  # pragma: no cover
             nonlocal call_count
             call_count += 1
+            return "done"
+
+        with _patch_pipeline_internals(episodes, parsed):
+            pipeline = Pipeline(config, stop_event=stop_event)
+            with patch.object(pipeline, "_process_episode_until_final", side_effect=fake_process):
+                await pipeline.run()
+
+        assert call_count == 0
+
+    async def test_stop_event_set_after_first_episode_halts_before_second(self) -> None:
+        ep1 = _make_episode("ep-1", 1)
+        ep2 = _make_episode("ep-2", 2)
+        episodes = [ep1, ep2]
+        feed_cfg = make_feed("My Show")
+        config = make_config([feed_cfg])
+        config.app.paths.data_dir = MagicMock()
+        config.app.paths.output_dir = MagicMock()
+        config.app.paths.cache_dir = MagicMock()
+        config.app.base_url = "http://localhost"
+        parsed = _make_parsed_feed("My Show", episodes)
+
+        stop_event = asyncio.Event()
+        call_count = 0
+
+        async def fake_process(*, episode: Episode, **_kwargs) -> str:
+            nonlocal call_count
+            call_count += 1
+            if episode.guid == "ep-1":
+                stop_event.set()
             return "done"
 
         with _patch_pipeline_internals(episodes, parsed):
@@ -178,6 +207,122 @@ class TestGracefulStop:
                 await pipeline.run()
 
         assert call_count == 2
+
+    async def test_stop_event_set_during_skipped_episode_halts_before_next(self) -> None:
+        ep_skipped = _make_episode("ep-skipped", 1)
+        ep_next = _make_episode("ep-next", 2)
+        episodes = [ep_skipped, ep_next]
+        feed_cfg = make_feed("My Show")
+        config = make_config([feed_cfg])
+        config.app.paths.data_dir = MagicMock()
+        config.app.paths.output_dir = MagicMock()
+        config.app.paths.cache_dir = MagicMock()
+        config.app.base_url = "http://localhost"
+        parsed = _make_parsed_feed("My Show", episodes)
+
+        stop_event = asyncio.Event()
+        call_count = 0
+
+        async def fake_process(**_kwargs) -> str:  # pragma: no cover
+            nonlocal call_count
+            call_count += 1
+            return "done"
+
+        async def is_skipped_with_stop(guid: str) -> bool:
+            if guid == "ep-skipped":
+                stop_event.set()
+                return True
+            return False  # pragma: no cover
+
+        with _patch_pipeline_internals(episodes, parsed):
+            with patch("components.pipeline.EpisodeStore") as mock_store_cls:
+                mock_store_cls.return_value.save_episodes = AsyncMock()
+                mock_store_cls.return_value.get_episodes_for_feed = AsyncMock(return_value=episodes)
+                mock_store_cls.return_value.update_episode_url = AsyncMock()
+                mock_store_cls.return_value.is_skipped = is_skipped_with_stop
+                pipeline = Pipeline(config, stop_event=stop_event)
+                with patch.object(pipeline, "_process_episode_until_final", side_effect=fake_process):
+                    await pipeline.run()
+
+        assert call_count == 0
+
+    async def test_stop_event_prevents_second_feed_from_running(self) -> None:
+        ep1 = _make_episode("ep-1", 1)
+        feed_cfg_a = make_feed("Feed A")
+        feed_cfg_b = make_feed("Feed B")
+        config = make_config([feed_cfg_a, feed_cfg_b])
+        config.app.paths.data_dir = MagicMock()
+        config.app.paths.output_dir = MagicMock()
+        config.app.paths.cache_dir = MagicMock()
+        config.app.base_url = "http://localhost"
+
+        parsed_a = _make_parsed_feed("Feed A", [ep1])
+        parsed_b = _make_parsed_feed("Feed B", [ep1])
+
+        stop_event = asyncio.Event()
+        call_count = 0
+
+        async def fake_process(**_kwargs) -> str:
+            nonlocal call_count
+            call_count += 1
+            stop_event.set()
+            return "done"
+
+        mock_db_obj = MagicMock()
+        mock_db_cm = MagicMock()
+        mock_db_cm.__aenter__ = AsyncMock(return_value=mock_db_obj)
+        mock_db_cm.__aexit__ = AsyncMock(return_value=False)
+        mock_store = AsyncMock()
+        mock_store.save_episodes = AsyncMock()
+        mock_store.get_episodes_for_feed = AsyncMock(return_value=[ep1])
+        mock_store.update_episode_url = AsyncMock()
+        mock_store.is_skipped = AsyncMock(return_value=False)
+
+        with (
+            patch("components.pipeline.FeedDownloader") as m_dl,
+            patch("components.pipeline.FeedParser") as m_fp,
+            patch("components.pipeline.FeedPublisher") as m_pub,
+            patch("components.pipeline.Database", return_value=mock_db_cm),
+            patch("components.pipeline.EpisodeStore", return_value=mock_store),
+            patch("components.pipeline.TranscriptionStore") as m_ts,
+            patch("components.pipeline.AudioMetadataStore"),
+            patch("components.pipeline.CostTrackingStore"),
+            patch("components.pipeline.TopicStore") as m_topic,
+            patch("components.pipeline.AdStore") as m_ad,
+            patch("components.pipeline.AdDetector"),
+            patch("components.pipeline.TopicExtractor"),
+            patch("components.pipeline.EpisodeTranscriptor"),
+            patch("components.pipeline.EpisodeDownloader"),
+            patch("components.pipeline.AudioProber"),
+            patch("components.pipeline.AudioPreprocessor"),
+            patch("components.pipeline.AdParser"),
+            patch("components.pipeline.AudioEditor"),
+            patch("components.pipeline.EpisodeCopier"),
+        ):
+            m_dl.return_value.download_all = AsyncMock(
+                return_value=[("Feed A", "<rss/>"), ("Feed B", "<rss/>")]
+            )
+            m_fp.return_value.parse_all.return_value = [parsed_a, parsed_b]
+            m_pub.return_value.publish = AsyncMock(return_value=Path("/out/feed.rss"))
+            m_pub.return_value.update_episode_url = AsyncMock()
+            m_ts.return_value.get_transcribed_guids = AsyncMock(return_value=set())
+            m_ts.return_value.save_transcription = AsyncMock()
+            m_ts.return_value.save_segments = AsyncMock()
+            m_ts.return_value.get_segments_for_guid = AsyncMock(return_value=[])
+            m_ts.return_value.get_transcription_text = AsyncMock(return_value="text")
+            m_topic.return_value.get_extracted_guids = AsyncMock(return_value=set())
+            m_topic.return_value.save_topic = AsyncMock()
+            m_topic.return_value.get_topic_for_guid = AsyncMock(return_value=None)
+            m_ad.return_value.get_detected_guids = AsyncMock(return_value=set())
+            m_ad.return_value.get_segments_for_guid = AsyncMock(return_value=[])
+            m_ad.return_value.save_segments = AsyncMock()
+            m_ad.return_value.mark_detected = AsyncMock()
+
+            pipeline = Pipeline(config, stop_event=stop_event)
+            with patch.object(pipeline, "_process_episode_until_final", side_effect=fake_process):
+                await pipeline.run()
+
+        assert call_count == 1
 
 
 class TestRunStateUpdates:
