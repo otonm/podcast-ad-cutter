@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -75,16 +75,6 @@ def _make_app(tmp_path: Path, yaml_content: str = _TWO_FEEDS_YAML) -> tuple[obje
 def _pub_date_str(pubdate: str) -> str:
     """Convert ISO pubdate string to the output-file date prefix."""
     return datetime.fromisoformat(pubdate).astimezone().strftime("%d.%m.%Y")
-
-
-async def _seed_episode(db_path: Path, guid: str, podcast: str, title: str, pubdate: str | None) -> None:
-    """Insert a minimal episode row into the test DB."""
-    async with Database(db_path) as db:
-        await db.conn.execute(
-            "INSERT INTO episodes (podcast, guid, title, pubdate, url) VALUES (?, ?, ?, ?, ?)",
-            (podcast, guid, title, pubdate, "https://example.com/ep"),
-        )
-        await db.conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +320,29 @@ class TestGetEpisodes:
             data = await resp.json()
             row = next(r for r in data if r["guid"] == "ep-pending")
             assert row["pipeline_state"] == "pending"
+
+    async def test_episodes_invalid_limit_returns_400(self, tmp_path: Path) -> None:
+        """GET /api/v1/db/episodes?limit=abc returns 400."""
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/episodes?limit=abc")
+            assert resp.status == 400
+
+    async def test_episodes_invalid_offset_returns_400(self, tmp_path: Path) -> None:
+        """GET /api/v1/db/episodes?offset=xyz returns 400."""
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/episodes?offset=xyz")
+            assert resp.status == 400
+
+    async def test_episodes_unknown_feed_slug_returns_empty_list(self, tmp_path: Path) -> None:
+        """GET /api/v1/db/episodes?feed=does-not-exist returns empty list."""
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/episodes?feed=does-not-exist")
+            assert resp.status == 200
+            data = await resp.json()
+            assert data == []
 
 
 # ---------------------------------------------------------------------------
@@ -584,3 +597,14 @@ class TestGetCosts:
             assert None not in ep_guids
             assert "ep-real-guid" in ep_guids
             assert len(ep_guids) == 1
+
+    async def test_costs_unknown_feed_slug_returns_empty_response(self, tmp_path: Path) -> None:
+        """GET /api/v1/db/costs?feed=does-not-exist returns empty zero response."""
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/costs?feed=does-not-exist")
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["total"] == 0.0
+            assert data["by_model"] == []
+            assert data["by_episode"] == []
