@@ -42,3 +42,32 @@ async def test_save_cost_allows_multiple_rows(tmp_path: Path) -> None:
         cursor = await conn.execute("SELECT COUNT(*) FROM cost_tracking")
         (count,) = await cursor.fetchone()  # type: ignore[misc]
     assert count == 2
+
+
+async def test_save_cost_with_guid_stores_guid(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    async with Database(db_path) as db:
+        await db.conn.execute(
+            "INSERT INTO episodes (podcast, title, guid, url) VALUES (?, ?, ?, ?)",
+            ("Show A", "Ep 1", "guid-1", "https://example.com/ep1"),
+        )
+        await db.conn.commit()
+        store = CostTrackingStore(db.conn)
+        await store.save_cost(_cost(cost=0.005), guid="guid-1")
+
+    async with aiosqlite.connect(db_path) as conn:
+        cursor = await conn.execute("SELECT guid FROM cost_tracking")
+        row = await cursor.fetchone()
+    assert row == ("guid-1",)
+
+
+async def test_save_cost_without_guid_stores_null(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    async with Database(db_path) as db:
+        store = CostTrackingStore(db.conn)
+        await store.save_cost(_cost(cost=0.003))
+
+    async with aiosqlite.connect(db_path) as conn:
+        cursor = await conn.execute("SELECT guid FROM cost_tracking")
+        row = await cursor.fetchone()
+    assert row == (None,)
