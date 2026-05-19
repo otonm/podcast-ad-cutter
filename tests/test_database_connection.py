@@ -318,3 +318,25 @@ async def test_skipped_column_migration_is_idempotent(db_path: Path) -> None:
     async with Database(db_path):
         pass
     assert "skipped" in await _column_names(db_path)
+
+
+async def _cost_tracking_column_names(db_path: Path) -> set[str]:
+    async with aiosqlite.connect(db_path) as conn:
+        cursor = await conn.execute("PRAGMA table_info(cost_tracking)")
+        rows = await cursor.fetchall()
+    return {row[1] for row in rows}
+
+
+async def test_cost_tracking_has_guid_column(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    assert "guid" in await _cost_tracking_column_names(db_path)
+
+
+async def test_cost_tracking_guid_migration_is_idempotent(db_path: Path) -> None:
+    """Opening Database twice on the same path must not raise (idempotency)."""
+    async with Database(db_path):
+        pass
+    async with Database(db_path):
+        pass
+    assert "guid" in await _cost_tracking_column_names(db_path)
