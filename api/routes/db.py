@@ -11,7 +11,7 @@ from aiohttp import web
 from slugify import slugify
 
 from config.config_loader import AppConfig
-from database.connection import Database
+from database.connection import ReadOnlyDatabase
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -59,9 +59,9 @@ def _resolve_slug(slug: str, feeds: list) -> str | None:
     return None
 
 
-def _is_complete(row_pubdate: str | None, title: str, podcast: str, output_dir: Path) -> bool:
+def _is_complete(row_pubdate: str | None, title: str | None, podcast: str | None, output_dir: Path) -> bool:
     """Return True if the episode's output file exists on disk."""
-    if row_pubdate is None:
+    if row_pubdate is None or title is None or podcast is None:
         return False
     pub_date = datetime.fromisoformat(row_pubdate).astimezone()
     pub_date_str = pub_date.strftime("%d.%m.%Y")
@@ -83,26 +83,35 @@ def create_db_router(db_path: Path, output_dir: Path, config_path: Path) -> web.
         RouteTableDef with DB viewer handlers registered.
 
     """
+    try:
+        with config_path.open() as f:
+            raw = yaml.safe_load(f)
+        _feeds = AppConfig.model_validate(raw).feeds
+    except (FileNotFoundError, OSError):
+        _feeds = []
+
     routes = web.RouteTableDef()
 
     @routes.get("/api/v1/db/episodes")
     async def get_episodes(request: web.Request) -> web.Response:
         try:
-            limit = min(int(request.rel_url.query.get("limit", 50)), 200)
-            offset = max(0, int(request.rel_url.query.get("offset", 0)))
+            limit = int(request.rel_url.query.get("limit", 50))
+            offset = int(request.rel_url.query.get("offset", 0))
         except ValueError:
             raise web.HTTPBadRequest(
                 text='{"error": "offset and limit must be integers"}',
                 content_type="application/json",
             ) from None
+        if not (1 <= limit <= 200) or offset < 0:  # noqa: PLR2004
+            raise web.HTTPBadRequest(
+                text='{"error": "limit must be 1-200 and offset must be >= 0"}',
+                content_type="application/json",
+            )
 
         feed_slug = request.rel_url.query.get("feed")
         podcast_title: str | None = None
         if feed_slug is not None:
-            with config_path.open() as f:
-                raw = yaml.safe_load(f)
-            cfg = AppConfig.model_validate(raw)
-            podcast_title = _resolve_slug(feed_slug, cfg.feeds)
+            podcast_title = _resolve_slug(feed_slug, _feeds)
             if podcast_title is None:
                 return web.json_response([])
 
@@ -113,7 +122,7 @@ def create_db_router(db_path: Path, output_dir: Path, config_path: Path) -> web.
             sql = _SQL_EPISODES.format(where="")
             params = (limit, offset)
 
-        async with Database(db_path) as db:
+        async with ReadOnlyDatabase(db_path) as db:
             cursor = await db.conn.execute(sql, params)
             rows = await cursor.fetchall()
 
@@ -140,7 +149,7 @@ def create_db_router(db_path: Path, output_dir: Path, config_path: Path) -> web.
     @routes.get("/api/v1/db/transcriptions/{guid}")
     async def get_transcription(request: web.Request) -> web.Response:
         guid = request.match_info["guid"]
-        async with Database(db_path) as db:
+        async with ReadOnlyDatabase(db_path) as db:
             async with db.conn.execute(
                 "SELECT transcription FROM transcriptions WHERE guid = ?", (guid,)
             ) as cursor:
@@ -165,7 +174,7 @@ def create_db_router(db_path: Path, output_dir: Path, config_path: Path) -> web.
     @routes.get("/api/v1/db/ads/{guid}")
     async def get_ads(request: web.Request) -> web.Response:
         guid = request.match_info["guid"]
-        async with Database(db_path) as db:
+        async with ReadOnlyDatabase(db_path) as db:
             async with db.conn.execute(
                 "SELECT id FROM ad_detection_runs WHERE guid = ?", (guid,)
             ) as cursor:
@@ -196,14 +205,11 @@ def create_db_router(db_path: Path, output_dir: Path, config_path: Path) -> web.
         feed_slug = request.rel_url.query.get("feed")
         podcast_title: str | None = None
         if feed_slug is not None:
-            with config_path.open() as f:
-                raw = yaml.safe_load(f)
-            cfg = AppConfig.model_validate(raw)
-            podcast_title = _resolve_slug(feed_slug, cfg.feeds)
+            podcast_title = _resolve_slug(feed_slug, _feeds)
             if podcast_title is None:
                 return web.json_response({"total": 0.0, "by_model": [], "by_episode": []})
 
-        async with Database(db_path) as db:
+        async with ReadOnlyDatabase(db_path) as db:
             if podcast_title is not None:
                 # Feed-filtered queries
                 cursor = await db.conn.execute(

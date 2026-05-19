@@ -11,6 +11,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from slugify import slugify
 
 from api.event_bus import EventBus
+from api.routes.db import _is_complete
 from api.run_state import RunState
 from api.server import create_app
 from database.connection import Database
@@ -130,24 +131,33 @@ class TestGetEpisodes:
             guids_page2 = {r["guid"] for r in page2}
             assert guids_page1.isdisjoint(guids_page2)
 
-    async def test_episodes_limit_capped_at_200(self, tmp_path: Path) -> None:
-        """GET /api/v1/db/episodes?limit=9999 is capped at 200."""
-        db_path = tmp_path / "data.db"
-        async with Database(db_path) as db:
-            for i in range(5):
-                await db.conn.execute(
-                    "INSERT INTO episodes (podcast, guid, title, url) VALUES (?, ?, ?, ?)",
-                    ("Show A", f"ep-{i}", f"Episode {i}", "https://example.com/ep"),
-                )
-            await db.conn.commit()
-
+    async def test_episodes_limit_too_large_returns_400(self, tmp_path: Path) -> None:
+        """GET /api/v1/db/episodes?limit=9999 returns 400 (limit must be 1-200)."""
         app, _ = _make_app(tmp_path)
         async with TestClient(TestServer(app)) as client:
-            # With only 5 rows, even a cap of 200 returns 5 — but the request itself must succeed
             resp = await client.get("/api/v1/db/episodes?limit=9999")
-            assert resp.status == 200
-            data = await resp.json()
-            assert len(data) <= 200
+            assert resp.status == 400
+
+    async def test_episodes_negative_limit_returns_400(self, tmp_path: Path) -> None:
+        """GET /api/v1/db/episodes?limit=-1 returns 400."""
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/episodes?limit=-1")
+            assert resp.status == 400
+
+    async def test_episodes_zero_limit_returns_400(self, tmp_path: Path) -> None:
+        """GET /api/v1/db/episodes?limit=0 returns 400."""
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/episodes?limit=0")
+            assert resp.status == 400
+
+    async def test_episodes_negative_offset_returns_400(self, tmp_path: Path) -> None:
+        """GET /api/v1/db/episodes?offset=-1 returns 400."""
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/episodes?offset=-1")
+            assert resp.status == 400
 
     async def test_episodes_feed_filter_maps_slug_to_podcast_title(self, tmp_path: Path) -> None:
         """GET /api/v1/db/episodes?feed=show-a returns only Show A episodes."""
@@ -391,6 +401,8 @@ class TestGetTranscriptions:
 
     async def test_transcriptions_returns_404_when_missing(self, tmp_path: Path) -> None:
         """GET /api/v1/db/transcriptions/nonexistent returns 404."""
+        async with Database(tmp_path / "data.db"):
+            pass
         app, _ = _make_app(tmp_path)
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/v1/db/transcriptions/nonexistent-guid")
@@ -488,6 +500,8 @@ class TestGetAds:
 
     async def test_ads_returns_404_when_no_run_row(self, tmp_path: Path) -> None:
         """GET /api/v1/db/ads/nonexistent returns 404."""
+        async with Database(tmp_path / "data.db"):
+            pass
         app, _ = _make_app(tmp_path)
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/v1/db/ads/no-such-guid")
@@ -608,3 +622,19 @@ class TestGetCosts:
             assert data["total"] == 0.0
             assert data["by_model"] == []
             assert data["by_episode"] == []
+
+
+# ---------------------------------------------------------------------------
+# _is_complete helper — None-guard tests (WR-02)
+# ---------------------------------------------------------------------------
+
+
+class TestIsCompleteHelper:
+    def test_returns_false_when_title_is_none(self, tmp_path: Path) -> None:
+        assert _is_complete("2024-01-01T00:00:00Z", None, "Podcast", tmp_path) is False
+
+    def test_returns_false_when_podcast_is_none(self, tmp_path: Path) -> None:
+        assert _is_complete("2024-01-01T00:00:00Z", "Title", None, tmp_path) is False
+
+    def test_returns_false_when_pubdate_is_none(self, tmp_path: Path) -> None:
+        assert _is_complete(None, "Title", "Podcast", tmp_path) is False
