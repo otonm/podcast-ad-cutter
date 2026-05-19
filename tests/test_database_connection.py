@@ -133,11 +133,28 @@ async def test_episode_audio_metadata_has_expected_columns(db_path: Path) -> Non
     assert {"id", "guid", "duration", "codec", "channels", "bitrate"} <= cols
 
 
+_KNOWN_TABLES = frozenset({
+    "episodes", "episode_audio_metadata", "transcriptions",
+    "transcription_segments", "cost_tracking", "topic_extractions",
+    "ad_segments", "ad_detection_runs",
+})
+
+
 async def _table_column_names(db_path: Path, table: str) -> set[str]:
+    if table not in _KNOWN_TABLES:
+        msg = f"unexpected table name: {table!r}"
+        raise ValueError(msg)
     async with aiosqlite.connect(db_path) as conn:
         cursor = await conn.execute(f"PRAGMA table_info({table})")
         rows = await cursor.fetchall()
     return {row[1] for row in rows}
+
+
+async def test_table_column_names_rejects_unknown_table(db_path: Path) -> None:
+    async with Database(db_path):
+        pass
+    with pytest.raises(ValueError, match="unexpected table name"):
+        await _table_column_names(db_path, "unknown_table")
 
 
 async def test_transcriptions_table_exists(db_path: Path) -> None:
