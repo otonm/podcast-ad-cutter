@@ -96,7 +96,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. `GET /api/v1/db/costs` returns LLM API costs per episode and aggregate totals; `?feed={slug}` filter works
   5. All DB endpoints are read-only; no write path exists through the API
 **Plans**: 2 plans
-- [ ] 05-01-PLAN.md — cost_tracking.guid migration + save_cost(guid) + pipeline call site updates (DB-04 prerequisite)
+- [x] 05-01-PLAN.md — cost_tracking.guid migration + save_cost(guid) + pipeline call site updates (DB-04 prerequisite)
 - [ ] 05-02-PLAN.md — create_db_router with 4 read-only endpoints + server wiring (DB-01, DB-02, DB-03, DB-04)
 **UI hint**: no
 
@@ -124,5 +124,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 2. SSE Progress Stream | 2/2 | Complete | 2026-05-16 |
 | 3. Pipeline Control | 3/3 | Complete   | 2026-05-16 |
 | 4. Config & Feed Management | 2/2 | Complete | 2026-05-17 |
-| 5. Database Viewer | 0/2 | Not started | - |
+| 5. Database Viewer | 1/2 | In Progress|  |
 | 6. Log Access | 0/TBD | Not started | - |
