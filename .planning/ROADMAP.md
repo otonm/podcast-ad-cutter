@@ -16,7 +16,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: SSE Progress Stream** - Connected SSE client receives live stage-transition and progress events while the pipeline runs (completed 2026-05-16)
 - [x] **Phase 3: Pipeline Control** - Client can start, stop, and inspect a pipeline run; per-feed and per-episode control works (completed 2026-05-16)
 - [x] **Phase 4: Config & Feed Management** - All settings and feed configuration can be read and modified via API; changes persist atomically (completed 2026-05-17)
-- [ ] **Phase 5: Database Viewer** - All database tables exposed as read-only REST endpoints with pagination and filtering
+- [x] **Phase 5: Database Viewer** - All database tables exposed as read-only REST endpoints with pagination and filtering (completed 2026-05-19)
 - [ ] **Phase 6: Log Access** - All log files can be listed, downloaded, and tailed in real time via SSE
 
 ## Phase Details
@@ -97,7 +97,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   5. All DB endpoints are read-only; no write path exists through the API
 **Plans**: 2 plans
 - [x] 05-01-PLAN.md — cost_tracking.guid migration + save_cost(guid) + pipeline call site updates (DB-04 prerequisite)
-- [ ] 05-02-PLAN.md — create_db_router with 4 read-only endpoints + server wiring (DB-01, DB-02, DB-03, DB-04)
+- [x] 05-02-PLAN.md — create_db_router with 4 read-only endpoints + server wiring (DB-01, DB-02, DB-03, DB-04)
 **UI hint**: no
 
 ### Phase 6: Log Access
@@ -124,5 +124,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 2. SSE Progress Stream | 2/2 | Complete | 2026-05-16 |
 | 3. Pipeline Control | 3/3 | Complete   | 2026-05-16 |
 | 4. Config & Feed Management | 2/2 | Complete | 2026-05-17 |
-| 5. Database Viewer | 1/2 | In Progress|  |
+| 5. Database Viewer | 2/2 | Complete   | 2026-05-19 |
 | 6. Log Access | 0/TBD | Not started | - |
