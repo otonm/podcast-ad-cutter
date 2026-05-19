@@ -124,9 +124,9 @@ CREATE INDEX IF NOT EXISTS idx_ad_segments_guid ON ad_segments(guid)
 class Database:
     """Async context manager that owns the SQLite connection and schema.
 
-    Opens the connection on entry, applies the schema (idempotent), and
-    closes the connection on exit.  Only the Pipeline should instantiate
-    this class.
+    Opens the connection on entry, applies the full schema and column
+    migrations (idempotent), and closes the connection on exit.
+    Used by the Pipeline for all write operations.
 
     Args:
         db_path: Path to the SQLite file. Parent directories are created
@@ -186,3 +186,38 @@ class Database:
         """Close the database connection."""
         await self.conn.close()
         logger.debug(f"Database closed: {self._db_path}")
+
+
+class ReadOnlyDatabase:
+    """Read-only async context manager for the API layer.
+
+    Opens via SQLite URI with mode=ro — never runs migrations or acquires
+    write locks. Safe to use concurrently with the write-capable Database.
+
+    Args:
+        db_path: Path to the SQLite file.
+
+    Attributes:
+        conn: The live aiosqlite connection, available between __aenter__
+            and __aexit__.
+
+    """
+
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = db_path
+        self.conn: aiosqlite.Connection
+
+    async def __aenter__(self) -> Self:
+        """Open a read-only connection to the database."""
+        uri = f"file:{self._db_path}?mode=ro"
+        self.conn = await aiosqlite.connect(uri, uri=True)
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        """Close the database connection."""
+        await self.conn.close()
