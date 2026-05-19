@@ -169,6 +169,10 @@ class Database:
             await self.conn.execute(
                 "ALTER TABLE episodes ADD COLUMN skipped INTEGER NOT NULL DEFAULT 0"
             )
+        with contextlib.suppress(aiosqlite.OperationalError):
+            await self.conn.execute(
+                "ALTER TABLE cost_tracking ADD COLUMN guid TEXT REFERENCES episodes(guid)"
+            )
         await self.conn.commit()
         logger.debug(f"Database opened: {self._db_path}")
         return self
