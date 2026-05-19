@@ -11,6 +11,7 @@ from aiohttp import web
 
 from api.event_bus import EventBus
 from api.routes.control import create_control_router
+from api.routes.db import create_db_router
 from api.routes.events import create_events_router
 from api.routes.feeds import create_feeds_router
 from api.routes.health import create_health_router
@@ -56,6 +57,11 @@ def create_app(
     app.add_routes(create_control_router(config, event_bus, run_state))
     app.add_routes(create_settings_router(config_path))
     app.add_routes(create_feeds_router(config_path, config.app.paths.data_dir / "data.db"))
+    app.add_routes(create_db_router(
+        config.app.paths.data_dir / "data.db",
+        config.app.paths.output_dir,
+        config_path,
+    ))
     return app
 
 
