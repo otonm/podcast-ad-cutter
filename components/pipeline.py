@@ -650,7 +650,7 @@ class Pipeline:
                     ]
                     await stores.ad.save_segments(episode.guid, ad_segments)
                     await stores.ad.mark_detected(episode.guid)
-                    await stores.cost.save_cost(ad_cost)
+                    await stores.cost.save_cost(ad_cost, guid=episode.guid)
                     stores.ad_detected_guids.add(episode.guid)
                     self._emit_stage(episode.guid, "ad-detect", "completed", feed_slug)
                     continue
@@ -671,7 +671,7 @@ class Pipeline:
                         episode.description,
                     )
                     await stores.topic.save_topic(topic_obj)
-                    await stores.cost.save_cost(topic_cost)
+                    await stores.cost.save_cost(topic_cost, guid=episode.guid)
                     stores.extracted_guids.add(episode.guid)
                     self._emit_stage(episode.guid, "topic", "completed", feed_slug)
                     continue
@@ -706,7 +706,7 @@ class Pipeline:
                         logger.debug(f"Episode '{episode.guid}': removed mono file {mono_path}")
                     await stores.transcription.save_transcription(transcription)
                     await stores.transcription.save_segments(t_segments)
-                    await stores.cost.save_cost(cost)
+                    await stores.cost.save_cost(cost, guid=episode.guid)
                     stores.transcribed_guids.add(episode.guid)
                     self._emit_stage(episode.guid, "transcribe", "completed", feed_slug)
                     continue
