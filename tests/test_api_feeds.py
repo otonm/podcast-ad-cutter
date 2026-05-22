@@ -93,7 +93,7 @@ def _make_app(tmp_path: Path, yaml_content: str = _TWO_FEEDS_YAML) -> tuple[obje
     config_path.write_text(yaml_content)
     cfg = MagicMock()
     cfg.app.paths.data_dir = tmp_path
-    app = create_app(EventBus(), time.monotonic(), RunState(), cfg, config_path)
+    app = create_app(EventBus(), time.monotonic(), RunState(), cfg, config_path, config_path.parent / "logs")
     return app, config_path
 
 
@@ -143,7 +143,7 @@ class TestGetFeeds:
             yaml.dump(yaml_data, f)
         cfg = MagicMock()
         cfg.app.paths.data_dir = tmp_path
-        app = create_app(EventBus(), time.monotonic(), RunState(), cfg, config_path)
+        app = create_app(EventBus(), time.monotonic(), RunState(), cfg, config_path, config_path.parent / "logs")
         with _make_db_patch():
             async with TestClient(TestServer(app)) as client:
                 resp = await client.get("/api/v1/feeds")
@@ -379,7 +379,7 @@ class TestDeleteFeed:
         config_path.write_text(single_feed_yaml)
         cfg = MagicMock()
         cfg.app.paths.data_dir = tmp_path
-        app = create_app(EventBus(), time.monotonic(), RunState(), cfg, config_path)
+        app = create_app(EventBus(), time.monotonic(), RunState(), cfg, config_path, config_path.parent / "logs")
         original = config_path.read_text()
         with _make_db_patch():
             async with TestClient(TestServer(app)) as client:

@@ -69,7 +69,7 @@ def _make_app(tmp_path: Path, yaml_content: str = _TWO_FEEDS_YAML) -> tuple[obje
     cfg = MagicMock()
     cfg.app.paths.data_dir = tmp_path
     cfg.app.paths.output_dir = tmp_path / "output"
-    app = create_app(EventBus(), time.monotonic(), RunState(), cfg, config_path)
+    app = create_app(EventBus(), time.monotonic(), RunState(), cfg, config_path, tmp_path / "logs")
     return app, config_path
 
 

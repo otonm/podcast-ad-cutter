@@ -30,7 +30,10 @@ class TestGetSettings:
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         config_path = tmp_path / "config.yaml"
         config_path.write_text(VALID_YAML)
-        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config(), config_path)
+        app = create_app(
+            EventBus(), time.monotonic(), RunState(), _make_config(),
+            config_path, config_path.parent / "logs",
+        )
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/v1/settings")
             assert resp.status == 200
@@ -48,7 +51,10 @@ class TestGetSettings:
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         config_path = tmp_path / "config.yaml"
         config_path.write_text(VALID_YAML)
-        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config(), config_path)
+        app = create_app(
+            EventBus(), time.monotonic(), RunState(), _make_config(),
+            config_path, config_path.parent / "logs",
+        )
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/v1/settings")
             assert resp.status == 200
@@ -67,7 +73,10 @@ class TestGetSettings:
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         config_path = tmp_path / "config.yaml"
         config_path.write_text(VALID_YAML)
-        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config(), config_path)
+        app = create_app(
+            EventBus(), time.monotonic(), RunState(), _make_config(),
+            config_path, config_path.parent / "logs",
+        )
         async with TestClient(TestServer(app)) as client:
             resp1 = await client.get("/api/v1/settings")
             body1 = await resp1.json()
@@ -88,7 +97,10 @@ class TestGetSettings:
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         config_path = tmp_path / "config.yaml"
         config_path.write_text(VALID_YAML)
-        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config(), config_path)
+        app = create_app(
+            EventBus(), time.monotonic(), RunState(), _make_config(),
+            config_path, config_path.parent / "logs",
+        )
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/v1/settings")
             body = await resp.json()
@@ -104,7 +116,10 @@ class TestPatchSettings:
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         config_path = tmp_path / "config.yaml"
         config_path.write_text(VALID_YAML)
-        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config(), config_path)
+        app = create_app(
+            EventBus(), time.monotonic(), RunState(), _make_config(),
+            config_path, config_path.parent / "logs",
+        )
         async with TestClient(TestServer(app)) as client:
             resp = await client.patch("/api/v1/settings", json={"ad_detection": {"min_confidence": 0.9}})
             assert resp.status == 200
@@ -120,7 +135,10 @@ class TestPatchSettings:
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         config_path = tmp_path / "config.yaml"
         config_path.write_text(VALID_YAML)
-        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config(), config_path)
+        app = create_app(
+            EventBus(), time.monotonic(), RunState(), _make_config(),
+            config_path, config_path.parent / "logs",
+        )
         async with TestClient(TestServer(app)) as client:
             resp = await client.patch(
                 "/api/v1/settings", json={"ad_detecgion": {"min_confidence": 0.9}}
@@ -136,7 +154,10 @@ class TestPatchSettings:
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         config_path = tmp_path / "config.yaml"
         config_path.write_text(VALID_YAML)
-        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config(), config_path)
+        app = create_app(
+            EventBus(), time.monotonic(), RunState(), _make_config(),
+            config_path, config_path.parent / "logs",
+        )
         async with TestClient(TestServer(app)) as client:
             resp = await client.patch(
                 "/api/v1/settings",
@@ -159,7 +180,10 @@ class TestPatchSettings:
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         config_path = tmp_path / "config.yaml"
         config_path.write_text(VALID_YAML)
-        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config(), config_path)
+        app = create_app(
+            EventBus(), time.monotonic(), RunState(), _make_config(),
+            config_path, config_path.parent / "logs",
+        )
         async with TestClient(TestServer(app)) as client:
             resp = await client.patch(
                 "/api/v1/settings", json={"ad_detection": {"min_confidence": "not-a-number"}}
@@ -175,7 +199,10 @@ class TestPatchSettings:
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         config_path = tmp_path / "config.yaml"
         config_path.write_text(VALID_YAML)
-        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config(), config_path)
+        app = create_app(
+            EventBus(), time.monotonic(), RunState(), _make_config(),
+            config_path, config_path.parent / "logs",
+        )
         async with TestClient(TestServer(app)) as client:
             resp = await client.patch("/api/v1/settings", json={"ad_detection": {"min_confidence": 0.8}})
             assert resp.status == 200
@@ -195,7 +222,10 @@ class TestPatchSettings:
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         config_path = tmp_path / "config.yaml"
         config_path.write_text(VALID_YAML)
-        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config(), config_path)
+        app = create_app(
+            EventBus(), time.monotonic(), RunState(), _make_config(),
+            config_path, config_path.parent / "logs",
+        )
         async with TestClient(TestServer(app)) as client:
             await client.patch("/api/v1/settings", json={"ad_detection": {"min_confidence": 0.85}})
             resp = await client.get("/api/v1/settings")
@@ -212,7 +242,10 @@ class TestPatchSettings:
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         config_path = tmp_path / "config.yaml"
         config_path.write_text(VALID_YAML)
-        app = create_app(EventBus(), time.monotonic(), RunState(), _make_config(), config_path)
+        app = create_app(
+            EventBus(), time.monotonic(), RunState(), _make_config(),
+            config_path, config_path.parent / "logs",
+        )
 
         mock_replace = MagicMock(wraps=os.replace)
         with mock_patch("api.routes.settings.os.replace", mock_replace):
