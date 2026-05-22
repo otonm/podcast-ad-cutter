@@ -388,3 +388,52 @@ class TestLogTail:
             resp = await client.get("/api/v1/logs/app.log/tail?interval=999")
             assert resp.status == 200
             await resp.content.read(1024)
+
+    async def test_tail_streams_appended_content(self, tmp_path: Path) -> None:
+        """Content appended to the file appears as a subsequent SSE data event."""
+        import asyncio as _asyncio
+
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        log_file = log_dir / "live.log"
+        log_file.write_bytes(b"initial\n")
+
+        app = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/logs/live.log/tail?bytes=100&interval=0.5")
+            assert resp.status == 200
+            # Read backfill
+            chunk1 = await resp.content.read(1024)
+            assert b"initial" in chunk1
+            # Append new content to the file
+            with log_file.open("ab") as f:
+                f.write(b"appended line\n")
+            # Wait for at least one poll cycle (interval=0.5s + buffer)
+            await _asyncio.sleep(0.8)
+            # Read the next chunk containing the appended content
+            chunk2 = await resp.content.read(1024)
+            assert b"appended line" in chunk2
+
+    async def test_tail_rotation_streams_new_content_from_start(self, tmp_path: Path) -> None:
+        """When the file shrinks (rotation), streaming restarts from byte 0."""
+        import asyncio as _asyncio
+
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        log_file = log_dir / "rotating.log"
+        log_file.write_bytes(b"old content before rotation\n")
+
+        app = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/logs/rotating.log/tail?bytes=100&interval=0.5")
+            assert resp.status == 200
+            # Read backfill of old content
+            chunk1 = await resp.content.read(1024)
+            assert b"old content" in chunk1
+            # Simulate rotation: truncate and write shorter new content
+            log_file.write_bytes(b"new\n")  # shorter — triggers rotation detection
+            # Wait for at least one poll cycle
+            await _asyncio.sleep(0.8)
+            # Read the next chunk — should contain new content from byte 0
+            chunk2 = await resp.content.read(1024)
+            assert b"new" in chunk2
