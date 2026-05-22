@@ -300,3 +300,90 @@ class TestLogRead:
             assert resp.status == 200
             body = await resp.read()
             assert body == b"episode log content"
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/logs/{filename}/tail — SSE live tail
+# ---------------------------------------------------------------------------
+
+
+class TestLogTail:
+    async def test_tail_returns_200_and_event_stream_content_type(self, tmp_path: Path) -> None:
+        """GET /api/v1/logs/<file>/tail returns 200 with Content-Type text/event-stream."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "app.log").write_bytes(b"existing content\n")
+
+        app = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/logs/app.log/tail?bytes=100&interval=0.5")
+            assert resp.status == 200
+            assert "text/event-stream" in resp.headers["Content-Type"]
+            # Close the connection by reading available data without blocking forever
+            chunk = await resp.content.read(1024)
+            assert len(chunk) > 0
+
+    async def test_tail_backfill_contains_existing_file_content(self, tmp_path: Path) -> None:
+        """First SSE chunk contains existing file content (backfill)."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        log_file = log_dir / "app.log"
+        log_file.write_bytes(b"line1\nline2\n")
+
+        app = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/logs/app.log/tail?bytes=100&interval=0.5")
+            assert resp.status == 200
+            chunk = await resp.content.read(1024)
+            assert b"line1" in chunk
+            assert b"line2" in chunk
+
+    async def test_tail_backfill_whole_file_when_smaller_than_bytes(self, tmp_path: Path) -> None:
+        """When file is smaller than ?bytes=N, the whole file is sent as backfill."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        log_file = log_dir / "small.log"
+        log_file.write_bytes(b"tiny content")  # 12 bytes < 1000 bytes requested
+
+        app = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/logs/small.log/tail?bytes=1000&interval=0.5")
+            assert resp.status == 200
+            chunk = await resp.content.read(1024)
+            assert b"tiny content" in chunk
+
+    async def test_tail_traversal_returns_400(self, tmp_path: Path) -> None:
+        """Path traversal on the tail route returns 400."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+
+        app = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/logs/..%2Fetc%2Fpasswd/tail", allow_redirects=False)
+            assert resp.status == 400
+
+    async def test_tail_interval_clamped_below(self, tmp_path: Path) -> None:
+        """?interval below 0.5 is clamped to 0.5 (no error returned)."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "app.log").write_bytes(b"content\n")
+
+        app = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            # interval=0.1 should clamp to 0.5 without error
+            resp = await client.get("/api/v1/logs/app.log/tail?interval=0.1")
+            assert resp.status == 200
+            await resp.content.read(1024)
+
+    async def test_tail_interval_clamped_above(self, tmp_path: Path) -> None:
+        """?interval above 10.0 is clamped to 10.0 (no error returned)."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "app.log").write_bytes(b"content\n")
+
+        app = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            # interval=999 should clamp to 10.0 without error
+            resp = await client.get("/api/v1/logs/app.log/tail?interval=999")
+            assert resp.status == 200
+            await resp.content.read(1024)
