@@ -110,7 +110,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. `GET /api/v1/logs/{filename}` returns the full log file content; `?offset=N&limit=N` byte-offset pagination returns the correct slice
   3. `GET /api/v1/logs/{filename}/tail` streams new log lines via SSE as they are appended to the file in real time
   4. Requesting a filename with path traversal characters (e.g., `../`) returns 400 or 404 and does not expose files outside the log directory
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 06-01-PLAN.md — Add log_dir to create_app(), wire create_logs_router skeleton, update all test call sites (LOG-01..03 seam)
+- [ ] 06-02-PLAN.md — List endpoint + read/paginate endpoint + path-traversal guard (LOG-01, LOG-02)
+- [ ] 06-03-PLAN.md — SSE tail endpoint: backfill, poll loop, rotation detection (LOG-03)
 **UI hint**: no
 
 ## Progress
@@ -125,4 +128,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 3. Pipeline Control | 3/3 | Complete   | 2026-05-16 |
 | 4. Config & Feed Management | 2/2 | Complete | 2026-05-17 |
 | 5. Database Viewer | 2/2 | Complete   | 2026-05-19 |
-| 6. Log Access | 0/TBD | Not started | - |
+| 6. Log Access | 0/3 | Not started | - |
