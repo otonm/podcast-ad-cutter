@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 3: Pipeline Control** - Client can start, stop, and inspect a pipeline run; per-feed and per-episode control works (completed 2026-05-16)
 - [x] **Phase 4: Config & Feed Management** - All settings and feed configuration can be read and modified via API; changes persist atomically (completed 2026-05-17)
 - [x] **Phase 5: Database Viewer** - All database tables exposed as read-only REST endpoints with pagination and filtering (completed 2026-05-19)
-- [ ] **Phase 6: Log Access** - All log files can be listed, downloaded, and tailed in real time via SSE
+- [x] **Phase 6: Log Access** - All log files can be listed, downloaded, and tailed in real time via SSE (completed 2026-05-22)
 
 ## Phase Details
 
