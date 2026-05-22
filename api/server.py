@@ -15,8 +15,10 @@ from api.routes.db import create_db_router
 from api.routes.events import create_events_router
 from api.routes.feeds import create_feeds_router
 from api.routes.health import create_health_router
+from api.routes.logs import create_logs_router
 from api.routes.settings import create_settings_router
 from api.run_state import RunState
+from database.connection import Database
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -32,6 +34,7 @@ def create_app(
     run_state: RunState,
     config: Config,
     config_path: Path,
+    log_dir: Path,
 ) -> web.Application:
     """Build and return a configured aiohttp Application.
 
@@ -43,6 +46,7 @@ def create_app(
         run_state: Shared pipeline run state.
         config: Application configuration.
         config_path: Path to the config.yaml file on disk.
+        log_dir: Path to the directory where log files are stored.
 
     Returns:
         Configured web.Application instance.
@@ -62,6 +66,7 @@ def create_app(
         config.app.paths.output_dir,
         config_path,
     ))
+    app.add_routes(create_logs_router(log_dir))
     return app
 
 
@@ -81,7 +86,9 @@ async def serve(host: str, port: int, config: Config, config_path: Path) -> None
     start_time = time.monotonic()
     event_bus = EventBus()
     run_state = RunState()
-    app = create_app(event_bus, start_time, run_state, config, config_path)
+    async with Database(config.app.paths.data_dir / "data.db"):
+        pass  # applies pending schema migrations before the read-only API opens the DB
+    app = create_app(event_bus, start_time, run_state, config, config_path, config.app.paths.log_dir)
     runner = web.AppRunner(app)
     await runner.setup()
     try:
