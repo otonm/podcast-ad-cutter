@@ -276,8 +276,8 @@ class TestLogRead:
             resp = await client.get("/api/v1/logs/app.log")
             assert resp.status == 200
 
-    async def test_tail_placeholder_returns_501(self, tmp_path: Path) -> None:
-        """GET /api/v1/logs/app.log/tail returns 501 (placeholder, full impl in plan 03)."""
+    async def test_tail_returns_200_not_501(self, tmp_path: Path) -> None:
+        """GET /api/v1/logs/app.log/tail returns 200 with SSE stream (plan 03 implementation)."""
         log_dir = tmp_path / "logs"
         log_dir.mkdir()
         (log_dir / "app.log").write_bytes(b"content")
@@ -285,7 +285,8 @@ class TestLogRead:
         app = _make_app(tmp_path)
         async with TestClient(TestServer(app)) as client:
             resp = await client.get("/api/v1/logs/app.log/tail")
-            assert resp.status == 501
+            assert resp.status == 200
+            await resp.content.read(1024)
 
     async def test_read_episode_log_via_subpath(self, tmp_path: Path) -> None:
         """GET /api/v1/logs/episodes/my-show/ep.log returns 200 with correct content."""

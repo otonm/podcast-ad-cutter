@@ -70,6 +70,48 @@ def _list_logs_sync(log_dir: Path) -> dict:
     return {"app_logs": app_logs, "episode_logs": episode_logs}
 
 
+def _open_and_backfill(path: Path, bytes_back: int) -> tuple:
+    """Open a log file and read the last bytes_back bytes as backfill.
+
+    Args:
+        path: Path to the log file.
+        bytes_back: Number of bytes from the end to include in backfill.
+
+    Returns:
+        Tuple of (file_handle, current_position, backfill_data).
+
+    """
+    fh = path.open("rb")  # kept open between polls (intentional — not a context manager)
+    size = path.stat().st_size
+    fh.seek(max(0, size - bytes_back))
+    data = fh.read()
+    return fh, fh.tell(), data
+
+
+def _poll(fh: object, last_pos: int, path: Path) -> tuple:
+    """Read new content from the log file since last_pos.
+
+    Detects rotation when file shrinks below last_pos and restarts from byte 0.
+
+    Args:
+        fh: Open file handle.
+        last_pos: Byte position from the last read.
+        path: Path to the log file (for stat).
+
+    Returns:
+        Tuple of (new_data, new_position).
+
+    """
+    current_size = path.stat().st_size
+    if current_size < last_pos:  # rotation detected (D-11)
+        fh.seek(0)
+        last_pos = 0
+    else:
+        fh.seek(last_pos)
+    data = fh.read()
+    return data, fh.tell()
+
+
 def create_logs_router(log_dir: Path) -> web.RouteTableDef:
     """Build and return a RouteTableDef for log file access handlers.
 
@@ -90,8 +132,33 @@ def create_logs_router(log_dir: Path) -> web.RouteTableDef:
     # IMPORTANT: /tail route MUST be registered before the glob route (D-04).
     # aiohttp matches more specific (longer) patterns first only when registered first.
     @routes.get("/api/v1/logs/{tail:.*}/tail")
-    async def tail_log(_request: web.Request) -> web.Response:
-        raise web.HTTPNotImplemented
+    async def tail_log(request: web.Request) -> web.StreamResponse:
+        tail = request.match_info["tail"]
+        log_path = _validate_path(log_dir, tail)
+
+        bytes_back = int(request.rel_url.query.get("bytes", 8192))
+        interval_raw = float(request.rel_url.query.get("interval", 1.0))
+        interval = max(0.5, min(10.0, interval_raw))
+
+        resp = web.StreamResponse()
+        resp.headers["Content-Type"] = "text/event-stream"
+        resp.headers["Cache-Control"] = "no-cache"
+        resp.headers["X-Accel-Buffering"] = "no"
+        await resp.prepare(request)
+
+        fh, pos, backfill = await asyncio.to_thread(_open_and_backfill, log_path, bytes_back)
+        try:
+            if backfill:
+                await resp.write(f"data: {backfill.decode('utf-8', errors='replace')}\n\n".encode())
+
+            while True:
+                await asyncio.sleep(interval)
+                new_data, pos = await asyncio.to_thread(_poll, fh, pos, log_path)
+                if new_data:
+                    await resp.write(f"data: {new_data.decode('utf-8', errors='replace')}\n\n".encode())
+        finally:
+            fh.close()
+        return resp  # pragma: no cover
 
     @routes.get("/api/v1/logs/{tail:.*}")
     async def read_log(request: web.Request) -> web.Response:
