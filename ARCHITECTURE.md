@@ -133,7 +133,7 @@ Each episode is processed by a `while True` loop that checks what is missing and
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│                   Episode State Machine                   │
+│                   Episode State Machine                  │
 │                                                          │
 │  output file exists? ──yes──► copy URL → done            │
 │       │ no                                               │
