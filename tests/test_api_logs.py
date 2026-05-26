@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -413,6 +413,22 @@ class TestLogTail:
             # Read the next chunk containing the appended content
             chunk2 = await resp.content.read(1024)
             assert b"appended line" in chunk2
+
+    async def test_tail_client_disconnect_handled_silently(self, tmp_path: Path) -> None:
+        """ClientConnectionResetError mid-stream is swallowed — client disconnect is expected."""
+        from aiohttp import ClientConnectionResetError
+
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "app.log").write_bytes(b"content\n")
+
+        app = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            with patch("api.routes.logs.asyncio.sleep", side_effect=ClientConnectionResetError("disconnect")):
+                resp = await client.get("/api/v1/logs/app.log/tail?bytes=100&interval=0.5")
+                assert resp.status == 200
+                chunk = await resp.content.read(4096)
+                assert b"content" in chunk
 
     async def test_tail_rotation_streams_new_content_from_start(self, tmp_path: Path) -> None:
         """When the file shrinks (rotation), streaming restarts from byte 0."""

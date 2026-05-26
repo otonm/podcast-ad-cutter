@@ -7,7 +7,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from aiohttp import web
+from aiohttp import ClientConnectionResetError, web
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -112,6 +112,22 @@ def _poll(fh: object, last_pos: int, path: Path) -> tuple:
     return data, fh.tell()
 
 
+async def _run_tail_stream(resp: web.StreamResponse, log_path: Path, bytes_back: int, interval: float) -> None:
+    fh, pos, backfill = await asyncio.to_thread(_open_and_backfill, log_path, bytes_back)
+    try:
+        if backfill:
+            await resp.write(f"data: {backfill.decode('utf-8', errors='replace')}\n\n".encode())
+        while True:
+            await asyncio.sleep(interval)
+            new_data, pos = await asyncio.to_thread(_poll, fh, pos, log_path)
+            if new_data:
+                await resp.write(f"data: {new_data.decode('utf-8', errors='replace')}\n\n".encode())
+    except ClientConnectionResetError:
+        pass
+    finally:
+        fh.close()
+
+
 def create_logs_router(log_dir: Path) -> web.RouteTableDef:
     """Build and return a RouteTableDef for log file access handlers.
 
@@ -146,18 +162,7 @@ def create_logs_router(log_dir: Path) -> web.RouteTableDef:
         resp.headers["X-Accel-Buffering"] = "no"
         await resp.prepare(request)
 
-        fh, pos, backfill = await asyncio.to_thread(_open_and_backfill, log_path, bytes_back)
-        try:
-            if backfill:
-                await resp.write(f"data: {backfill.decode('utf-8', errors='replace')}\n\n".encode())
-
-            while True:
-                await asyncio.sleep(interval)
-                new_data, pos = await asyncio.to_thread(_poll, fh, pos, log_path)
-                if new_data:
-                    await resp.write(f"data: {new_data.decode('utf-8', errors='replace')}\n\n".encode())
-        finally:
-            fh.close()
+        await _run_tail_stream(resp, log_path, bytes_back, interval)
         return resp  # pragma: no cover
 
     @routes.get("/api/v1/logs/{tail:.*}")
