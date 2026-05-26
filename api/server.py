@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
 import time
 from typing import TYPE_CHECKING
 
@@ -91,11 +92,16 @@ async def serve(host: str, port: int, config: Config, config_path: Path) -> None
     app = create_app(event_bus, start_time, run_state, config, config_path, config.app.paths.log_dir)
     runner = web.AppRunner(app)
     await runner.setup()
+    loop = asyncio.get_running_loop()
+    shutdown = asyncio.Event()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, shutdown.set)
     try:
         site = web.TCPSite(runner, host, port)
         await site.start()
         logger.info(f"API server listening on {host}:{port}")
-        # Block until cancelled — KeyboardInterrupt in main() → asyncio.run cancels all tasks
-        await asyncio.Event().wait()
+        await shutdown.wait()
     finally:
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.remove_signal_handler(sig)
         await runner.cleanup()
