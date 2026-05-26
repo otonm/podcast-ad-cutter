@@ -11,6 +11,11 @@ if [ ! -f /app/run.sh ]; then
     exit 1
 fi
 
+if [ -n "${APP_SERVE:-}" ]; then
+    echo "entrypoint: server mode"
+    exec gosu app /bin/sh /app/run.sh
+fi
+
 # Use explicit interpreter — avoids shebang exec issues in some container runtimes
 printf '%s /bin/sh /app/run.sh\n' "${CRON_SCHEDULE}" > /tmp/crontab
 

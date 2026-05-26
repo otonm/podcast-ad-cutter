@@ -2,7 +2,7 @@
 
 Automatically removes advertisements from podcast episodes and re-publishes clean RSS feeds you can add to any podcast app.
 
-It downloads your configured feeds, transcribes each episode with a speech-to-text model, identifies ad segments using an LLM, cuts them out with ffmpeg, and serves the resulting clean audio via a self-hosted RSS feed. A built-in HTTP API lets you monitor runs, manage feeds, and stream live logs.
+It downloads your configured feeds, transcribes each episode with a speech-to-text model, extracts the topic of an episode to help with ad identification, identifies ad segments, cuts them out with ffmpeg, and serves the resulting clean audio via a self-hosted RSS feed. A built-in HTTP API allows for building of UIs or other applications.
 
 ---
 
@@ -143,16 +143,22 @@ Copy `docker-compose.example.yml` to `docker-compose.yml`, fill in your API keys
 docker compose pull && docker compose up -d
 ```
 
-The container runs the pipeline on a cron schedule (default: hourly). Set `CRON_SCHEDULE` in the compose file to change the interval (standard crontab syntax).
+The container supports two modes:
+
+- **Cron mode** (default) — runs the pipeline on a schedule. Set `CRON_SCHEDULE` to control the interval.
+- **Server mode** — runs the HTTP API server continuously. Set `APP_SERVE=true` and uncomment the `ports` section in `docker-compose.yml`.
 
 **Environment variables in the container:**
 
 | Variable | Description |
 |---|---|
-| `CRON_SCHEDULE` | Cron expression for the pipeline run (default: `0 * * * *`) |
+| `CRON_SCHEDULE` | Cron expression for pipeline runs (default: `0 * * * *`). Ignored in server mode. |
 | `GROQ_API_KEY` | Groq API key |
 | `OPENAI_API_KEY` | OpenAI API key |
 | `OPENROUTER_API_KEY` | OpenRouter API key |
+| `APP_SERVE` | Set to `true` to run the HTTP API server instead of cron |
+| `APP_HOST` | API server bind host (default: `0.0.0.0`) |
+| `APP_PORT` | API server bind port (default: `8080`) |
 | `APP_FEED` | Process only this feed title |
 | `APP_MIN_CONFIDENCE` | Override min confidence threshold |
 | `APP_LOG_TO_FILE` | Set to `true` to write log files |

@@ -258,12 +258,17 @@ The container image (based on `ghcr.io/astral-sh/uv:python3.12-bookworm-slim`) i
 - `supercronic` — a cron runner designed for containers; replaces system cron
 - `gosu` — for privilege drop from root to the `app` user after volume ownership is fixed
 
-**Startup flow:**
+**Startup flow — cron mode (default):**
 1. `entrypoint.sh` runs as root, fixes ownership of bind-mounted volumes, writes a crontab file from `$CRON_SCHEDULE`, then execs `gosu app supercronic /tmp/crontab`
 2. `supercronic` runs `run.sh` on the cron schedule as the `app` user
 3. `run.sh` assembles CLI arguments from environment variables and execs `python main.py`
 
-The server mode (`--serve`) is not used in the Docker container — the container is designed for scheduled batch runs only.
+**Startup flow — server mode (`APP_SERVE=true`):**
+1. `entrypoint.sh` detects `APP_SERVE`, skips supercronic, and directly execs `gosu app /bin/sh /app/run.sh`
+2. `run.sh` passes `--serve` (plus optional `--host`/`--port` from `APP_HOST`/`APP_PORT`) to `python main.py`
+3. The process runs indefinitely, serving the HTTP API on port 8080 (or `APP_PORT`)
+
+The `EXPOSE 8080` directive in the Dockerfile documents the server port. In server mode, the `docker-compose.yml` `ports` section must be uncommented to make it reachable from the host.
 
 ---
 

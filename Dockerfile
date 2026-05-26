@@ -35,4 +35,6 @@ RUN chmod +x /app/entrypoint.sh /app/run.sh
 RUN mkdir -p /output /data /logs /cache /config \
     && chown -R app:app /output /data /logs /cache /config
 
+EXPOSE 8080
+
 ENTRYPOINT ["/app/entrypoint.sh"]
