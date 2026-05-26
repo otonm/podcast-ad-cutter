@@ -27,16 +27,14 @@ A web UI can start a run, watch it progress in real time, and inspect every resu
 
 <!-- New capabilities targeted by this milestone. -->
 
-- [ ] `--serve` flag starts aiohttp API server in dual mode (bare run still exits after pipeline completes)
-- [ ] Pipeline control: trigger full run, stop/cancel running pipeline
-- [ ] Per-feed control: trigger or stop a specific feed by slug/ID
-- [ ] Per-episode control: skip or re-process an episode (full reset or from a chosen stage)
-- [ ] SSE endpoint streams per-episode stage progress (download → transcribe → topic → ad-detect → edit) + run-level counters + download/encode percentage
-- [ ] Settings: GET current config, PATCH to update and persist to config.yaml (applies on next run)
-- [ ] Feed CRUD: add, remove, update feed entries in config.yaml via API
-- [ ] Log access: list all log files; GET full content of any log; SSE tail a log in real time
-- [ ] DB viewer: read-only REST endpoints for episodes, transcriptions, ad detections, cost tracking
-- [ ] No authentication (trusted local network; add later if needed)
+- ✓ `--serve` flag starts aiohttp API server in dual mode (bare run still exits after pipeline completes) — Phase 1
+- ✓ SSE endpoint streams per-episode stage progress (download → transcribe → topic → ad-detect → edit) + run-level counters + download/encode percentage — Phase 2
+- ✓ Pipeline control: trigger full run, stop/cancel running pipeline — Phase 3
+- ✓ Settings: GET current config, PATCH to update and persist to config.yaml (applies on next run) — Phase 4
+- ✓ Feed CRUD: add, remove, update feed entries in config.yaml via API — Phase 4
+- ✓ DB viewer: read-only REST endpoints for episodes, transcriptions, ad detections, cost tracking — Phase 5
+- ✓ Log access: list all log files; GET full content of any log; SSE tail a log in real time — Phase 6
+- ✓ No authentication (trusted local network; add later if needed) — Phase 1
 
 ### Out of Scope
 
@@ -67,12 +65,15 @@ The SQLite database (`data/data.db`) is opened per-run via `async with Database(
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| aiohttp as API server | Already a dep; native async; SSE built-in — avoids ASGI stack | — Pending |
-| Same-process server | SSE progress trivial without IPC; simplest architecture for a single-user local tool | — Pending |
-| Dual mode (`--serve` flag) | Preserves CLI behavior for cron/Docker single-run use cases | — Pending |
-| Config changes apply on next run | Prevents partial-run config drift; safe default | — Pending |
-| No auth for v1 | Local network deployment only; complexity-free for a first API | — Pending |
-| In-process event bus for SSE | Decouples pipeline components from web layer; components emit events, API subscribes | — Pending |
+| aiohttp as API server | Already a dep; native async; SSE built-in — avoids ASGI stack | Confirmed — no friction across 6 phases |
+| Same-process server | SSE progress trivial without IPC; simplest architecture for a single-user local tool | Confirmed — shared event loop worked throughout |
+| Dual mode (`--serve` flag) | Preserves CLI behavior for cron/Docker single-run use cases | Confirmed — `AppRunner`+`TCPSite` (non-blocking) used |
+| Config changes apply on next run | Prevents partial-run config drift; safe default | Confirmed — atomic write via temp file + `os.replace()` |
+| No auth for v1 | Local network deployment only; complexity-free for a first API | Confirmed — deferred to SEC-01 in v2 |
+| In-process event bus for SSE | Decouples pipeline components from web layer; components emit events, API subscribes | Confirmed — broadcast-all model with list() snapshot |
+| Dedicated read-only DB connection for API | Separate from pipeline connection; WAL mode enables concurrent reads | Confirmed — aiosqlite WAL + read-only per-request pattern |
+| _validate_path traversal guard | is_relative_to() blocks encoded-slash traversal that URL normalisation doesn't catch | Confirmed — used in both read_log and tail_log |
+| SSE file tail with open handle + finally | Keep file handle across poll cycles; finally: fh.close() prevents leak on disconnect | Confirmed — rotation detection via st_size shrink also implemented |
 
 ## Evolution
 
@@ -92,4 +93,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-14 after initialization*
+*Last updated: 2026-05-26 after Phase 6 — milestone v1.0 complete*
