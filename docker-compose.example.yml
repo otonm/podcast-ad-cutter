@@ -17,8 +17,8 @@
 #        docker compose pull && docker compose up -d
 #
 # MODES:
-#   Cron mode (default): runs the pipeline once at start, then on a schedule. Leave APP_SERVE empty.
-#   Server mode: runs the HTTP API server continuously and still runs the pipeline once
+#   Cron mode: runs the pipeline once at start, then on a schedule. Set APP_SERVE to "" (no GUI).
+#   Server mode (example default, needed by the gui service): runs the HTTP API server continuously and still runs the pipeline once
 #     at start and on CRON_SCHEDULE (via POST /api/v1/run). Set APP_SERVE=true.
 
 services:
@@ -37,9 +37,9 @@ services:
       OPENAI_API_KEY: ""
       OPENROUTER_API_KEY: ""
 
-      # Server mode — set to "true" to run the HTTP API server instead of cron.
-      # Uncomment the ports section below when enabling this.
-      APP_SERVE: ""
+      # Server mode (required by the gui service): runs the HTTP API server, plus the
+      # scheduled runs above. Set to "" for cron-only mode without the GUI.
+      APP_SERVE: "true"
       APP_HOST: ""             # API bind host (default: 0.0.0.0); must include loopback for scheduled runs
       APP_PORT: ""             # API bind port (default: 8080)
 
