@@ -393,6 +393,7 @@ def _make_db_patch(
     mock_store_instance.skip_episode = AsyncMock(return_value=skip_episode_return)
     mock_store_instance.reset_episode = AsyncMock(return_value=reset_episode_return)
     mock_store_instance.unskip_episode = AsyncMock(return_value=unskip_episode_return)
+    mock_store_instance.get_episode_location = AsyncMock(return_value=None)
 
     import contextlib
 
@@ -679,3 +680,39 @@ class TestStartRunRace:
             resp = await client.post("/api/v1/feeds/unknown/run")
             assert resp.status == 404
             assert run_state.state == "idle"
+
+
+def _cut_file(tmp_path: Path, folder: str = "my-show") -> Path:
+    out = tmp_path / "output" / folder
+    out.mkdir(parents=True, exist_ok=True)
+    f = out / FeedPublisher.episode_filename(_PUB, "Ep", "mp3")
+    f.write_bytes(b"x")
+    return f
+
+
+class TestOutputFileRemoval:
+    async def test_delete_finds_file_when_rss_title_differs_from_config_title(self, tmp_path) -> None:
+        """The pipeline names the folder after the RSS channel title, not the config title."""
+        await _seed_episode(tmp_path)
+        f = _cut_file(tmp_path, "my-show-podcast")
+        async with TestClient(TestServer(_real_db_app(tmp_path))) as client:
+            resp = await client.delete("/api/v1/episodes/g1")
+            assert (await resp.json())["files_removed"] == [f.name]
+        assert not f.exists()
+
+    async def test_skip_removes_output_file(self, tmp_path) -> None:
+        """A skipped episode leaves the feed, so its file must not occupy an episodes_to_keep slot."""
+        await _seed_episode(tmp_path)
+        f = _cut_file(tmp_path, "my-show-podcast")
+        async with TestClient(TestServer(_real_db_app(tmp_path))) as client:
+            resp = await client.post("/api/v1/episodes/g1/skip")
+            assert resp.status == 200
+        assert not f.exists()
+
+    async def test_reprocess_removes_output_file_so_next_run_rebuilds(self, tmp_path) -> None:
+        await _seed_episode(tmp_path)
+        f = _cut_file(tmp_path)
+        async with TestClient(TestServer(_real_db_app(tmp_path))) as client:
+            resp = await client.post("/api/v1/episodes/g1/reprocess?stage=edit")
+            assert resp.status == 200
+        assert not f.exists()

@@ -835,3 +835,12 @@ class TestIsCompleteHelper:
 
     def test_returns_false_when_pubdate_is_none(self, tmp_path: Path) -> None:
         assert _is_complete(None, "Title", "Podcast", tmp_path) is False
+
+
+def test_is_complete_finds_file_in_rss_title_folder(tmp_path: Path) -> None:
+    """Output folder is the slug of the RSS channel title, which may differ from the config title."""
+    folder = tmp_path / "my-show-podcast"
+    folder.mkdir()
+    pub = "2026-03-21T12:00:00+00:00"
+    (folder / f"{_pub_date_str(pub)}-{slugify('Ep')}.mp3").write_bytes(b"x")
+    assert _is_complete(pub, "Ep", "My Show", tmp_path)

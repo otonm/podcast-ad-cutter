@@ -208,7 +208,7 @@ Starts a pipeline run for a single feed identified by slug.
 
 #### `POST /api/v1/episodes/{guid}/skip`
 
-Marks an episode as skipped (disabled). A skipped episode is excluded from all future pipeline runs **and from the published RSS feed**, without being deleted. The feed drops it at the next run.
+Marks an episode as skipped (disabled). A skipped episode is excluded from all future pipeline runs **and from the published RSS feed**, without being deleted. The feed drops it at the next run. Its processed output file is removed (so it no longer takes an `episodes_to_keep` slot); pipeline data is kept, so re-enabling only re-encodes.
 
 **Precondition:** pipeline state must be `idle`.
 
@@ -279,7 +279,7 @@ Deletes an episode's processed state: marks it skipped, removes all pipeline dat
 
 #### `POST /api/v1/episodes/{guid}/reprocess`
 
-Resets an episode's processing state so it will be picked up again on the next run.
+Resets an episode's processing state so it will be picked up again on the next run. The episode's output file is also removed, so the next run rebuilds it instead of skipping the existing file.
 
 **Precondition:** pipeline state must be `idle`.
 

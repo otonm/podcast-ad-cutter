@@ -66,6 +66,18 @@ async def _load_run_config(config_path: Path) -> Config:
         ) from exc
 
 
+def _remove_output_files(output_dir: Path, location: tuple[str, str, str | None] | None) -> list[str]:
+    """Delete an episode's processed audio files; returns the removed file names."""
+    if location is None or location[2] is None:
+        return []
+    _podcast, title, pubdate = location
+    removed: list[str] = []
+    for path in FeedPublisher.find_episode_files(output_dir, datetime.fromisoformat(pubdate), title):
+        path.unlink()
+        removed.append(path.name)
+    return removed
+
+
 def _run_state_to_dict(rs: RunState) -> dict:  # type: ignore[type-arg]
     return {
         "state": rs.state,
@@ -206,6 +218,9 @@ def create_control_router(  # noqa: C901, PLR0915
         async with Database(db_path) as db:
             store = EpisodeStore(db.conn)
             ok = await store.skip_episode(guid)
+            # Skipped episodes leave the feed; their file must not hold an episodes_to_keep slot.
+            location = await store.get_episode_location(guid) if ok else None
+        _remove_output_files(output_dir, location)
         if not ok:
             raise web.HTTPNotFound(
                 text=f'{{"error": "episode not found: {guid}"}}',
@@ -249,13 +264,7 @@ def create_control_router(  # noqa: C901, PLR0915
                 )
             await store.skip_episode(guid)
             await store.reset_episode(guid)
-        podcast, title, pubdate = location
-        removed: list[str] = []
-        if pubdate is not None:
-            pattern = FeedPublisher.episode_glob(datetime.fromisoformat(pubdate), title)
-            for path in sorted((output_dir / slugify(podcast)).glob(pattern)):
-                path.unlink()
-                removed.append(path.name)
+        removed = _remove_output_files(output_dir, location)
         # ponytail: RSS still lists the item until the next run regenerates it;
         # add FeedPublisher.remove_episode if the gap matters
         logger.info(f"Episode {guid!r}: deleted, removed files {removed}")
@@ -278,6 +287,8 @@ def create_control_router(  # noqa: C901, PLR0915
         async with Database(db_path) as db:
             store = EpisodeStore(db.conn)
             ok = await store.reset_episode(guid, from_stage=stage)
+            location = await store.get_episode_location(guid) if ok else None
+        _remove_output_files(output_dir, location)  # an existing output file would make the run skip the episode
         if not ok:
             raise web.HTTPNotFound(
                 text=f'{{"error": "episode not found: {guid}"}}',

@@ -76,8 +76,7 @@ def _is_complete(row_pubdate: str | None, title: str | None, podcast: str | None
     """Return True if the episode's output file exists on disk."""
     if row_pubdate is None or title is None or podcast is None:
         return False
-    pattern = FeedPublisher.episode_glob(datetime.fromisoformat(row_pubdate), title)
-    return any((output_dir / slugify(podcast)).glob(pattern))
+    return bool(FeedPublisher.find_episode_files(output_dir, datetime.fromisoformat(row_pubdate), title))
 
 
 def _row_to_episode_dict(row: Sequence, output_dir: Path) -> dict:  # type: ignore[type-arg]

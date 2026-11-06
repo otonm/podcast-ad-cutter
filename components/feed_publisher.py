@@ -92,6 +92,16 @@ class FeedPublisher:
         return f"{date_str}-{slugify(title)}.*"
 
     @staticmethod
+    def find_episode_files(output_dir: Path, pub_date: datetime, title: str) -> list[Path]:
+        """Output files of an episode in any feed folder under output_dir.
+
+        Feed folders are named after the RSS channel title, which can differ from the
+        config title stored with the episode, so every folder is searched.
+        """
+        # ponytail: matches same date + title slug in another feed too; store the folder per episode if that bites
+        return sorted(output_dir.glob(f"*/{FeedPublisher.episode_glob(pub_date, title)}"))
+
+    @staticmethod
     def episode_url(base_url: str, feed_slug: str, pub_date: datetime, title: str, ext: str) -> str:
         """Build the public URL for a processed episode audio file.
 
