@@ -40,3 +40,20 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - id: meta-gui
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-gui
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-,format=long
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: gui
+          push: true
+          tags: ${{ steps.meta-gui.outputs.tags }}
+          labels: ${{ steps.meta-gui.outputs.labels }}
+          cache-from: type=gha,scope=gui
+          cache-to: type=gha,mode=max,scope=gui

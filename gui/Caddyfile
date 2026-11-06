@@ -1,0 +1,19 @@
+{
+	admin off
+}
+
+# Plain HTTP; TLS is terminated by `tailscale serve` on the host.
+:80 {
+	encode gzip
+
+	# The backend's routes include the /api/v1 prefix, so it must not be stripped (handle, not handle_path).
+	# SSE (text/event-stream) responses are flushed immediately by reverse_proxy.
+	handle /api/* {
+		reverse_proxy {$API_UPSTREAM:podcast-ad-cutter:8080}
+	}
+
+	handle {
+		root * /srv
+		file_server
+	}
+}

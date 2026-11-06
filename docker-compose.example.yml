@@ -66,6 +66,17 @@ services:
       - logs:/logs       # timestamped log files (when APP_LOG_TO_FILE=true)
       - cache:/cache     # temporary audio files during processing
 
+  # Web GUI: static app + reverse proxy to the backend's /api (requires APP_SERVE=true above).
+  # Published on loopback only; expose it to your tailnet with: tailscale serve --bg --https=8443 http://127.0.0.1:8090
+  gui:
+    image: ghcr.io/otonm/podcast-ad-cutter-gui:latest
+    container_name: podcast-ad-cutter-gui
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8090:80"
+    depends_on:
+      - podcast-ad-cutter
+
 volumes:
   data:
   logs:
