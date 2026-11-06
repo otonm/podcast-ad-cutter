@@ -1,4 +1,6 @@
-import { fmtDate, fmtTime, mergePatch, overlapsAd, parseHash, parseParamValue, timelineBlocks } from "./lib.js";
+import {
+  fmtDate, fmtTime, mergePatch, overlapsAd, parseHash, parseParamValue, persistentEventSource, timelineBlocks,
+} from "./lib.js";
 
 const EVENT_TYPES = [
   "run.started", "run.completed", "episode.stage_changed", "episode.download_progress",
@@ -88,12 +90,16 @@ document.addEventListener("alpine:init", () => {
       }
     },
     connect() {
-      const es = new EventSource("/api/v1/events");
-      es.onopen = () => { this.sse = "connected"; this.refresh(); };
-      es.onerror = () => { this.sse = "disconnected"; };
-      for (const type of EVENT_TYPES) {
-        es.addEventListener(type, (e) => this.onEvent(type, JSON.parse(e.data)));
-      }
+      persistentEventSource(() => {
+        const es = new EventSource("/api/v1/events");
+        for (const type of EVENT_TYPES) {
+          es.addEventListener(type, (e) => this.onEvent(type, JSON.parse(e.data)));
+        }
+        return es;
+      }, {
+        onOpen: () => { this.sse = "connected"; this.refresh(); },
+        onDown: () => { this.sse = "disconnected"; },
+      });
     },
     log(text) {
       this.events.unshift({ t: new Date().toLocaleTimeString(), text });

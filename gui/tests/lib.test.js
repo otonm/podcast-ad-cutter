@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  fmtDate, fmtTime, mergePatch, overlapsAd, parseHash, parseParamValue, timelineBlocks,
+  fmtDate, fmtTime, mergePatch, overlapsAd, parseHash, parseParamValue, persistentEventSource, timelineBlocks,
 } from "../web/lib.js";
 
 test("fmtTime formats ms as m:ss and h:mm:ss", () => {
@@ -53,4 +53,24 @@ test("parseParamValue parses JSON with raw-string fallback", () => {
   assert.equal(parseParamValue("true"), true);
   assert.deepEqual(parseParamValue('{"effort":"high"}'), { effort: "high" });
   assert.equal(parseParamValue("high"), "high");
+});
+
+test("persistentEventSource re-creates the stream only after the browser gives up", () => {
+  const opened = [];
+  const timers = [];
+  const states = [];
+  const open = () => { const es = { readyState: 0, close() { this.readyState = 2; } }; opened.push(es); return es; };
+  persistentEventSource(open, {
+    onOpen: () => states.push("up"), onDown: () => states.push("down"), setTimer: (fn) => timers.push(fn),
+  });
+  assert.equal(opened.length, 1);
+  opened[0].onerror();                 // CONNECTING: the browser retries by itself
+  assert.equal(timers.length, 0);
+  opened[0].readyState = 2;            // CLOSED, e.g. a 502 from the proxy during a restart
+  opened[0].onerror();
+  assert.equal(timers.length, 1);
+  timers[0]();
+  assert.equal(opened.length, 2);
+  opened[1].onopen();
+  assert.deepEqual(states, ["down", "down", "up"]);
 });

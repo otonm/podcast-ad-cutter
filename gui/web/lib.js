@@ -72,3 +72,25 @@ export function parseParamValue(text) {
     return text;
   }
 }
+
+const CLOSED = 2; // EventSource.CLOSED
+
+/**
+ * Open an event stream that survives the browser giving up. EventSource retries by itself on
+ * network errors, but a non-200 reply (e.g. the proxy's 502 while the backend restarts) closes it
+ * for good — then `open()` is called again after retryMs. `open` must attach its own listeners.
+ */
+export function persistentEventSource(open, { onOpen, onDown, retryMs = 3000, setTimer = setTimeout }) {
+  const connect = () => {
+    const es = open();
+    es.onopen = onOpen;
+    es.onerror = () => {
+      onDown();
+      if (es.readyState === CLOSED) {
+        es.close();
+        setTimer(connect, retryMs);
+      }
+    };
+  };
+  connect();
+}
