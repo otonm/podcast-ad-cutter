@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import litellm
+import openai
 import pytest
 
 from utils.llm import acompletion_with_param_fallback, extract_llm_reasoning
@@ -49,6 +52,12 @@ _TEMP_ERR = (
     "'type': 'invalid_request_error', 'param': 'temperature', 'code': 'unsupported_value'}}"
 )
 
+# What OpenAI actually puts in error.message; litellm keeps only this text in str(exc)
+_OPENAI_TEMP_MSG = (
+    "Unsupported value: 'temperature' does not support 0.5 with this model. "
+    "Only the default (1) value is supported."
+)
+
 
 def _bad_request(message: str) -> litellm.BadRequestError:
     return litellm.BadRequestError(message=message, model="m", llm_provider="openai")
@@ -79,7 +88,7 @@ async def test_fallback_reraises_unrelated_bad_request() -> None:
 
 async def test_fallback_never_drops_required_params() -> None:
     """An unsupported 'model' or 'messages' error is not retried."""
-    exc = _bad_request("Unsupported value: {'param': 'messages', 'code': 'unsupported_value'}")
+    exc = _bad_request("Unsupported value: 'messages' is not supported with this model.")
     dropped: set[str] = set()
     with (
         patch("utils.llm.litellm.acompletion", new=AsyncMock(side_effect=exc)),
@@ -87,3 +96,33 @@ async def test_fallback_never_drops_required_params() -> None:
     ):
         await acompletion_with_param_fallback(dropped, model="m", messages=[])
     assert dropped == set()
+
+
+async def test_fallback_end_to_end_through_litellm_exception_mapping() -> None:
+    """The real litellm-wrapped OpenAI 400 is recognised (its message lacks the raw body)."""
+    sent: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        sent.append(body)
+        if "temperature" in body:
+            return httpx.Response(400, json={"error": {"message": _OPENAI_TEMP_MSG, "type": "invalid_request_error",
+                                                       "param": "temperature", "code": "unsupported_value"}})
+        return httpx.Response(200, json={
+            "id": "x", "object": "chat.completion", "created": 0, "model": "gpt-5.4-nano",
+            "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        })
+
+    client = openai.AsyncOpenAI(
+        api_key="x", max_retries=0, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    dropped: set[str] = set()
+    async with client:
+        response = await acompletion_with_param_fallback(
+            dropped, model="gpt-5.4-nano", messages=[{"role": "user", "content": "hi"}],
+            temperature=0.5, api_key="x", client=client,
+        )
+    assert response.choices[0].message.content == "ok"
+    assert dropped == {"temperature"}
+    assert [("temperature" in b) for b in sent] == [True, False]

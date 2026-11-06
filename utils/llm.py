@@ -9,9 +9,19 @@ import litellm
 
 logger = logging.getLogger(__name__)
 
-# OpenAI-style 400 bodies name the offending request field: 'param': 'temperature'
-_PARAM_RE = re.compile(r"""['"]param['"]:\s*['"](\w+)['"]""")
+# Fallback when the error body is lost: OpenAI's message text, e.g. "Unsupported value: 'temperature' ..."
+_UNSUPPORTED_RE = re.compile(r"Unsupported (?:value|parameter): '(\w+)'")
 _REQUIRED_PARAMS = frozenset({"model", "messages"})
+
+
+def _rejected_param(exc: litellm.BadRequestError) -> str | None:
+    """Return the request param a 400 rejects as unsupported, or None."""
+    # openai-SDK errors keep the parsed body: param='temperature', code='unsupported_value'
+    param = getattr(exc, "param", None)
+    if param and "unsupported" in str(getattr(exc, "code", "")):
+        return param
+    match = _UNSUPPORTED_RE.search(str(exc))
+    return match.group(1) if match else None
 
 
 async def acompletion_with_param_fallback(
@@ -34,9 +44,7 @@ async def acompletion_with_param_fallback(
         try:
             return await litellm.acompletion(**call_kwargs)
         except litellm.BadRequestError as exc:
-            text = str(exc)
-            match = _PARAM_RE.search(text) if "unsupported" in text.lower() else None
-            param = match.group(1) if match else None
+            param = _rejected_param(exc)
             if param not in call_kwargs or param in _REQUIRED_PARAMS:
                 raise
             logger.warning(
