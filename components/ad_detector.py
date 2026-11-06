@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import litellm
 
@@ -172,6 +172,7 @@ class AdDetector:
         api_key: str,
         max_retries: int = 3,
         context_window: int | None = None,
+        params: dict[str, Any] | None = None,
     ) -> None:
         self._provider = provider
         self._model = model
@@ -179,6 +180,7 @@ class AdDetector:
         self._api_key = api_key
         self._max_retries = max_retries
         self._context_window = context_window
+        self._params: dict[str, Any] = params or {}
         self._unsupported_params: set[str] = set()
         self._reasoning_supported = litellm.supports_reasoning(self._model_id)
         if not self._reasoning_supported:
@@ -285,13 +287,16 @@ class AdDetector:
         try:
             return await acompletion_with_param_fallback(
                 self._unsupported_params,
-                model=self._model_id,
-                messages=messages,
-                response_format=response_format,
-                api_key=self._api_key,
-                reasoning_effort=reasoning_effort,
-                temperature=0.3,
-                drop_params=True,
+                **{
+                    "reasoning_effort": reasoning_effort,
+                    "temperature": 0.3,
+                    **self._params,  # user params override defaults, never the fixed keys below
+                    "model": self._model_id,
+                    "messages": messages,
+                    "response_format": response_format,
+                    "api_key": self._api_key,
+                    "drop_params": True,
+                },
             )
         except litellm.ContextWindowExceededError as exc:
             raise _ContextWindowExceededError from exc

@@ -580,3 +580,14 @@ async def test_transcribe_chunked_deletes_chunk_files_on_transcription_error(
 
     assert not (large_audio.parent / "ep-1.chunk0000.mono.m4a").exists()
     assert not (large_audio.parent / "ep-1.chunk0001.mono.m4a").exists()
+
+
+async def test_transcriptor_passes_params(audio_file: Path) -> None:
+    tr = EpisodeTranscriptor(provider="groq", model="whisper", api_key="k", params={"language": "de"})
+    with patch(
+        "components.episode_transcriptor.litellm.atranscription",
+        new=AsyncMock(return_value=_make_response()),
+    ) as mock_call:
+        await tr.transcribe("ep-1", audio_file)
+    assert mock_call.call_args.kwargs["language"] == "de"
+    assert mock_call.call_args.kwargs["model"] == "groq/whisper"

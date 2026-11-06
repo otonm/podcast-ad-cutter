@@ -130,6 +130,7 @@ class Pipeline:
             provider=transcription_cfg.provider,
             model=transcription_cfg.model,
             api_key=getattr(config.credentials, PROVIDER_KEY_MAP[transcription_cfg.provider]),
+            params=transcription_cfg.params,
         )
         context_cfg = config.app.models.context_extraction
         self._topic_extractor = TopicExtractor(
@@ -137,6 +138,7 @@ class Pipeline:
             model=context_cfg.model,
             api_key=getattr(config.credentials, PROVIDER_KEY_MAP[context_cfg.provider]),
             context_window=context_cfg.context_window,
+            params=context_cfg.params,
         )
         ad_cfg = config.app.models.ad_detection
         self._ad_detector = AdDetector(
@@ -144,6 +146,7 @@ class Pipeline:
             model=ad_cfg.model,
             api_key=getattr(config.credentials, PROVIDER_KEY_MAP[ad_cfg.provider]),
             context_window=ad_cfg.context_window,
+            params=ad_cfg.params,
         )
 
         # ── Post-processing components ─────────────────────────────────────────

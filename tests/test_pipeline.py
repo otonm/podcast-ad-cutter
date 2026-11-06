@@ -937,6 +937,7 @@ async def test_pipeline_constructs_transcriptor_with_model_id_and_key() -> None:
         provider="groq",
         model="whisper-large-v3-turbo",
         api_key="sk-groq-test",
+        params=config.app.models.transcription.params,
     )
 
 
@@ -1464,6 +1465,7 @@ async def test_pipeline_constructs_ad_detector() -> None:
         model="gpt-4o-mini",
         api_key="sk-openai-test",
         context_window=None,
+        params=config.app.models.ad_detection.params,
     )
 
 
@@ -3619,3 +3621,19 @@ async def test_episode_done_failed_counters_increment_across_episodes() -> None:
     assert completed[0].payload["feed_done"] == 1
     assert failed[0].payload["feed_failed"] == 1
     assert failed[0].payload["feed_total"] == 2
+
+
+def test_pipeline_passes_model_params_to_components() -> None:
+    cfg = make_config([])
+    cfg.app.models.transcription.params = {"language": "de"}
+    cfg.app.models.context_extraction.params = {"temperature": 0.2}
+    cfg.app.models.ad_detection.params = {"temperature": 0.1}
+    with (
+        patch("components.pipeline.EpisodeTranscriptor") as tr,
+        patch("components.pipeline.TopicExtractor") as te,
+        patch("components.pipeline.AdDetector") as ad,
+    ):
+        Pipeline(cfg)
+    assert tr.call_args.kwargs["params"] == {"language": "de"}
+    assert te.call_args.kwargs["params"] == {"temperature": 0.2}
+    assert ad.call_args.kwargs["params"] == {"temperature": 0.1}

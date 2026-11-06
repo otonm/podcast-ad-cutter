@@ -789,3 +789,38 @@ async def test_log_llm_reasoning_silent_when_absent(
     ):
         await extractor.extract("ep-1", "Tech Talk", "AI Episode", "Tech Talk", _TRANSCRIPT)
     assert not any("LLM reasoning" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# User params from config (models.context_extraction.params)
+# ---------------------------------------------------------------------------
+
+async def test_topic_extractor_user_params_override_defaults() -> None:
+    ex = TopicExtractor("groq", "m", "k", params={"temperature": 0.0, "max_tokens": 500})
+    with patch(
+        "components.topic_extractor.litellm.acompletion", new=AsyncMock(return_value=_make_response()),
+    ) as mock_call:
+        await ex.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
+    kwargs = mock_call.call_args.kwargs
+    assert kwargs["temperature"] == 0.0
+    assert kwargs["max_tokens"] == 500
+    assert kwargs["model"] == "groq/m"
+
+
+async def test_topic_extractor_defaults_without_params(extractor: TopicExtractor) -> None:
+    with patch(
+        "components.topic_extractor.litellm.acompletion", new=AsyncMock(return_value=_make_response()),
+    ) as mock_call:
+        await extractor.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
+    assert mock_call.call_args.kwargs["temperature"] == 0.5
+    assert "max_tokens" not in mock_call.call_args.kwargs
+
+
+async def test_topic_extractor_user_reasoning_effort_survives_reasoning_downgrade() -> None:
+    ex = TopicExtractor("groq", "m", "k", params={"reasoning_effort": "low"})
+    with patch(
+        "components.topic_extractor.litellm.acompletion",
+        new=AsyncMock(side_effect=[_make_truncated_response(), _make_response()]),
+    ) as mock_call:
+        await ex.extract("ep-1", "pod", "title", "My Show", _TRANSCRIPT)
+    assert [c.kwargs["reasoning_effort"] for c in mock_call.call_args_list] == ["low", "low"]

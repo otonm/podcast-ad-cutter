@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
 import litellm
 
@@ -83,6 +84,7 @@ class TopicExtractor:
         api_key: str,
         max_retries: int = 3,
         context_window: int | None = None,
+        params: dict[str, Any] | None = None,
     ) -> None:
         self._provider = provider
         self._model = model
@@ -90,6 +92,7 @@ class TopicExtractor:
         self._api_key = api_key
         self._max_retries = max_retries
         self._context_window = context_window
+        self._params: dict[str, Any] = params or {}
         self._unsupported_params: set[str] = set()
 
     def _get_context_window_limit(self) -> int:
@@ -184,14 +187,17 @@ class TopicExtractor:
         try:
             return await acompletion_with_param_fallback(
                 self._unsupported_params,
-                model=self._model_id,
-                messages=messages,
-                response_format=response_format,
-                api_key=self._api_key,
-                reasoning_effort=reasoning_effort,
-                thinking={"type": "enabled", "budget_tokens": 10000},
-                temperature=0.5,
-                drop_params=True,
+                **{
+                    "reasoning_effort": reasoning_effort,
+                    "thinking": {"type": "enabled", "budget_tokens": 10000},
+                    "temperature": 0.5,
+                    **self._params,  # user params override defaults, never the fixed keys below
+                    "model": self._model_id,
+                    "messages": messages,
+                    "response_format": response_format,
+                    "api_key": self._api_key,
+                    "drop_params": True,
+                },
             )
         except litellm.ContextWindowExceededError as exc:
             raise _ContextWindowExceededError from exc

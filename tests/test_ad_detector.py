@@ -825,3 +825,34 @@ async def test_context_window_error_on_last_attempt_raises() -> None:
         await det.detect("ep-1", _SEGMENTS, _TOPIC)
     assert mock_call.await_count == 2
     assert "ep-1" in exc_info.value.message
+
+
+# ---------------------------------------------------------------------------
+# User params from config (models.ad_detection.params)
+# ---------------------------------------------------------------------------
+
+async def test_ad_detector_user_params_override_defaults() -> None:
+    det = AdDetector("groq", "m", "k", params={"temperature": 0.0, "max_tokens": 500})
+    with patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=_make_response())) as mock_call:
+        await det.detect("ep-1", _SEGMENTS, _TOPIC)
+    kwargs = mock_call.call_args.kwargs
+    assert kwargs["temperature"] == 0.0
+    assert kwargs["max_tokens"] == 500
+    assert kwargs["model"] == "groq/m"
+
+
+async def test_ad_detector_defaults_without_params(detector: AdDetector) -> None:
+    with patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=_make_response())) as mock_call:
+        await detector.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert mock_call.call_args.kwargs["temperature"] == 0.3
+    assert "max_tokens" not in mock_call.call_args.kwargs
+
+
+async def test_ad_detector_user_reasoning_effort_survives_reasoning_downgrade() -> None:
+    det = AdDetector("groq", "m", "k", params={"reasoning_effort": "low"})
+    with (
+        patch("components.ad_detector.litellm.supports_reasoning", return_value=False),
+        patch("components.ad_detector.litellm.acompletion", new=AsyncMock(return_value=_make_response())) as mock_call,
+    ):
+        await det.detect("ep-1", _SEGMENTS, _TOPIC)
+    assert mock_call.call_args.kwargs["reasoning_effort"] == "low"

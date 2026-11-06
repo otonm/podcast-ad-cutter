@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 from pathlib import Path  # noqa: TC003
+from typing import Any
 
 import litellm
 
@@ -49,11 +50,14 @@ class EpisodeTranscriptor:
 
     """
 
-    def __init__(self, provider: str, model: str, api_key: str) -> None:
+    def __init__(
+        self, provider: str, model: str, api_key: str, params: dict[str, Any] | None = None
+    ) -> None:
         self._provider = provider
         self._model = model
         self._model_id = model if provider == "openai" else f"{provider}/{model}"
         self._api_key = api_key
+        self._params: dict[str, Any] = params or {}
 
     def _compute_cost(self, response: object) -> float:
         """Extract cost from response, falling back to duration-based calculation.
@@ -104,10 +108,13 @@ class EpisodeTranscriptor:
     async def _call_litellm(self, path: Path) -> object:
         with path.open("rb") as f:
             return await litellm.atranscription(
-                model=self._model_id,
-                file=f,
-                response_format="verbose_json",
-                api_key=self._api_key,
+                **{
+                    **self._params,  # user params never override the fixed keys below
+                    "model": self._model_id,
+                    "file": f,
+                    "response_format": "verbose_json",
+                    "api_key": self._api_key,
+                },
             )
 
     async def _transcribe_chunked(
