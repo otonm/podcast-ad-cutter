@@ -10,7 +10,11 @@ import litellm
 
 from models.ad_detection import AdDetectionCost, AdDetectionResponseSchema, AdSegmentDetection
 from utils.exceptions import AdDetectionError
-from utils.llm import compute_completion_cost, extract_llm_reasoning
+from utils.llm import (
+    acompletion_with_param_fallback,
+    compute_completion_cost,
+    extract_llm_reasoning,
+)
 
 if TYPE_CHECKING:
     from models.topic import TopicExtraction
@@ -175,6 +179,7 @@ class AdDetector:
         self._api_key = api_key
         self._max_retries = max_retries
         self._context_window = context_window
+        self._unsupported_params: set[str] = set()
         self._reasoning_supported = litellm.supports_reasoning(self._model_id)
         if not self._reasoning_supported:
             logger.warning(
@@ -278,14 +283,15 @@ class AdDetector:
         response_format = AdDetectionResponseSchema if use_schema else None
         reasoning_effort = "high" if use_reasoning else None
         try:
-            return await litellm.acompletion(
+            return await acompletion_with_param_fallback(
+                self._unsupported_params,
                 model=self._model_id,
                 messages=messages,
                 response_format=response_format,
                 api_key=self._api_key,
                 reasoning_effort=reasoning_effort,
                 temperature=0.3,
-                drop_params=True
+                drop_params=True,
             )
         except litellm.ContextWindowExceededError as exc:
             raise _ContextWindowExceededError from exc

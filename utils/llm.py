@@ -3,10 +3,46 @@
 from __future__ import annotations
 
 import logging
+import re
 
 import litellm
 
 logger = logging.getLogger(__name__)
+
+# OpenAI-style 400 bodies name the offending request field: 'param': 'temperature'
+_PARAM_RE = re.compile(r"""['"]param['"]:\s*['"](\w+)['"]""")
+_REQUIRED_PARAMS = frozenset({"model", "messages"})
+
+
+async def acompletion_with_param_fallback(
+    dropped: set[str], **kwargs: object
+) -> litellm.ModelResponse:
+    """Call ``litellm.acompletion``, retrying without params the model rejects.
+
+    ``drop_params=True`` only covers models litellm knows about. For new or
+    unknown models the provider returns a 400 naming the unsupported param;
+    we drop it (falling back to the provider default) and retry. Rejected
+    params are added to ``dropped`` so later calls skip them up front.
+
+    Args:
+        dropped: Caller-owned set of param names to omit; mutated in place.
+        **kwargs: Arguments forwarded to ``litellm.acompletion``.
+
+    """
+    while True:
+        call_kwargs = {k: v for k, v in kwargs.items() if k not in dropped}
+        try:
+            return await litellm.acompletion(**call_kwargs)
+        except litellm.BadRequestError as exc:
+            text = str(exc)
+            match = _PARAM_RE.search(text) if "unsupported" in text.lower() else None
+            param = match.group(1) if match else None
+            if param not in call_kwargs or param in _REQUIRED_PARAMS:
+                raise
+            logger.warning(
+                f"Model '{kwargs.get('model')}' rejected param '{param}', retrying without it"
+            )
+            dropped.add(param)
 
 
 def compute_completion_cost(response: object, model_id: str) -> float:

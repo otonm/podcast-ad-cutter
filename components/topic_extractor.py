@@ -9,7 +9,11 @@ import litellm
 
 from models.topic import TopicExtraction, TopicExtractionCost, TopicExtractionSchema
 from utils.exceptions import TopicExtractionError
-from utils.llm import compute_completion_cost, extract_llm_reasoning
+from utils.llm import (
+    acompletion_with_param_fallback,
+    compute_completion_cost,
+    extract_llm_reasoning,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +90,7 @@ class TopicExtractor:
         self._api_key = api_key
         self._max_retries = max_retries
         self._context_window = context_window
+        self._unsupported_params: set[str] = set()
 
     def _get_context_window_limit(self) -> int:
         """Return the model's max input token count, falling back to 8192.
@@ -177,7 +182,8 @@ class TopicExtractor:
         response_format = TopicExtractionSchema if use_schema else None
         reasoning_effort = {"effort": "high", "summary": "auto"} if use_reasoning else None
         try:
-            return await litellm.acompletion(
+            return await acompletion_with_param_fallback(
+                self._unsupported_params,
                 model=self._model_id,
                 messages=messages,
                 response_format=response_format,
@@ -185,7 +191,7 @@ class TopicExtractor:
                 reasoning_effort=reasoning_effort,
                 thinking={"type": "enabled", "budget_tokens": 10000},
                 temperature=0.5,
-                drop_params=True
+                drop_params=True,
             )
         except litellm.ContextWindowExceededError as exc:
             raise _ContextWindowExceededError from exc
