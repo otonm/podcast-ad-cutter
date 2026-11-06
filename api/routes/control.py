@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -12,10 +13,14 @@ from slugify import slugify
 
 from api.run_state import VALID_STAGES
 from components.pipeline import Pipeline
+from config.config_loader import load_config
 from database.connection import Database
 from database.episode_store import EpisodeStore
+from utils.exceptions import ConfigError
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from api.event_bus import EventBus
     from api.run_state import RunState
     from config.config_loader import Config
@@ -44,6 +49,22 @@ async def _run_pipeline_task(pipeline: Pipeline, run_state: RunState) -> None:
         run_state.reset_to_idle()
 
 
+async def _load_run_config(config_path: Path) -> Config:
+    """Re-read config.yaml so settings and feed edits apply to the run being started.
+
+    Raises:
+        web.HTTPUnprocessableEntity: When the config file fails to load or validate.
+
+    """
+    try:
+        return await asyncio.to_thread(load_config, config_path)
+    except ConfigError as exc:
+        raise web.HTTPUnprocessableEntity(
+            text=json.dumps({"error": str(exc)}),
+            content_type="application/json",
+        ) from exc
+
+
 def _run_state_to_dict(rs: RunState) -> dict:  # type: ignore[type-arg]
     return {
         "state": rs.state,
@@ -62,14 +83,16 @@ def _run_state_to_dict(rs: RunState) -> dict:  # type: ignore[type-arg]
 
 
 def create_control_router(  # noqa: C901, PLR0915
-    config: Config,
+    config_path: Path,
+    db_path: Path,
     event_bus: EventBus,
     run_state: RunState,
 ) -> web.RouteTableDef:
     """Build and return a RouteTableDef with control endpoints registered.
 
     Args:
-        config: Application configuration.
+        config_path: Path to config.yaml, re-read at every run start.
+        db_path: Path to the SQLite database file.
         event_bus: Shared event bus instance.
         run_state: Shared pipeline run state.
 
@@ -78,7 +101,6 @@ def create_control_router(  # noqa: C901, PLR0915
 
     """
     routes = web.RouteTableDef()
-    db_path = config.app.paths.data_dir / "data.db"
 
     @routes.get("/api/v1/status")
     async def status(_request: web.Request) -> web.Response:
@@ -91,6 +113,7 @@ def create_control_router(  # noqa: C901, PLR0915
                 text='{"error": "a run is already active"}',
                 content_type="application/json",
             )
+        config = await _load_run_config(config_path)
         run_state.state = "running"
         run_state.started_at = datetime.now(UTC)
         run_state.active_feed_slug = None
@@ -132,6 +155,7 @@ def create_control_router(  # noqa: C901, PLR0915
                 content_type="application/json",
             )
         slug = request.match_info["slug"]
+        config = await _load_run_config(config_path)
         feed_title = _resolve_slug(slug, config.app.feeds)
         if feed_title is None:
             raise web.HTTPNotFound(

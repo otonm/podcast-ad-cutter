@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from api.event_bus import EventBus
@@ -28,6 +30,53 @@ def _make_config() -> MagicMock:
         _make_feed("Another Show"),
     ]
     return cfg
+
+
+_VALID_CONFIG_YAML = """\
+feeds:
+  - title: "My Show"
+    url: "https://my-show.example/feed.rss"
+  - title: "Another Show"
+    url: "https://another-show.example/feed.rss"
+models:
+  transcription:
+    provider: "groq"
+    model: "whisper-large-v3"
+  context_extraction:
+    provider: "groq"
+    model: "llama-3.3-70b-versatile"
+  ad_detection:
+    provider: "groq"
+    model: "model-from-disk"
+paths:
+  output_dir: "./output"
+  cache_dir: "./cache"
+  data_dir: "./data"
+  log_dir: "./logs"
+ad_detection:
+  min_duration: 10000
+  min_confidence: 0.7
+output:
+  file_type: "mp3"
+  bitrate: "128k"
+log:
+  level: "ERROR"
+  to_file: false
+base_url: "http://localhost:8080"
+"""
+
+
+def _write_config(tmp_path: Path, text: str = _VALID_CONFIG_YAML) -> Path:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(text)
+    return config_path
+
+
+@pytest.fixture(autouse=True)
+def _isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the developer's .env out of load_config and provide the groq key."""
+    monkeypatch.setattr("config.config_loader.load_dotenv", lambda: None)
+    monkeypatch.setenv("GROQ_API_KEY", "test")
 
 
 class TestStatus:
@@ -83,7 +132,7 @@ class TestStartRun:
         run_state = RunState()
         app = create_app(
             EventBus(), time.monotonic(), run_state, _make_config(),
-            tmp_path / "config.yaml", tmp_path / "logs",
+            _write_config(tmp_path), tmp_path / "logs",
         )
         async with TestClient(TestServer(app)) as client:
             with (
@@ -111,6 +160,37 @@ class TestStartRun:
             assert resp.status == 409
             data = await resp.json()
             assert "error" in data
+
+    async def test_run_uses_config_reloaded_from_disk(self, tmp_path) -> None:
+        config_path = _write_config(tmp_path)
+        app = create_app(
+            EventBus(), time.monotonic(), RunState(), _make_config(),
+            config_path, tmp_path / "logs",
+        )
+        async with TestClient(TestServer(app)) as client:
+            with (
+                patch("api.routes.control.Pipeline") as mock_pipeline,
+                patch("api.routes.control.asyncio.create_task", return_value=MagicMock()),
+            ):
+                resp = await client.post("/api/v1/run")
+                assert resp.status == 202
+                assert mock_pipeline.call_args.args[0].app.models.ad_detection.model == "model-from-disk"
+
+    async def test_run_returns_422_and_stays_idle_when_config_invalid(self, tmp_path) -> None:
+        config_path = _write_config(tmp_path)
+        run_state = RunState()
+        app = create_app(
+            EventBus(), time.monotonic(), run_state, _make_config(),
+            config_path, tmp_path / "logs",
+        )
+        _write_config(tmp_path, "feeds: []\n")  # broken by an edit after startup
+        async with TestClient(TestServer(app)) as client:
+            with patch("api.routes.control.Pipeline") as mock_pipeline:
+                resp = await client.post("/api/v1/run")
+                assert resp.status == 422
+                assert "error" in await resp.json()
+                assert run_state.state == "idle"
+                assert not mock_pipeline.called
 
 
 class TestStopRun:
@@ -163,7 +243,7 @@ class TestFeedRun:
         run_state = RunState()
         app = create_app(
             EventBus(), time.monotonic(), run_state, _make_config(),
-            tmp_path / "config.yaml", tmp_path / "logs",
+            _write_config(tmp_path), tmp_path / "logs",
         )
         async with TestClient(TestServer(app)) as client:
             with (
@@ -182,13 +262,49 @@ class TestFeedRun:
         run_state = RunState()
         app = create_app(
             EventBus(), time.monotonic(), run_state, _make_config(),
-            tmp_path / "config.yaml", tmp_path / "logs",
+            _write_config(tmp_path), tmp_path / "logs",
         )
         async with TestClient(TestServer(app)) as client:
             resp = await client.post("/api/v1/feeds/does-not-exist/run")
             assert resp.status == 404
             data = await resp.json()
             assert "error" in data
+
+    async def test_feed_run_finds_feed_added_after_startup(self, tmp_path) -> None:
+        config_path = _write_config(
+            tmp_path,
+            _VALID_CONFIG_YAML.replace(
+                "feeds:\n",
+                'feeds:\n  - title: "New Show"\n    url: "https://new-show.example/feed.rss"\n',
+                1,
+            ),
+        )
+        app = create_app(
+            EventBus(), time.monotonic(), RunState(), _make_config(),
+            config_path, tmp_path / "logs",
+        )
+        async with TestClient(TestServer(app)) as client:
+            with (
+                patch("api.routes.control.Pipeline") as mock_pipeline,
+                patch("api.routes.control.asyncio.create_task", return_value=MagicMock()),
+            ):
+                resp = await client.post("/api/v1/feeds/new-show/run")
+                assert resp.status == 202
+                assert mock_pipeline.call_args.kwargs["feed_name"] == "New Show"
+
+    async def test_feed_run_returns_422_when_api_key_missing(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+        config_path = _write_config(tmp_path)
+        run_state = RunState()
+        app = create_app(
+            EventBus(), time.monotonic(), run_state, _make_config(),
+            config_path, tmp_path / "logs",
+        )
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/api/v1/feeds/my-show/run")
+            assert resp.status == 422
+            assert "groq_api_key" in (await resp.json())["error"]
+            assert run_state.state == "idle"
 
     async def test_feed_run_returns_409_when_active(self, tmp_path) -> None:
         run_state = RunState()

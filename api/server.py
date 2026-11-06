@@ -59,7 +59,9 @@ def create_app(
     app["config_path"] = config_path
     app.add_routes(create_health_router(start_time))
     app.add_routes(create_events_router(event_bus))
-    app.add_routes(create_control_router(config, event_bus, run_state))
+    app.add_routes(create_control_router(
+        config_path, config.app.paths.data_dir / "data.db", event_bus, run_state,
+    ))
     app.add_routes(create_settings_router(config_path))
     app.add_routes(create_feeds_router(config_path, config.app.paths.data_dir / "data.db"))
     app.add_routes(create_db_router(
