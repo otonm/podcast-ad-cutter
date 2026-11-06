@@ -3,7 +3,7 @@ name = "podcast-ad-cutter"
 version = "0.1"
 requires-python = ">=3.12"
 dependencies = [
-    "aiohttp>=3",
+    "aiohttp>=3,<3.14",  # aioresponses 0.7.9 breaks on 3.14 (ClientResponse stream_writer kwarg)
     "aiosqlite>=0.22.1",
     "litellm>=1.83.0",
     "pydantic>=2",
@@ -27,6 +27,8 @@ ignore = [
     "EM102",
     "G004",
     "PLR0913",
+    "PLR0917",
+    "CPY001",
     "ERA001",
     "COM812",
     "D104",
