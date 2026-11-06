@@ -702,3 +702,48 @@ class TestIsSkipped:
         async with Database(db_path) as db:
             store = EpisodeStore(db.conn)
             assert await store.is_skipped("no-such-guid") is False
+
+
+# ---------------------------------------------------------------------------
+# Tests: unskip, publication excludes skipped, episode location
+# ---------------------------------------------------------------------------
+
+
+async def test_unskip_episode_clears_flag(db_path: Path) -> None:
+    async with Database(db_path) as db:
+        await _insert_episode_row(db.conn, "g1")
+        store = EpisodeStore(db.conn)
+        await store.skip_episode("g1")
+        assert await store.unskip_episode("g1") is True
+        assert await store.is_skipped("g1") is False
+
+
+async def test_unskip_unknown_guid_returns_false(db_path: Path) -> None:
+    async with Database(db_path) as db:
+        assert await EpisodeStore(db.conn).unskip_episode("nope") is False
+
+
+async def test_get_episodes_for_feed_excludes_skipped_and_backfills(
+    db_path: Path, episodes: list[Episode]
+) -> None:
+    newest = Episode(
+        guid="guid-3", url="https://example.com/ep3.mp3", title="Episode Three",
+        pub_date=datetime(2024, 1, 3, tzinfo=UTC),
+    )
+    async with Database(db_path) as db:
+        store = EpisodeStore(db.conn)
+        await store.save_episodes("My Podcast", [*episodes, newest])
+        await store.skip_episode("guid-3")
+        result = await store.get_episodes_for_feed("My Podcast", limit=2)
+    assert [e.guid for e in result] == ["guid-2", "guid-1"]
+
+
+async def test_get_episode_location(db_path: Path, episodes: list[Episode]) -> None:
+    async with Database(db_path) as db:
+        store = EpisodeStore(db.conn)
+        await store.save_episodes("My Podcast", episodes)
+        podcast, title, pubdate = await store.get_episode_location("guid-1")
+        assert (podcast, title) == ("My Podcast", "Episode One")
+        assert pubdate is not None
+        assert pubdate.startswith("2024-01-01")
+        assert await store.get_episode_location("nope") is None

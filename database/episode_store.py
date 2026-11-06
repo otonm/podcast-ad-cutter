@@ -146,7 +146,7 @@ class EpisodeStore:
     async def get_episodes_for_feed(
         self, podcast: str, limit: int
     ) -> list[Episode]:
-        """Return the most recent episodes for a podcast, ready for publication.
+        """Return the most recent non-skipped episodes for a podcast, ready for publication.
 
         Episodes are ordered newest-first (by pubdate descending) to match RSS
         convention. When ``limit`` exceeds the number of stored episodes, all
@@ -165,7 +165,7 @@ class EpisodeStore:
             "episode_type, itunes_author, itunes_subtitle, itunes_summary, content_encoded, "
             "link, author, itunes_title, episode_number, season_number, itunes_block, length, "
             "source_url "
-            "FROM episodes WHERE podcast = ? ORDER BY pubdate DESC LIMIT ?",
+            "FROM episodes WHERE podcast = ? AND skipped = 0 ORDER BY pubdate DESC LIMIT ?",
             (podcast, limit),
         ) as cursor:
             rows = await cursor.fetchall()
@@ -216,6 +216,30 @@ class EpisodeStore:
             return True
         logger.warning(f"Episode {guid!r}: skip requested but not found in DB")
         return False
+
+    async def unskip_episode(self, guid: str) -> bool:
+        """Clear the skipped flag so the episode is processed and published again.
+
+        Returns False if GUID not found.
+        """
+        result = await self._conn.execute(
+            "UPDATE episodes SET skipped = 0 WHERE guid = ?",
+            (guid,),
+        )
+        await self._conn.commit()
+        if result.rowcount > 0:
+            logger.info(f"Episode {guid!r}: skip cleared")
+            return True
+        logger.warning(f"Episode {guid!r}: unskip requested but not found in DB")
+        return False
+
+    async def get_episode_location(self, guid: str) -> tuple[str, str, str | None] | None:
+        """Return ``(podcast, title, pubdate)`` for locating the episode's output file, or None."""
+        async with self._conn.execute(
+            "SELECT podcast, title, pubdate FROM episodes WHERE guid = ?", (guid,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        return None if row is None else (row[0], row[1], row[2])
 
     async def reset_episode(self, guid: str, *, from_stage: str | None = None) -> bool:
         """Reset episode for reprocessing. Returns False if GUID not found."""
