@@ -111,3 +111,4 @@ th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line-sof
 .toasts { position: fixed; right: 16px; bottom: 56px; display: flex; flex-direction: column; gap: 8px; max-width: min(420px, calc(100vw - 32px)); z-index: 10; }
 .toast { background: #111827; color: #fff; padding: 10px 14px; border-radius: 8px; font-size: 13px; }
 .toast.ok { background: var(--ok); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); border: 0; }

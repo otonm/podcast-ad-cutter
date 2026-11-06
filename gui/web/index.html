@@ -33,7 +33,25 @@
       <a href="#/logs" :class="{ active: $store.route.view === 'logs' }"><span>Logs</span></a>
     </nav>
 
-    <!-- LIST PANE (task 3) -->
+    <!-- ── Episode list ─────────────────────────────────────────────────── -->
+    <section class="list" x-data="episodeList" x-show="!$store.route.full" aria-label="Episodes">
+      <div class="search"><input type="search" aria-label="Search titles" placeholder="Search titles" x-model="q" @input.debounce.300ms="search()"></div>
+      <template x-for="e in items" :key="e.guid">
+        <a class="ep" :class="{ selected: selected(e) }" :href="href(e)">
+          <span class="small muted" x-text="fmt.date(e.pubdate, true)"></span>
+          <span class="t" x-text="e.title"></span>
+          <span class="small"><span class="dot" :style="`background: ${stateOf(e).color}`"></span><span x-text="stateOf(e).label"></span></span>
+        </a>
+      </template>
+      <p class="small muted" style="padding: 12px 16px" x-show="!items.length">No episodes match.</p>
+      <div class="pager">
+        <span x-text="range"></span>
+        <span class="row">
+          <button :disabled="offset === 0" @click="page(-1)">Prev</button>
+          <button :disabled="offset + limit >= total" @click="page(1)">Next</button>
+        </span>
+      </div>
+    </section>
 
     <main class="main" :class="{ full: $store.route.full }">
 
@@ -68,7 +86,94 @@
         </section>
       </template>
 
-      <!-- EPISODE DETAIL (task 3) -->
+      <!-- ── Episode detail ─────────────────────────────────────────────── -->
+      <template x-if="$store.route.view === 'episode'">
+        <section x-data="episodeDetail" style="display: flex; flex-direction: column; gap: 16px">
+          <template x-if="ep">
+            <div style="display: flex; flex-direction: column; gap: 16px">
+              <div class="row" style="justify-content: space-between; align-items: flex-start">
+                <div>
+                  <h1 x-text="ep.title"></h1>
+                  <span class="small muted" x-text="[
+                    fmt.date(ep.pubdate),
+                    duration ? (ads.length ? `${fmt.time(duration)} → ≈${fmt.time(duration - adTotal)}` : fmt.time(duration)) : '',
+                    ep.pipeline_state,
+                  ].filter(Boolean).join(' · ')"></span>
+                </div>
+                <div class="row">
+                  <button :disabled="!$store.status.idle" @click="toggleSkip()" x-text="skippedEp ? 'Enable' : 'Disable'"></button>
+                  <label style="flex-direction: row; align-items: center; gap: 6px">
+                    <span class="sr-only">Reprocess from</span>
+                    <select x-model="stage" aria-label="Reprocess from stage">
+                      <option value="">full</option><option>download</option><option>transcribe</option>
+                      <option>topic</option><option>ad-detect</option><option>edit</option>
+                    </select>
+                  </label>
+                  <button :disabled="!$store.status.idle" @click="reprocess()">Reprocess</button>
+                  <button class="danger" :disabled="!$store.status.idle" @click="remove()">Delete</button>
+                </div>
+              </div>
+
+              <!-- Timeline: original audio, ads in orange -->
+              <div class="card" x-show="ep.source_url">
+                <div class="row" style="font-size: 13px">
+                  <button class="icon" :aria-label="playing ? 'Pause original' : 'Play original'" @click="toggle()">
+                    <svg x-show="!playing" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 1.5v11l9-5.5z" fill="currentColor"/></svg>
+                    <svg x-show="playing" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 1.5h3v11H3zM8 1.5h3v11H8z" fill="currentColor"/></svg>
+                  </button>
+                  <strong x-text="fmt.time(current)"></strong><span class="muted" x-text="`/ ${fmt.time(duration)} original`"></span>
+                  <span class="muted" style="margin-left: auto" x-text="`${ads.length} ad(s) · ${fmt.time(adTotal)}`"></span>
+                </div>
+                <div class="timeline" @click="seekClick($event)" role="slider" tabindex="0" aria-label="Seek original audio"
+                     :aria-valuenow="Math.round(current / 1000)" aria-valuemin="0" :aria-valuemax="Math.round(duration / 1000)"
+                     @keydown.right.prevent="seek(current + 10000)" @keydown.left.prevent="seek(Math.max(0, current - 10000))">
+                  <template x-for="(b, i) in blocks" :key="i"><div class="ad" :style="`left: ${b.left}; width: ${b.width}`"></div></template>
+                  <div class="head" :style="`left: ${headPct}`"></div>
+                </div>
+                <div class="ticks"><template x-for="t in ticks" :key="t.pct"><span :style="`left: ${t.pct}`" x-text="t.label"></span></template></div>
+                <audio x-ref="audio" :src="ep.source_url" preload="metadata"
+                       @loadedmetadata="onMeta()" @timeupdate="current = $refs.audio.currentTime * 1000"
+                       @play="playing = true" @pause="playing = false"></audio>
+                <div class="small muted" x-show="ep.pipeline_state === 'complete'">
+                  Cut version (timestamps differ): <a :href="ep.url" target="_blank" rel="noopener" x-text="ep.url"></a>
+                </div>
+              </div>
+
+              <div class="cols">
+                <div class="grow">
+                  <h2>Transcript</h2>
+                  <p class="small muted" x-show="missing.transcript">Not transcribed yet.</p>
+                  <template x-for="s in segs" :key="s.start">
+                    <button class="seg" :class="{ ad: adOf(s) }" :title="adOf(s) ? `Ad: ${adOf(s).sponsor}` : ''" @click="seek(s.start)">
+                      <span class="ts" x-text="fmt.time(s.start)"></span><span x-text="s.text"></span>
+                    </button>
+                  </template>
+                </div>
+                <div class="aside">
+                  <h2 x-text="`Ads · ${ads.length}`"></h2>
+                  <p class="small muted" x-show="missing.ads">Ad detection has not run yet.</p>
+                  <template x-for="a in ads" :key="a.start_ms">
+                    <button class="adrow seg" style="display: block" @click="seek(a.start_ms)">
+                      <div><strong x-text="a.sponsor"></strong> <span class="muted" x-text="`· ${a.confidence.toFixed(2)}`"></span></div>
+                      <div class="r" x-text="`${fmt.time(a.start_ms)} – ${fmt.time(a.end_ms)}`"></div>
+                      <div class="muted" x-text="a.ad_topic"></div>
+                    </button>
+                  </template>
+                  <h2 style="margin-top: 8px">Topic</h2>
+                  <p class="small muted" x-show="missing.topic">Topic extraction has not run yet.</p>
+                  <template x-if="topic">
+                    <div class="small" style="display: flex; flex-direction: column; gap: 4px">
+                      <div><span class="muted">Show:</span> <span x-text="topic.show"></span></div>
+                      <div><span class="muted">Hosts:</span> <span x-text="topic.hosts"></span></div>
+                      <div><span class="muted">Topic:</span> <span x-text="topic.topic"></span></div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </template>
+        </section>
+      </template>
       <!-- SETTINGS + FEEDS (task 4) -->
       <!-- LOGS (task 5) -->
     </main>

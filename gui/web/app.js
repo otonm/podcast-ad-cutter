@@ -30,6 +30,16 @@ export async function api(path, opts = {}) {
 
 const enc = encodeURIComponent;
 
+/** Mixin: window listeners that are removed when the Alpine component is destroyed. */
+const listeners = () => ({
+  _off: [],
+  on(type, fn) {
+    window.addEventListener(type, fn);
+    this._off.push(() => window.removeEventListener(type, fn));
+  },
+  destroy() { for (const off of this._off) off(); },
+});
+
 document.addEventListener("alpine:init", () => {
   Alpine.store("toasts", {
     items: [],
@@ -121,12 +131,13 @@ document.addEventListener("alpine:init", () => {
 
   // ── Right pane: run overview ──────────────────────────────────────────────
   Alpine.data("overview", () => ({
+    ...listeners(),
     costs: { total: 0, by_model: [] },
     async init() {
-      await this.loadCosts();
-      window.addEventListener("pipeline-event", (e) => {
+      this.on("pipeline-event", (e) => {
         if (e.detail.type === "run.completed") this.loadCosts();
       });
+      await this.loadCosts();
     },
     async loadCosts() {
       try { this.costs = (await api("/db/costs", { quiet: true })).data; } catch { /* keep last */ }
@@ -134,6 +145,141 @@ document.addEventListener("alpine:init", () => {
     async run() { await api("/run", { method: "POST" }); Alpine.store("status").refresh(); },
     async stop(force) { await api(`/run/stop?force=${force}`, { method: "POST" }); Alpine.store("status").refresh(); },
     money(v) { return `$${(v ?? 0).toFixed(2)}`; },
+  }));
+
+  // ── Middle pane: episode list (always mounted, keeps filter/search/page across views) ──
+  Alpine.data("episodeList", () => ({
+    items: [], total: 0, offset: 0, limit: 50, q: "", feed: null, skipped: null,
+    init() {
+      let loaded = false;
+      const apply = () => {
+        const r = parseHash(location.hash);
+        const keepFilter = r.view === "episode" || ["feeds", "settings", "logs"].includes(r.view);
+        if (keepFilter && loaded) return; // opening a detail keeps the list's place
+        loaded = true;
+        if (keepFilter) { this.load(); return; } // first paint on a deep link: unfiltered list
+        const feed = r.view === "feed" ? r.param : null;
+        const skipped = r.view === "skipped" ? "true" : null;
+        if (feed !== this.feed || skipped !== this.skipped) {
+          this.feed = feed;
+          this.skipped = skipped;
+          this.offset = 0;
+        }
+        this.load();
+      };
+      window.addEventListener("hashchange", apply);
+      window.addEventListener("episodes-changed", () => this.load());
+      window.addEventListener("pipeline-event", (e) => {
+        if (["episode.completed", "episode.failed"].includes(e.detail.type)) this.load();
+      });
+      apply();
+    },
+    async load() {
+      const qs = new URLSearchParams({ limit: this.limit, offset: this.offset });
+      if (this.feed) qs.set("feed", this.feed);
+      if (this.skipped) qs.set("skipped", this.skipped);
+      if (this.q) qs.set("q", this.q);
+      try {
+        const { data, headers } = await api(`/db/episodes?${qs}`, { quiet: true });
+        this.items = data;
+        this.total = Number(headers.get("X-Total-Count") ?? data.length);
+        Alpine.store("titles").remember(data);
+      } catch (err) {
+        Alpine.store("toasts").push(`Episode list: ${err.message}`);
+      }
+    },
+    search() { this.offset = 0; this.load(); },
+    page(dir) { this.offset = Math.max(0, this.offset + dir * this.limit); this.load(); },
+    get range() {
+      return this.total ? `${this.offset + 1}–${Math.min(this.offset + this.limit, this.total)} of ${this.total}` : "0 of 0";
+    },
+    href(e) { return `#/episodes/${enc(e.guid)}`; },
+    selected(e) { return Alpine.store("route").view === "episode" && Alpine.store("route").param === e.guid; },
+    stateOf(e) {
+      const st = Alpine.store("status");
+      if (!st.idle && st.current_episode_guid === e.guid) {
+        return { color: "var(--accent)", label: `${st.stage ?? "processing"}${st.percent !== null ? ` ${st.percent}%` : ""}` };
+      }
+      if (st.failed[e.guid]) return { color: "var(--fail)", label: "failed this run" };
+      const colors = { complete: "var(--ok)", skipped: "var(--muted)" };
+      return { color: colors[e.pipeline_state] ?? "var(--pending)", label: e.pipeline_state };
+    },
+  }));
+
+  // ── Right pane: episode detail ──────────────────────────────────────────
+  Alpine.data("episodeDetail", () => ({
+    ...listeners(),
+    guid: null, ep: null, segs: [], ads: [], topic: null, missing: {},
+    duration: 0, current: 0, playing: false, stage: "",
+    init() {
+      this.on("hashchange", () => this.load());
+      this.on("pipeline-event", (e) => {
+        if (e.detail.payload?.guid === this.guid && ["episode.completed", "episode.failed"].includes(e.detail.type)) {
+          this.load();
+        }
+      });
+      this.load();
+    },
+    async load() {
+      const r = parseHash(location.hash);
+      if (r.view !== "episode") return;
+      const guidChanged = r.param !== this.guid;
+      this.guid = r.param;
+      if (guidChanged) Object.assign(this, { ep: null, segs: [], ads: [], topic: null, duration: 0, current: 0, playing: false });
+      const g = enc(this.guid);
+      try {
+        this.ep = (await api(`/db/episodes/${g}`)).data;
+      } catch {
+        return;
+      }
+      Alpine.store("titles").remember([this.ep]);
+      const [t, a, tp] = await Promise.allSettled([
+        api(`/db/transcriptions/${g}`, { quiet: true }),
+        api(`/db/ads/${g}`, { quiet: true }),
+        api(`/db/topics/${g}`, { quiet: true }),
+      ]);
+      this.segs = t.status === "fulfilled" ? t.value.data.segments : [];
+      this.ads = a.status === "fulfilled" ? a.value.data.segments : [];
+      this.topic = tp.status === "fulfilled" ? tp.value.data : null;
+      this.missing = { transcript: t.status !== "fulfilled", ads: a.status !== "fulfilled", topic: tp.status !== "fulfilled" };
+      // Until the audio reports its real length, the last transcript segment end stands in.
+      if (guidChanged || !this.$refs.audio?.duration) this.duration = this.segs.at(-1)?.end ?? 0;
+    },
+    get blocks() { return timelineBlocks(this.ads, this.duration); },
+    get ticks() { return [0, 0.25, 0.5, 0.75, 1].map((f) => ({ pct: `${f * 100}%`, label: fmtTime(f * this.duration) })); },
+    get headPct() { return this.duration ? `${(100 * this.current) / this.duration}%` : "0%"; },
+    get adTotal() { return this.ads.reduce((n, a) => n + (a.end_ms - a.start_ms), 0); },
+    get skippedEp() { return this.ep?.skipped === 1 || this.ep?.pipeline_state === "skipped"; },
+    adOf(seg) { return overlapsAd(seg, this.ads); },
+    onMeta() { this.duration = this.$refs.audio.duration * 1000; },
+    seek(ms) {
+      const a = this.$refs.audio;
+      if (!a) return;
+      a.currentTime = ms / 1000;
+      a.play();
+    },
+    seekClick(ev) {
+      const rect = ev.currentTarget.getBoundingClientRect();
+      this.seek(((ev.clientX - rect.left) / rect.width) * this.duration);
+    },
+    toggle() { const a = this.$refs.audio; if (a) (a.paused ? a.play() : a.pause()); },
+    async act(fn) {
+      try { await fn(); } catch { return; } // api() already toasted
+      await this.load();
+      window.dispatchEvent(new Event("episodes-changed"));
+    },
+    toggleSkip() {
+      const g = enc(this.guid);
+      return this.act(() => api(`/episodes/${g}/skip`, { method: this.skippedEp ? "DELETE" : "POST" }));
+    },
+    reprocess() {
+      const qs = this.stage ? `?stage=${this.stage}` : "";
+      return this.act(() => api(`/episodes/${enc(this.guid)}/reprocess${qs}`, { method: "POST" }));
+    },
+    remove() {
+      if (!confirm(`Delete "${this.ep.title}"? Output file and processed data are removed.`)) return;
+      return this.act(() => api(`/episodes/${enc(this.guid)}`, { method: "DELETE" }));
+    },
   }));
 });
 
