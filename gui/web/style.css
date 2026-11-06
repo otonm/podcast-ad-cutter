@@ -30,7 +30,7 @@ h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--muted); }
 
 /* Layout: sidebar | list | main, status bar below */
 .app { height: 100vh; height: 100dvh; display: flex; flex-direction: column; }
-.panes { flex: 1; display: flex; flex-wrap: wrap; min-height: 0; overflow: hidden; }
+.panes { flex: 1; display: flex; min-height: 0; overflow: hidden; }
 .side { flex: 1 1 200px; max-width: 220px; background: var(--side); border-right: 1px solid var(--line); padding: 16px 10px; display: flex; flex-direction: column; gap: 2px; }
 .side .brand { padding: 4px 12px 16px; font-size: 15px; font-weight: 700; }
 .side a { display: flex; justify-content: space-between; gap: 8px; padding: 10px 12px; border-radius: 6px; color: #374151; text-decoration: none; }
@@ -41,6 +41,7 @@ h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--muted); }
 @media (max-width: 760px) {
   /* Stacked panes: let the page scroll as a whole again. */
   .app { height: auto; min-height: 100vh; }
+  .panes { flex-wrap: wrap; }
   .panes, .list, .main { overflow: visible; }
   .side { max-width: none; flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); }
   .side .brand { width: 100%; padding-bottom: 4px; }
