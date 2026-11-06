@@ -172,6 +172,20 @@ def create_db_router(db_path: Path, output_dir: Path, config_path: Path) -> web.
             "segments": [{"start": r[0], "end": r[1], "text": r[2]} for r in segments],
         })
 
+    @routes.get("/api/v1/db/topics/{guid}")
+    async def get_topic(request: web.Request) -> web.Response:
+        guid = request.match_info["guid"]
+        async with ReadOnlyDatabase(db_path) as db, db.conn.execute(
+            "SELECT topic, hosts, show FROM topic_extractions WHERE guid = ?", (guid,)
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None:
+            raise web.HTTPNotFound(
+                text='{"error": "not found"}',
+                content_type="application/json",
+            )
+        return web.json_response({"guid": guid, "topic": row[0], "hosts": row[1], "show": row[2]})
+
     @routes.get("/api/v1/db/ads/{guid}")
     async def get_ads(request: web.Request) -> web.Response:
         guid = request.match_info["guid"]

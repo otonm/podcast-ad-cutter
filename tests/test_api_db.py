@@ -406,6 +406,38 @@ class TestGetEpisodes:
 # ---------------------------------------------------------------------------
 
 
+class TestGetTopics:
+    async def test_topics_returns_row(self, tmp_path: Path) -> None:
+        """GET /api/v1/db/topics/{guid} returns the stored topic extraction."""
+        async with Database(tmp_path / "data.db") as db:
+            await db.conn.execute(
+                "INSERT INTO episodes (podcast, guid, title, url) VALUES (?, ?, ?, ?)",
+                ("Show A", "ep-t", "Topic Ep", "https://example.com/t"),
+            )
+            await db.conn.execute(
+                "INSERT INTO topic_extractions (guid, podcast, title, topic, hosts, show) VALUES (?, ?, ?, ?, ?, ?)",
+                ("ep-t", "Show A", "Topic Ep", "Alert fatigue", "Alice, Bob", "Weekly tech show"),
+            )
+            await db.conn.commit()
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/topics/ep-t")
+            assert resp.status == 200
+            assert await resp.json() == {
+                "guid": "ep-t", "topic": "Alert fatigue", "hosts": "Alice, Bob", "show": "Weekly tech show",
+            }
+
+    async def test_topics_returns_404_when_missing(self, tmp_path: Path) -> None:
+        """GET /api/v1/db/topics/{guid} returns 404 when no extraction exists."""
+        async with Database(tmp_path / "data.db"):
+            pass
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/topics/nope")
+            assert resp.status == 404
+            assert await resp.json() == {"error": "not found"}
+
+
 class TestGetTranscriptions:
     async def test_transcriptions_returns_text_and_segments(self, tmp_path: Path) -> None:
         """GET /api/v1/db/transcriptions/{guid} returns {guid, text, segments}."""
