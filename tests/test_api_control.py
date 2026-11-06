@@ -643,3 +643,39 @@ class TestDeleteEpisode:
             assert resp.status == 409
         async with Database(tmp_path / "data.db") as db:
             assert not await EpisodeStore(db.conn).is_skipped("g1")
+
+
+class TestStartRunRace:
+    async def test_concurrent_run_requests_start_only_one_pipeline(self, tmp_path) -> None:
+        """Two POSTs racing through the config load must not both start a pipeline."""
+        config_path = _write_config(tmp_path)
+        run_state = RunState()
+        app = create_app(
+            EventBus(), time.monotonic(), run_state, _make_config(), config_path, tmp_path / "logs",
+        )
+        from config.config_loader import load_config as real_load
+
+        def slow_load(path: Path) -> object:
+            time.sleep(0.2)
+            return real_load(path)
+
+        async with TestClient(TestServer(app)) as client:
+            with (
+                patch("api.routes.control.load_config", side_effect=slow_load),
+                patch("api.routes.control.Pipeline") as mock_pipeline,
+                patch("api.routes.control.asyncio.create_task", return_value=MagicMock()),
+            ):
+                r1, r2 = await asyncio.gather(client.post("/api/v1/run"), client.post("/api/v1/feeds/my-show/run"))
+                assert sorted([r1.status, r2.status]) == [202, 409]
+                assert mock_pipeline.call_count == 1
+
+    async def test_failed_config_load_releases_the_run_slot(self, tmp_path) -> None:
+        config_path = _write_config(tmp_path)
+        run_state = RunState()
+        app = create_app(
+            EventBus(), time.monotonic(), run_state, _make_config(), config_path, tmp_path / "logs",
+        )
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post("/api/v1/feeds/unknown/run")
+            assert resp.status == 404
+            assert run_state.state == "idle"

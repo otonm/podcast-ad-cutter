@@ -116,8 +116,12 @@ def create_control_router(  # noqa: C901, PLR0915
                 text='{"error": "a run is already active"}',
                 content_type="application/json",
             )
-        config = await _load_run_config(config_path)
-        run_state.state = "running"
+        run_state.state = "running"  # claim the slot before awaiting, so a concurrent request gets 409
+        try:
+            config = await _load_run_config(config_path)
+        except web.HTTPException:
+            run_state.reset_to_idle()
+            raise
         run_state.started_at = datetime.now(UTC)
         run_state.active_feed_slug = None
         run_state.stop_event.clear()
@@ -158,14 +162,18 @@ def create_control_router(  # noqa: C901, PLR0915
                 content_type="application/json",
             )
         slug = request.match_info["slug"]
-        config = await _load_run_config(config_path)
-        feed_title = _resolve_slug(slug, config.app.feeds)
-        if feed_title is None:
-            raise web.HTTPNotFound(
-                text='{"error": "feed not found"}',
-                content_type="application/json",
-            )
-        run_state.state = "running"
+        run_state.state = "running"  # claim the slot before awaiting, so a concurrent request gets 409
+        try:
+            config = await _load_run_config(config_path)
+            feed_title = _resolve_slug(slug, config.app.feeds)
+            if feed_title is None:
+                raise web.HTTPNotFound(
+                    text='{"error": "feed not found"}',
+                    content_type="application/json",
+                )
+        except web.HTTPException:
+            run_state.reset_to_idle()
+            raise
         run_state.started_at = datetime.now(UTC)
         run_state.active_feed_slug = slug
         run_state.stop_event.clear()
