@@ -259,7 +259,7 @@ The container image (based on `ghcr.io/astral-sh/uv:python3.12-bookworm-slim`) i
 - `gosu` — for privilege drop from root to the `app` user after volume ownership is fixed
 
 **Startup flow — cron mode (default):**
-1. `entrypoint.sh` runs as root, fixes ownership of bind-mounted volumes, writes a crontab file from `$CRON_SCHEDULE`, then execs `gosu app supercronic /tmp/crontab`
+1. `entrypoint.sh` runs as root, fixes ownership of bind-mounted volumes, runs `run.sh` once in the foreground as `app` (failure is logged, not fatal), writes a crontab file from `$CRON_SCHEDULE`, then execs `gosu app supercronic /tmp/crontab`
 2. `supercronic` runs `run.sh` on the cron schedule as the `app` user
 3. `run.sh` assembles CLI arguments from environment variables and execs `python main.py`
 

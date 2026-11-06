@@ -16,6 +16,11 @@ if [ -n "${APP_SERVE:-}" ]; then
     exec gosu app /bin/sh /app/run.sh
 fi
 
+# Run once at startup instead of waiting for the first cron tick. Foreground so a
+# scheduled run can't overlap it; a failure must not stop the schedule from starting.
+echo "entrypoint: startup run"
+gosu app /bin/sh /app/run.sh || echo "entrypoint: startup run failed (exit $?), continuing" >&2
+
 # Use explicit interpreter — avoids shebang exec issues in some container runtimes
 printf '%s /bin/sh /app/run.sh\n' "${CRON_SCHEDULE}" > /tmp/crontab
 

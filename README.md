@@ -145,7 +145,7 @@ docker compose pull && docker compose up -d
 
 The container supports two modes:
 
-- **Cron mode** (default) — runs the pipeline on a schedule. Set `CRON_SCHEDULE` to control the interval.
+- **Cron mode** (default) — runs the pipeline once at container start, then on a schedule. Set `CRON_SCHEDULE` to control the interval.
 - **Server mode** — runs the HTTP API server continuously. Set `APP_SERVE=true` and uncomment the `ports` section in `docker-compose.yml`.
 
 **Environment variables in the container:**

@@ -16,7 +16,7 @@
 #        docker compose pull && docker compose up -d
 #
 # MODES:
-#   Cron mode (default): runs the pipeline on a schedule. Leave APP_SERVE empty.
+#   Cron mode (default): runs the pipeline once at start, then on a schedule. Leave APP_SERVE empty.
 #   Server mode: runs the HTTP API server continuously. Set APP_SERVE=true and
 #     uncomment the ports section. CRON_SCHEDULE is ignored in server mode.
 
