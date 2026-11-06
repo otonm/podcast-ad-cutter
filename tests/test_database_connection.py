@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import aiosqlite
 import pytest
 
-from database.connection import Database
+from database.connection import Database, ReadOnlyDatabase
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -357,3 +357,17 @@ async def test_cost_tracking_guid_migration_is_idempotent(db_path: Path) -> None
     async with Database(db_path):
         pass
     assert "guid" in await _cost_tracking_column_names(db_path)
+
+
+async def test_database_enables_wal_mode(db_path: Path) -> None:
+    async with Database(db_path) as db, db.conn.execute("PRAGMA journal_mode") as cur:
+        assert (await cur.fetchone())[0] == "wal"
+
+
+async def test_readonly_reader_not_blocked_by_exclusive_writer(db_path: Path) -> None:
+    async with Database(db_path) as db:
+        await db.conn.execute("BEGIN EXCLUSIVE")
+        await db.conn.execute("INSERT INTO episodes (podcast, title, guid) VALUES ('p', 't', 'g')")
+        async with ReadOnlyDatabase(db_path) as ro, ro.conn.execute("SELECT COUNT(*) FROM episodes") as cur:
+            assert (await cur.fetchone())[0] == 0
+        await db.conn.rollback()

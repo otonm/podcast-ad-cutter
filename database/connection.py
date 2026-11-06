@@ -147,6 +147,8 @@ class Database:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = await aiosqlite.connect(self._db_path)
         await self.conn.execute("PRAGMA foreign_keys = ON")
+        # Persistent in the file: API ReadOnlyDatabase readers never block on pipeline writes.
+        await self.conn.execute("PRAGMA journal_mode=WAL")
         await self.conn.execute(_EPISODES_SCHEMA)
         await self.conn.execute(_AUDIO_METADATA_SCHEMA)
         await self.conn.execute(_TRANSCRIPTIONS_SCHEMA)

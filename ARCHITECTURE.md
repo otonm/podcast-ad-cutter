@@ -246,7 +246,7 @@ Each route module exposes a factory function (`create_*_router(...)`) that captu
 
 ### Database Concurrency
 
-The pipeline holds one write connection (`Database`) open for the full duration of a run. The API read endpoints each open a fresh `ReadOnlyDatabase` (SQLite URI `?mode=ro`) per request. SQLite WAL mode allows concurrent reads alongside the writer without blocking.
+The pipeline holds one write connection (`Database`) open for the full duration of a run. The API read endpoints each open a fresh `ReadOnlyDatabase` (SQLite URI `?mode=ro`) per request. SQLite WAL mode (enabled by `PRAGMA journal_mode=WAL` in `Database.__aenter__`, persistent in the file) allows concurrent reads alongside the writer without blocking.
 
 ---
 
