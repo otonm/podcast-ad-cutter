@@ -35,7 +35,7 @@ State transitions:
 
 Each episode carries a `pipeline_state` field (computed, not stored directly). The resolution order is:
 
-1. `skipped` — `episodes.skipped = 1` in DB (takes highest priority, always wins)
+1. `skipped` — `episodes.skipped = 1` in DB (takes highest priority, always wins; skipped episodes are not published in the RSS)
 2. `complete` — output audio file exists on disk at `output_dir/<feed-slug>/<DD.MM.YYYY>-<title-slug>.<ext>`
 3. `processed` — row in `ad_detection_runs` for this GUID
 4. `transcribed` — row in `transcriptions` for this GUID
@@ -208,7 +208,7 @@ Starts a pipeline run for a single feed identified by slug.
 
 #### `POST /api/v1/episodes/{guid}/skip`
 
-Marks an episode as skipped. A skipped episode is excluded from all future pipeline runs without being deleted.
+Marks an episode as skipped (disabled). A skipped episode is excluded from all future pipeline runs **and from the published RSS feed**, without being deleted. The feed drops it at the next run.
 
 **Precondition:** pipeline state must be `idle`.
 
@@ -225,6 +225,48 @@ Marks an episode as skipped. A skipped episode is excluded from all future pipel
   "guid": "abc123"
 }
 ```
+
+**Error responses:**
+
+| Status | Condition | Body |
+|---|---|---|
+| 404 | GUID not found in DB | `{"error": "episode not found: <guid>"}` |
+| 409 | Run is active | `{"error": "cannot modify episodes while a run is active"}` |
+
+---
+
+#### `DELETE /api/v1/episodes/{guid}/skip`
+
+Clears the skip flag (re-enables the episode). It is processed and published again from the next run.
+
+**Precondition:** pipeline state must be `idle`.
+
+**Response 200**
+```json
+{"status": "unskipped", "guid": "abc123"}
+```
+
+**Error responses:**
+
+| Status | Condition | Body |
+|---|---|---|
+| 404 | GUID not found in DB | `{"error": "episode not found: <guid>"}` |
+| 409 | Run is active | `{"error": "cannot modify episodes while a run is active"}` |
+
+---
+
+#### `DELETE /api/v1/episodes/{guid}`
+
+Deletes an episode's processed state: marks it skipped, removes all pipeline data (the `download` reset cascade: audio metadata, transcription, topic, ads) and deletes its output audio file. The episode row is kept so the next feed sync cannot re-add it. The RSS drops the item at the next run; until then its enclosure returns 404.
+
+**Precondition:** pipeline state must be `idle`.
+
+**Response 200**
+```json
+{"status": "deleted", "guid": "abc123", "files_removed": ["21.03.2026-episode-title.mp3"]}
+```
+
+`files_removed` is empty when no output file existed.
 
 **Error responses:**
 
@@ -916,7 +958,9 @@ Both `/api/v1/events` and `/api/v1/logs/{path}/tail` are SSE streams. On client 
 | POST | `/api/v1/run` | Start a full pipeline run |
 | POST | `/api/v1/run/stop` | Stop the active run (graceful or force) |
 | POST | `/api/v1/feeds/{slug}/run` | Start a run for one feed |
-| POST | `/api/v1/episodes/{guid}/skip` | Mark episode as skipped |
+| POST | `/api/v1/episodes/{guid}/skip` | Mark episode as skipped (hidden from feed) |
+| DELETE | `/api/v1/episodes/{guid}/skip` | Re-enable a skipped episode |
+| DELETE | `/api/v1/episodes/{guid}` | Skip + purge pipeline data and output file |
 | POST | `/api/v1/episodes/{guid}/reprocess` | Reset episode for reprocessing |
 | GET | `/api/v1/feeds` | List all configured feeds |
 | POST | `/api/v1/feeds` | Add a new feed |

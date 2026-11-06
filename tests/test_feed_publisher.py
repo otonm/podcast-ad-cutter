@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
+from fnmatch import fnmatch
 from typing import TYPE_CHECKING
 
 import pytest
@@ -1167,3 +1168,11 @@ async def test_update_episode_url_uses_atomic_rename(
     src, dst = renamed[0]
     assert str(src).endswith(".rss.tmp"), f"source must be a .rss.tmp file, got {src}"
     assert str(dst).endswith(".rss"), f"destination must be the .rss file, got {dst}"
+
+
+def test_episode_glob_matches_episode_filename() -> None:
+    d = datetime(2026, 3, 21, 12, tzinfo=UTC)
+    name = FeedPublisher.episode_filename(d, "My Ep!", "mp3")
+    pattern = FeedPublisher.episode_glob(d, "My Ep!")
+    assert fnmatch(name, pattern)
+    assert not fnmatch(FeedPublisher.episode_filename(d, "Other Ep", "mp3"), pattern)

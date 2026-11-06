@@ -12,6 +12,7 @@ from aiohttp import web
 from slugify import slugify
 
 from api.run_state import VALID_STAGES
+from components.feed_publisher import FeedPublisher
 from components.pipeline import Pipeline
 from config.config_loader import load_config
 from database.connection import Database
@@ -85,6 +86,7 @@ def _run_state_to_dict(rs: RunState) -> dict:  # type: ignore[type-arg]
 def create_control_router(  # noqa: C901, PLR0915
     config_path: Path,
     db_path: Path,
+    output_dir: Path,
     event_bus: EventBus,
     run_state: RunState,
 ) -> web.RouteTableDef:
@@ -93,6 +95,7 @@ def create_control_router(  # noqa: C901, PLR0915
     Args:
         config_path: Path to config.yaml, re-read at every run start.
         db_path: Path to the SQLite database file.
+        output_dir: Processed audio output directory (episode delete removes files here).
         event_bus: Shared event bus instance.
         run_state: Shared pipeline run state.
 
@@ -219,6 +222,36 @@ def create_control_router(  # noqa: C901, PLR0915
                 content_type="application/json",
             )
         return web.json_response({"status": "unskipped", "guid": guid})
+
+    @routes.delete("/api/v1/episodes/{guid}")
+    async def delete_episode_handler(request: web.Request) -> web.Response:
+        if run_state.state != "idle":
+            raise web.HTTPConflict(
+                text='{"error": "cannot modify episodes while a run is active"}',
+                content_type="application/json",
+            )
+        guid = request.match_info["guid"]
+        async with Database(db_path) as db:
+            store = EpisodeStore(db.conn)
+            location = await store.get_episode_location(guid)
+            if location is None:
+                raise web.HTTPNotFound(
+                    text=json.dumps({"error": f"episode not found: {guid}"}),
+                    content_type="application/json",
+                )
+            await store.skip_episode(guid)
+            await store.reset_episode(guid)
+        podcast, title, pubdate = location
+        removed: list[str] = []
+        if pubdate is not None:
+            pattern = FeedPublisher.episode_glob(datetime.fromisoformat(pubdate), title)
+            for path in sorted((output_dir / slugify(podcast)).glob(pattern)):
+                path.unlink()
+                removed.append(path.name)
+        # ponytail: RSS still lists the item until the next run regenerates it;
+        # add FeedPublisher.remove_episode if the gap matters
+        logger.info(f"Episode {guid!r}: deleted, removed files {removed}")
+        return web.json_response({"status": "deleted", "guid": guid, "files_removed": removed})
 
     @routes.post("/api/v1/episodes/{guid}/reprocess")
     async def reprocess_handler(request: web.Request) -> web.Response:

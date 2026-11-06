@@ -15,6 +15,10 @@ from api.event_bus import EventBus
 from api.routes.control import _resolve_slug, _run_pipeline_task
 from api.run_state import RunState
 from api.server import create_app
+from components.feed_publisher import FeedPublisher
+from database.connection import Database
+from database.episode_store import EpisodeStore
+from models.feed import Episode
 
 
 def _make_feed(title: str) -> MagicMock:
@@ -575,3 +579,67 @@ class TestReprocess:
                 data = await resp.json()
                 assert "error" in data
                 mock_db_cls.assert_not_called()
+
+
+_PUB = datetime(2026, 3, 21, 12, tzinfo=UTC)
+
+
+async def _seed_episode(tmp_path: Path, guid: str = "g1") -> None:
+    async with Database(tmp_path / "data.db") as db:
+        await EpisodeStore(db.conn).save_episodes(
+            "My Show", [Episode(guid=guid, url="https://src.example/ep.mp3", title="Ep", pub_date=_PUB)],
+        )
+        await db.conn.execute("INSERT INTO transcriptions (guid, transcription) VALUES (?, ?)", (guid, "text"))
+        await db.conn.commit()
+
+
+def _real_db_app(tmp_path: Path, run_state: RunState | None = None) -> object:
+    cfg = _make_config()
+    cfg.app.paths.data_dir = tmp_path
+    cfg.app.paths.output_dir = tmp_path / "output"
+    return create_app(
+        EventBus(), time.monotonic(), run_state or RunState(), cfg,
+        tmp_path / "config.yaml", tmp_path / "logs",
+    )
+
+
+class TestDeleteEpisode:
+    async def test_delete_skips_resets_and_removes_output(self, tmp_path) -> None:
+        await _seed_episode(tmp_path)
+        out = tmp_path / "output" / "my-show"
+        out.mkdir(parents=True)
+        f = out / FeedPublisher.episode_filename(_PUB, "Ep", "mp3")
+        f.write_bytes(b"x")
+        async with TestClient(TestServer(_real_db_app(tmp_path))) as client:
+            resp = await client.delete("/api/v1/episodes/g1")
+            assert resp.status == 200
+            assert await resp.json() == {"status": "deleted", "guid": "g1", "files_removed": [f.name]}
+        assert not f.exists()
+        async with Database(tmp_path / "data.db") as db:
+            assert await EpisodeStore(db.conn).is_skipped("g1")
+            async with db.conn.execute("SELECT COUNT(*) FROM transcriptions WHERE guid = 'g1'") as cur:
+                assert (await cur.fetchone())[0] == 0
+
+    async def test_delete_without_output_file_returns_empty_list(self, tmp_path) -> None:
+        await _seed_episode(tmp_path)
+        async with TestClient(TestServer(_real_db_app(tmp_path))) as client:
+            resp = await client.delete("/api/v1/episodes/g1")
+            assert resp.status == 200
+            assert (await resp.json())["files_removed"] == []
+
+    async def test_delete_unknown_guid_returns_404(self, tmp_path) -> None:
+        await _seed_episode(tmp_path)
+        async with TestClient(TestServer(_real_db_app(tmp_path))) as client:
+            resp = await client.delete("/api/v1/episodes/nope")
+            assert resp.status == 404
+            assert "error" in await resp.json()
+
+    async def test_delete_returns_409_when_active(self, tmp_path) -> None:
+        await _seed_episode(tmp_path)
+        run_state = RunState()
+        run_state.state = "running"
+        async with TestClient(TestServer(_real_db_app(tmp_path, run_state))) as client:
+            resp = await client.delete("/api/v1/episodes/g1")
+            assert resp.status == 409
+        async with Database(tmp_path / "data.db") as db:
+            assert not await EpisodeStore(db.conn).is_skipped("g1")

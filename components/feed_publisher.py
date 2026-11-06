@@ -86,6 +86,12 @@ class FeedPublisher:
         return f"{date_str}-{slugify(title)}.{ext}"
 
     @staticmethod
+    def episode_glob(pub_date: datetime, title: str) -> str:
+        """Glob matching the episode's output file under any extension (see :meth:`episode_filename`)."""
+        date_str = pub_date.astimezone().strftime("%d.%m.%Y")
+        return f"{date_str}-{slugify(title)}.*"
+
+    @staticmethod
     def episode_url(base_url: str, feed_slug: str, pub_date: datetime, title: str, ext: str) -> str:
         """Build the public URL for a processed episode audio file.
 

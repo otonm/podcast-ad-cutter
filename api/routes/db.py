@@ -11,6 +11,7 @@ from aiohttp import web
 from pydantic import ValidationError
 from slugify import slugify
 
+from components.feed_publisher import FeedPublisher
 from config.config_loader import AppConfig, FeedConfig
 from database.connection import ReadOnlyDatabase
 
@@ -74,12 +75,8 @@ def _is_complete(row_pubdate: str | None, title: str | None, podcast: str | None
     """Return True if the episode's output file exists on disk."""
     if row_pubdate is None or title is None or podcast is None:
         return False
-    pub_date = datetime.fromisoformat(row_pubdate).astimezone()
-    pub_date_str = pub_date.strftime("%d.%m.%Y")
-    feed_slug = slugify(podcast)
-    title_slug = slugify(title)
-    output_feed_dir = output_dir / feed_slug
-    return any(output_feed_dir.glob(f"{pub_date_str}-{title_slug}.*"))
+    pattern = FeedPublisher.episode_glob(datetime.fromisoformat(row_pubdate), title)
+    return any((output_dir / slugify(podcast)).glob(pattern))
 
 
 def create_db_router(db_path: Path, output_dir: Path, config_path: Path) -> web.RouteTableDef:  # noqa: C901, PLR0915
