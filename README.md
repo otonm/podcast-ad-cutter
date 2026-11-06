@@ -137,7 +137,7 @@ The API lets you start/stop pipeline runs, manage feeds, inspect episode state, 
 
 ## Docker
 
-Copy `docker-compose.example.yml` to `docker-compose.yml`, fill in your API keys, and configure `base_url` to your public hostname. Then:
+Copy `docker-compose.example.yml` to `docker-compose.yml` and `config.example.yaml` to `config/config.yaml`, fill in your API keys, and configure `base_url` to your public hostname. Then:
 
 ```bash
 docker compose pull && docker compose up -d
@@ -168,8 +168,8 @@ The container supports two modes:
 
 | Mount | Purpose |
 |---|---|
-| `./config.yaml:/config/config.yaml:ro` | Your config file (read-only) |
-| `output:/output` | Processed audio and RSS feeds |
+| `./config:/config` | Directory holding `config.yaml`; writable so settings saved via the API persist |
+| `./output:/output` | Processed audio and RSS feeds (host folder, e.g. for serving the feeds) |
 | `data:/data` | SQLite database |
 | `cache:/cache` | Temporary audio during processing |
 | `logs:/logs` | Log files |

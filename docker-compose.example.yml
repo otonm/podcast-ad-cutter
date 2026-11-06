@@ -1,7 +1,8 @@
 # docker-compose.example.yml — copy to docker-compose.yml on your VPS and edit.
 #
 # BEFORE STARTING:
-#   1. Copy config.example.yaml → config.yaml and configure your feeds and models.
+#   1. Copy config.example.yaml → config/config.yaml and configure your feeds and models.
+#      The config/ directory is mounted read-write so settings saved via the API persist.
 #      Set paths to the container mount points:
 #        paths:
 #          output_dir: /output
@@ -54,19 +55,18 @@ services:
     #  - "8080:8080"
 
     volumes:
-      # config.yaml is bind-mounted read-only from the host.
-      # The container always reads config from /config/config.yaml.
-      - ./config.yaml:/config/config.yaml:ro
+      # The config directory is bind-mounted read-write (a single-file mount cannot be
+      # replaced atomically). The container always reads config from /config/config.yaml.
+      - ./config:/config
 
       # Named volumes for runtime data. Docker manages ownership.
       # These paths must match the paths.* section in your config.yaml.
-      - output:/output   # RSS feeds (.rss) and processed audio files (.mp3)
+      - ./output:/output # RSS feeds (.rss) and processed audio files; bind mount so the host can serve it
       - data:/data       # SQLite database (data.db)
       - logs:/logs       # timestamped log files (when APP_LOG_TO_FILE=true)
       - cache:/cache     # temporary audio files during processing
 
 volumes:
-  output:
   data:
   logs:
   cache:
