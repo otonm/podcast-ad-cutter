@@ -129,27 +129,44 @@ def create_db_router(db_path: Path, output_dir: Path, config_path: Path) -> web.
                 content_type="application/json",
             )
 
+        conditions: list[str] = []
+        params: list[object] = []
+
+        skipped = request.rel_url.query.get("skipped")
+        if skipped is not None:
+            if skipped not in ("true", "false"):
+                raise web.HTTPBadRequest(
+                    text='{"error": "skipped must be true or false"}',
+                    content_type="application/json",
+                )
+            conditions.append("e.skipped = ?")
+            params.append(1 if skipped == "true" else 0)
+
         feed_slug = request.rel_url.query.get("feed")
-        podcast_title: str | None = None
         if feed_slug is not None:
             podcast_title = _resolve_slug(feed_slug, _load_feeds(config_path))
             if podcast_title is None:
-                return web.json_response([])
+                return web.json_response([], headers={"X-Total-Count": "0"})
+            conditions.append("e.podcast = ?")
+            params.append(podcast_title)
 
-        if podcast_title is not None:
-            sql = _SQL_EPISODES.format(where="WHERE e.podcast = ?")
-            params: tuple = (podcast_title, limit, offset)
-        else:
-            sql = _SQL_EPISODES.format(where="")
-            params = (limit, offset)
+        q = request.rel_url.query.get("q")
+        if q:
+            # instr, not LIKE: '%' and '_' in the search text match literally
+            conditions.append("instr(lower(e.title), lower(?)) > 0")
+            params.append(q)
 
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         async with ReadOnlyDatabase(db_path) as db:
-            cursor = await db.conn.execute(sql, params)
+            cursor = await db.conn.execute(_SQL_EPISODES.format(where=where), (*params, limit, offset))
             rows = await cursor.fetchall()
+            cursor = await db.conn.execute(f"SELECT COUNT(*) FROM episodes e {where}", params)  # noqa: S608
+            total_row = await cursor.fetchone()
 
         result = [_row_to_episode_dict(row, output_dir) for row in rows]
+        total = total_row[0] if total_row is not None else 0
 
-        return web.json_response(result)
+        return web.json_response(result, headers={"X-Total-Count": str(total)})
 
     @routes.get("/api/v1/db/episodes/{guid}")
     async def get_episode(request: web.Request) -> web.Response:

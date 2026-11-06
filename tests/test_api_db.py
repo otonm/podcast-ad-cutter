@@ -450,6 +450,81 @@ class TestGetSingleEpisode:
             assert (await resp.json())["guid"] == guid
 
 
+async def _seed_many(tmp_path: Path, rows: list[tuple[str, str, str, int]]) -> None:
+    """rows: (podcast, guid, title, skipped)."""
+    async with Database(tmp_path / "data.db") as db:
+        for i, (podcast, guid, title, skipped) in enumerate(rows):
+            await db.conn.execute(
+                "INSERT INTO episodes (podcast, guid, title, url, pubdate, skipped) VALUES (?, ?, ?, ?, ?, ?)",
+                (podcast, guid, title, "https://example.com/x", f"2026-01-{i + 1:02d}T00:00:00+00:00", skipped),
+            )
+        await db.conn.commit()
+
+
+class TestEpisodeListFilters:
+    async def test_episodes_q_filters_by_title_case_insensitive(self, tmp_path: Path) -> None:
+        await _seed_many(tmp_path, [("Show A", "g1", "Daily NEWS", 0), ("Show A", "g2", "Sports", 0)])
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/episodes?q=news")
+            assert [e["guid"] for e in await resp.json()] == ["g1"]
+            assert resp.headers["X-Total-Count"] == "1"
+
+    async def test_episodes_q_treats_percent_literally(self, tmp_path: Path) -> None:
+        await _seed_many(tmp_path, [("Show A", "g1", "100% pure", 0), ("Show A", "g2", "Plain", 0)])
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/episodes", params={"q": "%"})
+            assert [e["guid"] for e in await resp.json()] == ["g1"]
+
+    async def test_episodes_q_and_feed_combine(self, tmp_path: Path) -> None:
+        await _seed_many(tmp_path, [("Show A", "g1", "News A", 0), ("Show B", "g2", "News B", 0)])
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/episodes?q=news&feed=show-b")
+            assert [e["guid"] for e in await resp.json()] == ["g2"]
+            assert resp.headers["X-Total-Count"] == "1"
+
+    async def test_episodes_total_count_header_ignores_pagination(self, tmp_path: Path) -> None:
+        await _seed_many(tmp_path, [("Show A", f"g{i}", f"Ep {i}", 0) for i in range(5)])
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/episodes?limit=2")
+            assert len(await resp.json()) == 2
+            assert resp.headers["X-Total-Count"] == "5"
+
+    async def test_episodes_unknown_feed_total_count_zero(self, tmp_path: Path) -> None:
+        await _seed_many(tmp_path, [("Show A", "g1", "Ep", 0)])
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/episodes?feed=does-not-exist")
+            assert await resp.json() == []
+            assert resp.headers["X-Total-Count"] == "0"
+
+    async def test_episodes_skipped_true_returns_only_skipped(self, tmp_path: Path) -> None:
+        await _seed_many(tmp_path, [("Show A", "g1", "A", 0), ("Show A", "g2", "B", 1), ("Show A", "g3", "C", 0)])
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/episodes?skipped=true")
+            assert [e["guid"] for e in await resp.json()] == ["g2"]
+            assert resp.headers["X-Total-Count"] == "1"
+
+    async def test_episodes_skipped_false_excludes_skipped(self, tmp_path: Path) -> None:
+        await _seed_many(tmp_path, [("Show A", "g1", "A", 0), ("Show A", "g2", "B", 1)])
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/episodes?skipped=false")
+            assert [e["guid"] for e in await resp.json()] == ["g1"]
+
+    async def test_episodes_skipped_invalid_returns_400(self, tmp_path: Path) -> None:
+        await _seed_many(tmp_path, [("Show A", "g1", "A", 0)])
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/episodes?skipped=yes")
+            assert resp.status == 400
+            assert await resp.json() == {"error": "skipped must be true or false"}
+
+
 class TestGetTopics:
     async def test_topics_returns_row(self, tmp_path: Path) -> None:
         """GET /api/v1/db/topics/{guid} returns the stored topic extraction."""

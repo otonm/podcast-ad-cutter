@@ -565,8 +565,12 @@ Returns paginated episode records with pipeline state.
 | `limit` | `integer` | `50` | 1–200 | Max rows to return |
 | `offset` | `integer` | `0` | ≥ 0 | Row offset for pagination |
 | `feed` | `string` | none | — | Filter by feed slug; unknown slug returns `[]` with 200 |
+| `q` | `string` | none | — | Case-insensitive substring match on the title (`%` and `_` match literally) |
+| `skipped` | `string` | none | `true` \| `false` | Only skipped / only non-skipped episodes; any other value → 400 |
 
-Results are ordered by `pubdate DESC` (episodes with null pubdate sort last).
+Filters combine with AND. Results are ordered by `pubdate DESC` (episodes with null pubdate sort last).
+
+**Response header** `X-Total-Count`: number of episodes matching all filters, ignoring `limit`/`offset` (for pagination).
 
 **Response 200** — array of episode objects:
 ```json
@@ -611,6 +615,35 @@ Results are ordered by `pubdate DESC` (episodes with null pubdate sort last).
 | Status | Condition | Body |
 |---|---|---|
 | 400 | Non-integer `limit`/`offset`, or `limit` outside 1–200, or `offset < 0` | `{"error": "..."}` |
+
+---
+
+#### `GET /api/v1/db/episodes/{guid}`
+
+Returns one episode, in the same shape as an item of `GET /api/v1/db/episodes`. Percent-encode the GUID (`encodeURIComponent`); GUIDs that are URLs work.
+
+**Error responses:**
+
+| Status | Condition | Body |
+|---|---|---|
+| 404 | GUID not found | `{"error": "not found"}` |
+
+---
+
+#### `GET /api/v1/db/topics/{guid}`
+
+Returns the topic extraction for an episode.
+
+**Response 200:**
+```json
+{"guid": "abc123", "topic": "Reducing alert fatigue", "hosts": "Alice, Bob", "show": "Weekly tech show"}
+```
+
+**Error responses:**
+
+| Status | Condition | Body |
+|---|---|---|
+| 404 | No topic extraction for this GUID | `{"error": "not found"}` |
 
 ---
 
@@ -968,7 +1001,9 @@ Both `/api/v1/events` and `/api/v1/logs/{path}/tail` are SSE streams. On client 
 | DELETE | `/api/v1/feeds/{slug}` | Remove a feed |
 | GET | `/api/v1/settings` | Get application settings |
 | PATCH | `/api/v1/settings` | Update application settings |
-| GET | `/api/v1/db/episodes` | Paginated episode list with pipeline state |
+| GET | `/api/v1/db/episodes` | Paginated episode list with pipeline state (`feed`, `q`, `skipped`; `X-Total-Count`) |
+| GET | `/api/v1/db/episodes/{guid}` | Single episode |
+| GET | `/api/v1/db/topics/{guid}` | Episode topic extraction |
 | GET | `/api/v1/db/transcriptions/{guid}` | Episode transcription + segments |
 | GET | `/api/v1/db/ads/{guid}` | Episode ad detection result |
 | GET | `/api/v1/db/costs` | LLM cost tracking summary |
