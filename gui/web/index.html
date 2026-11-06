@@ -53,7 +53,7 @@
       </div>
     </section>
 
-    <main class="main" :class="{ full: $store.route.full }">
+    <main class="main" :class="{ full: $store.route.full, detail: $store.route.view === 'episode' }">
 
       <!-- ── Run overview ───────────────────────────────────────────────── -->
       <template x-if="['overview', 'feed', 'skipped'].includes($store.route.view)">
@@ -88,9 +88,9 @@
 
       <!-- ── Episode detail ─────────────────────────────────────────────── -->
       <template x-if="$store.route.view === 'episode'">
-        <section x-data="episodeDetail" style="display: flex; flex-direction: column; gap: 16px">
+        <section class="fill" x-data="episodeDetail" style="display: flex; flex-direction: column; gap: 16px">
           <template x-if="ep">
-            <div style="display: flex; flex-direction: column; gap: 16px">
+            <div class="fill" style="display: flex; flex-direction: column; gap: 16px">
               <div class="row" style="justify-content: space-between; align-items: flex-start">
                 <div>
                   <h1 x-text="ep.title"></h1>

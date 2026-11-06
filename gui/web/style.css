@@ -91,6 +91,14 @@ label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color:
 .seg.ad { background: var(--ad-soft); }
 .seg.now { box-shadow: inset 3px 0 0 var(--accent); background: var(--accent-soft); }
 .seg .ts { color: var(--muted); }
+/* Desktop episode detail: header and timeline stay put; transcript and aside scroll on their own.
+   No wrap here: a wrapping flex line takes its tallest item's height and nothing would scroll. */
+@media (min-width: 761px) {
+  .main.detail { overflow: hidden; }
+  .main.detail .fill { flex: 1; min-height: 0; }
+  .main.detail .cols { flex: 1; min-height: 0; flex-wrap: nowrap; }
+  .main.detail .cols > .grow, .main.detail .cols > .aside { min-height: 0; overflow-y: auto; }
+}
 .adrow { font-size: 13px; padding: 8px 0; border-bottom: 1px solid #f1f2f5; }
 .adrow .r { color: var(--ad-text); }
 
