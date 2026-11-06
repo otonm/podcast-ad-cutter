@@ -19,6 +19,11 @@ export function fmtDate(iso, short = false) {
   return short ? day : `${day}${d.getFullYear()}`;
 }
 
+/** Index of the transcript segment playing at ms (last one starting at or before it), or -1. */
+export function activeSegment(segs, ms) {
+  return segs.findLastIndex((s) => s.start <= ms);
+}
+
 /** First ad segment overlapping a transcript segment, or null. Edges that only touch do not overlap. */
 export function overlapsAd(seg, ads) {
   return ads.find((a) => seg.start < a.end_ms && a.start_ms < seg.end) ?? null;
@@ -62,6 +67,11 @@ export function parseHash(hash) {
   if (first === "skipped") return { view: "skipped", param: null };
   if (FULL_VIEWS.has(first)) return { view: first, param: null };
   return { view: "overview", param: null };
+}
+
+/** The route the episode list is filtered by: list routes replace it, detail and full views keep `prev`. */
+export function listRoute(route, prev) {
+  return ["overview", "feed", "skipped"].includes(route.view) ? route : prev;
 }
 
 /** Settings params editor value: JSON when it parses, else the raw string. */

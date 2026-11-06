@@ -18,16 +18,16 @@
     <!-- ── Sidebar ─────────────────────────────────────────────────────── -->
     <nav class="side" aria-label="Main">
       <div class="brand">Ad Cutter</div>
-      <a href="#/" :class="{ active: $store.route.view === 'overview' }">
+      <a href="#/" :class="{ active: !$store.route.full && $store.route.list.view === 'overview' }">
         <span>All episodes</span><span x-text="$store.feeds.total"></span>
       </a>
       <template x-for="f in $store.feeds.items" :key="f.slug">
-        <a :href="`#/feed/${f.slug}`" :class="{ active: $store.route.view === 'feed' && $store.route.param === f.slug }">
+        <a :href="`#/feed/${f.slug}`" :class="{ active: !$store.route.full && $store.route.list.view === 'feed' && $store.route.list.param === f.slug }">
           <span x-text="f.title"></span><span x-text="f.episode_count"></span>
         </a>
       </template>
       <hr>
-      <a href="#/skipped" :class="{ active: $store.route.view === 'skipped' }"><span>Skipped</span></a>
+      <a href="#/skipped" :class="{ active: !$store.route.full && $store.route.list.view === 'skipped' }"><span>Skipped</span></a>
       <a href="#/feeds" :class="{ active: $store.route.view === 'feeds' }"><span>Feeds</span></a>
       <a href="#/settings" :class="{ active: $store.route.view === 'settings' }"><span>Settings</span></a>
       <a href="#/logs" :class="{ active: $store.route.view === 'logs' }"><span>Logs</span></a>
@@ -126,7 +126,7 @@
                 </div>
                 <div class="timeline" @click="seekClick($event)" role="slider" tabindex="0" aria-label="Seek original audio"
                      :aria-valuenow="Math.round(current / 1000)" aria-valuemin="0" :aria-valuemax="Math.round(duration / 1000)"
-                     @keydown.right.prevent="seek(current + 10000)" @keydown.left.prevent="seek(Math.max(0, current - 10000))">
+                     @keydown.right.prevent="jump(current + 10000)" @keydown.left.prevent="jump(Math.max(0, current - 10000))">
                   <template x-for="(b, i) in blocks" :key="i"><div class="ad" :style="`left: ${b.left}; width: ${b.width}`"></div></template>
                   <div class="head" :style="`left: ${headPct}`"></div>
                 </div>
@@ -143,8 +143,8 @@
                 <div class="grow">
                   <h2>Transcript</h2>
                   <p class="small muted" x-show="missing.transcript">Not transcribed yet.</p>
-                  <template x-for="s in segs" :key="s.start">
-                    <button class="seg" :class="{ ad: adOf(s) }" :title="adOf(s) ? `Ad: ${adOf(s).sponsor}` : ''" @click="seek(s.start)">
+                  <template x-for="(s, i) in segs" :key="s.start">
+                    <button class="seg" :class="{ ad: adOf(s), now: i === nowIdx }" :title="adOf(s) ? `Ad: ${adOf(s).sponsor}` : ''" @click="seek(s.start)">
                       <span class="ts" x-text="fmt.time(s.start)"></span><span x-text="s.text"></span>
                     </button>
                   </template>

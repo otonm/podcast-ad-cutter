@@ -1,5 +1,5 @@
 import {
-  fmtDate, fmtTime, mergePatch, overlapsAd, parseHash, parseParamValue, persistentEventSource, timelineBlocks,
+  activeSegment, fmtDate, fmtTime, listRoute, mergePatch, overlapsAd, parseHash, parseParamValue, persistentEventSource, timelineBlocks,
 } from "./lib.js";
 
 const EVENT_TYPES = [
@@ -57,8 +57,12 @@ document.addEventListener("alpine:init", () => {
   Alpine.store("route", {
     view: "overview",
     param: null,
+    list: { view: "overview", param: null }, // sidebar highlight while an episode is open
     get full() { return ["feeds", "settings", "logs"].includes(this.view); },
-    sync() { Object.assign(this, parseHash(location.hash)); },
+    sync() {
+      const r = parseHash(location.hash);
+      Object.assign(this, r, { list: listRoute(r, this.list) });
+    },
   });
 
   Alpine.store("feeds", {
@@ -259,16 +263,23 @@ document.addEventListener("alpine:init", () => {
     get adTotal() { return this.ads.reduce((n, a) => n + (a.end_ms - a.start_ms), 0); },
     get skippedEp() { return this.ep?.skipped === 1 || this.ep?.pipeline_state === "skipped"; },
     adOf(seg) { return overlapsAd(seg, this.ads); },
+    get nowIdx() { return activeSegment(this.segs, this.current); },
     onMeta() { this.duration = this.$refs.audio.duration * 1000; },
     seek(ms) {
       const a = this.$refs.audio;
       if (!a) return;
       a.currentTime = ms / 1000;
+      this.current = ms; // highlight now, not on the next timeupdate
       a.play();
+    },
+    // Timeline seeks also bring the matching transcript line into view.
+    jump(ms) {
+      this.seek(ms);
+      this.$nextTick(() => this.$root.querySelector(".seg.now")?.scrollIntoView({ block: "center" }));
     },
     seekClick(ev) {
       const rect = ev.currentTarget.getBoundingClientRect();
-      this.seek(((ev.clientX - rect.left) / rect.width) * this.duration);
+      this.jump(((ev.clientX - rect.left) / rect.width) * this.duration);
     },
     toggle() { const a = this.$refs.audio; if (a) (a.paused ? a.play() : a.pause()); },
     async act(fn) {

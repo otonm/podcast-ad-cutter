@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-  fmtDate, fmtTime, mergePatch, overlapsAd, parseHash, parseParamValue, persistentEventSource, timelineBlocks,
+  activeSegment, fmtDate, fmtTime, listRoute, mergePatch, overlapsAd, parseHash, parseParamValue, persistentEventSource, timelineBlocks,
 } from "../web/lib.js";
 
 test("fmtTime formats ms as m:ss and h:mm:ss", () => {
@@ -15,6 +15,16 @@ test("fmtDate formats ISO dates as DD.MM.YYYY and short DD.MM.", () => {
   assert.equal(fmtDate("2026-03-21T12:00:00+00:00"), "21.03.2026");
   assert.equal(fmtDate("2026-03-21T12:00:00+00:00", true), "21.03.");
   assert.equal(fmtDate(null), "");
+});
+
+test("activeSegment is the last segment starting at or before ms", () => {
+  const segs = [{ start: 1000, end: 2000 }, { start: 2000, end: 3000 }, { start: 4000, end: 5000 }];
+  assert.equal(activeSegment(segs, 500), -1); // before the first line
+  assert.equal(activeSegment(segs, 1000), 0);
+  assert.equal(activeSegment(segs, 2000), 1);
+  assert.equal(activeSegment(segs, 3500), 1); // gap keeps the previous line
+  assert.equal(activeSegment(segs, 9000), 2);
+  assert.equal(activeSegment([], 1000), -1);
 });
 
 test("overlapsAd returns the first overlapping ad or null", () => {
@@ -46,6 +56,15 @@ test("parseHash maps hashes to views", () => {
   assert.deepEqual(parseHash("#/episodes/" + encodeURIComponent("http://x/ep/1")), { view: "episode", param: "http://x/ep/1" });
   assert.deepEqual(parseHash("#/settings"), { view: "settings", param: null });
   assert.deepEqual(parseHash("#/nonsense"), { view: "overview", param: null });
+});
+
+test("listRoute keeps the last list filter while a detail or full view is open", () => {
+  const feed = { view: "feed", param: "tech-weekly" };
+  assert.deepEqual(listRoute(feed, { view: "overview", param: null }), feed);
+  assert.deepEqual(listRoute({ view: "skipped", param: null }, feed), { view: "skipped", param: null });
+  assert.deepEqual(listRoute({ view: "overview", param: null }, feed), { view: "overview", param: null });
+  assert.deepEqual(listRoute({ view: "episode", param: "g" }, feed), feed);
+  assert.deepEqual(listRoute({ view: "settings", param: null }, feed), feed);
 });
 
 test("parseParamValue parses JSON with raw-string fallback", () => {
