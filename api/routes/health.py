@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def _read_version() -> str:
-    """Read the application version from package metadata or pyproject.toml (D-12).
+    """Read the application version from package metadata or pyproject.toml.
 
     Tries importlib.metadata first (works when installed as a distribution).
     Falls back to reading pyproject.toml directly via tomllib (works when

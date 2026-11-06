@@ -1666,7 +1666,7 @@ async def test_branch_d_audio_editor_returns_path_uses_computed_url() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Plan 02-03 — New decision-tree branch tests (ad detection tail)
+# Decision-tree branch tests (ad detection tail)
 # ---------------------------------------------------------------------------
 
 

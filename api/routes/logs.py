@@ -36,7 +36,7 @@ def _validate_path(log_dir: Path, tail: str) -> Path:
 
 
 def _list_logs_sync(log_dir: Path) -> dict:
-    """Build the D-01 hierarchical log listing synchronously.
+    """Build the hierarchical log listing synchronously.
 
     Args:
         log_dir: Path to the root log directory.
@@ -103,7 +103,7 @@ def _poll(fh: object, last_pos: int, path: Path) -> tuple:
 
     """
     current_size = path.stat().st_size
-    if current_size < last_pos:  # rotation detected (D-11)
+    if current_size < last_pos:  # rotation detected
         fh.seek(0)
         last_pos = 0
     else:
@@ -151,7 +151,7 @@ def create_logs_router(log_dir: Path) -> web.RouteTableDef:
         result = await asyncio.to_thread(_list_logs_sync, log_dir)
         return web.json_response(result)
 
-    # IMPORTANT: /tail route MUST be registered before the glob route (D-04).
+    # IMPORTANT: /tail route MUST be registered before the glob route.
     # aiohttp matches more specific (longer) patterns first only when registered first.
     @routes.get("/api/v1/logs/{tail:.*}/tail")
     async def tail_log(request: web.Request) -> web.StreamResponse:

@@ -277,7 +277,7 @@ class TestLogRead:
             assert resp.status == 200
 
     async def test_tail_returns_200_not_501(self, tmp_path: Path) -> None:
-        """GET /api/v1/logs/app.log/tail returns 200 with SSE stream (plan 03 implementation)."""
+        """GET /api/v1/logs/app.log/tail returns 200 with SSE stream."""
         log_dir = tmp_path / "logs"
         log_dir.mkdir()
         (log_dir / "app.log").write_bytes(b"content")

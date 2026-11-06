@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class PipelineEventType(StrEnum):
-    """Enum of all pipeline event types (full set locked in Phase 1 per D-03)."""
+    """Enum of all pipeline event types."""
 
     EPISODE_STAGE_CHANGED = "episode.stage_changed"
     DOWNLOAD_PROGRESS = "episode.download_progress"
@@ -24,7 +24,7 @@ class PipelineEventType(StrEnum):
 
 @dataclass
 class PipelineEvent:
-    """Typed event dataclass with a type discriminator field (D-01).
+    """Typed event dataclass with a type discriminator field.
 
     Attributes:
         type: The event type discriminator.
@@ -37,7 +37,7 @@ class PipelineEvent:
 
 
 class EventBus:
-    """Broadcast-all asyncio event bus (D-02).
+    """Broadcast-all asyncio event bus.
 
     Each subscriber receives its own asyncio.Queue. emit() puts every event
     on every subscriber's queue. subscribe() returns the queue; unsubscribe()
@@ -58,10 +58,10 @@ class EventBus:
         self._subscribers.remove(q)
 
     def emit(self, event: PipelineEvent) -> None:
-        """Broadcast event to all subscribers. Silent no-op if no subscribers (D-04).
+        """Broadcast event to all subscribers. Silent no-op if no subscribers.
 
         Iterates over a snapshot of the subscriber list to avoid RuntimeError
-        if unsubscribe() is called concurrently during iteration (Pitfall 3).
+        if unsubscribe() is called concurrently during iteration.
         """
         for q in list(self._subscribers):
             q.put_nowait(event)
