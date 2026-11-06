@@ -174,7 +174,121 @@
           </template>
         </section>
       </template>
-      <!-- SETTINGS + FEEDS (task 4) -->
+      <!-- ── Settings ───────────────────────────────────────────────────── -->
+      <template x-if="$store.route.view === 'settings'">
+        <form x-data="settingsView" @submit.prevent="save()" style="display: flex; flex-direction: column; gap: 16px">
+          <div class="row" style="justify-content: space-between">
+            <h1>Settings</h1>
+            <button class="primary" type="submit" :disabled="!form">Save</button>
+          </div>
+          <div class="banner">Changes apply at the next run. A running pipeline keeps the settings it started with.</div>
+          <div class="errors" x-show="errors.length" role="alert">
+            <strong>Not saved:</strong>
+            <template x-for="e in errors" :key="e"><div x-text="e"></div></template>
+          </div>
+          <template x-if="form">
+            <div style="display: flex; flex-direction: column; gap: 16px">
+              <template x-for="st in stages" :key="st">
+                <fieldset class="card">
+                  <legend><h2 x-text="st.replace('_', ' ')"></h2></legend>
+                  <div class="grid2">
+                    <label>Provider
+                      <select x-model="form.models[st].provider">
+                        <option>groq</option><option>openai</option><option>openrouter</option>
+                      </select>
+                      <span x-text="`API key: ${credFor(form.models[st].provider)}`"
+                            :style="credFor(form.models[st].provider) === 'set' ? '' : 'color: var(--fail)'"></span>
+                    </label>
+                    <label>Model <input x-model="form.models[st].model" required></label>
+                    <label x-show="st !== 'transcription'">Context window (tokens, optional)
+                      <input type="number" min="1" x-model.number="form.models[st].context_window"></label>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 8px">
+                    <span class="small muted">Params (LiteLLM kwargs; values parsed as JSON, else text)</span>
+                    <template x-for="(row, i) in params[st]" :key="i">
+                      <div class="row">
+                        <input placeholder="name, e.g. temperature" aria-label="Param name" x-model="row.k">
+                        <input placeholder="value, e.g. 0.2" aria-label="Param value" x-model="row.v">
+                        <button type="button" class="danger" @click="params[st].splice(i, 1)">Remove</button>
+                      </div>
+                    </template>
+                    <div><button type="button" @click="params[st].push({ k: '', v: '' })">Add param</button></div>
+                  </div>
+                </fieldset>
+              </template>
+              <fieldset class="card">
+                <legend><h2>Ad detection</h2></legend>
+                <div class="grid2">
+                  <label>Min ad duration (ms) <input type="number" min="1" x-model.number="form.ad_detection.min_duration"></label>
+                  <label>Min confidence (0–1) <input type="number" step="0.01" x-model.number="form.ad_detection.min_confidence"></label>
+                </div>
+              </fieldset>
+              <fieldset class="card">
+                <legend><h2>Output</h2></legend>
+                <div class="grid2">
+                  <label>File type
+                    <select x-model="form.output.file_type"><option>mp3</option><option>m4a</option><option>ogg</option><option>opus</option><option>flac</option></select>
+                  </label>
+                  <label>Bitrate <input x-model="form.output.bitrate" placeholder="128k"></label>
+                  <label>Base URL (public feed address) <input type="url" x-model="form.base_url"></label>
+                </div>
+              </fieldset>
+              <fieldset class="card">
+                <legend><h2>Logging</h2></legend>
+                <div class="grid2">
+                  <label>Console level
+                    <select x-model="form.log.level"><option>DEBUG</option><option>INFO</option><option>WARNING</option><option>ERROR</option><option>CRITICAL</option></select>
+                  </label>
+                  <label>File level
+                    <select x-model="form.log.file_level"><option>DEBUG</option><option>INFO</option><option>WARNING</option><option>ERROR</option><option>CRITICAL</option></select>
+                  </label>
+                  <label>Keep last N log files <input type="number" min="0" x-model.number="form.log.keep_last"></label>
+                </div>
+                <div class="row">
+                  <label style="flex-direction: row; align-items: center; gap: 6px"><input type="checkbox" style="min-height: 0" x-model="form.log.to_file"> Write log files</label>
+                  <label style="flex-direction: row; align-items: center; gap: 6px"><input type="checkbox" style="min-height: 0" x-model="form.log.rotate"> Rotate</label>
+                  <label style="flex-direction: row; align-items: center; gap: 6px"><input type="checkbox" style="min-height: 0" x-model="form.log.per_episode"> Per-episode logs</label>
+                </div>
+              </fieldset>
+            </div>
+          </template>
+        </form>
+      </template>
+
+      <!-- ── Feeds ──────────────────────────────────────────────────────── -->
+      <template x-if="$store.route.view === 'feeds'">
+        <section x-data="feedsView" style="display: flex; flex-direction: column; gap: 16px">
+          <h1>Feeds</h1>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Title</th><th>URL</th><th>Enabled</th><th>Keep</th><th>Episodes</th><th></th></tr></thead>
+              <tbody>
+                <template x-for="f in items" :key="f.slug">
+                  <tr>
+                    <td><a :href="`#/feed/${f.slug}`" x-text="f.title"></a></td>
+                    <td class="small" style="word-break: break-all" x-text="f.url"></td>
+                    <td><input type="checkbox" style="min-height: 0" :aria-label="`Enable ${f.title}`" :checked="f.enabled" @change="patch(f, { enabled: $event.target.checked })"></td>
+                    <td><input type="number" min="1" style="width: 80px" :aria-label="`Episodes to keep for ${f.title}`" :value="f.episodes_to_keep" @change="patch(f, { episodes_to_keep: Number($event.target.value) })"></td>
+                    <td x-text="f.episode_count"></td>
+                    <td class="row" style="flex-wrap: nowrap">
+                      <button :disabled="!$store.status.idle" @click="run(f)">Run feed</button>
+                      <button class="danger" @click="remove(f)">Remove</button>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+          <form class="card" @submit.prevent="add()">
+            <h2>Add feed</h2>
+            <div class="grid2">
+              <label>Title <input x-model="title" required></label>
+              <label>RSS URL <input type="url" x-model="url" required></label>
+            </div>
+            <div><button class="primary" type="submit">Add feed</button></div>
+          </form>
+        </section>
+      </template>
       <!-- LOGS (task 5) -->
     </main>
   </div>

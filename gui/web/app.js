@@ -29,6 +29,7 @@ export async function api(path, opts = {}) {
 }
 
 const enc = encodeURIComponent;
+const clone = (v) => JSON.parse(JSON.stringify(v)); // structuredClone rejects Alpine's reactive proxies
 
 /** Mixin: window listeners that are removed when the Alpine component is destroyed. */
 const listeners = () => ({
@@ -279,6 +280,73 @@ document.addEventListener("alpine:init", () => {
     remove() {
       if (!confirm(`Delete "${this.ep.title}"? Output file and processed data are removed.`)) return;
       return this.act(() => api(`/episodes/${enc(this.guid)}`, { method: "DELETE" }));
+    },
+  }));
+  // ── Full view: settings ─────────────────────────────────────────────────
+  Alpine.data("settingsView", () => ({
+    stages: ["transcription", "context_extraction", "ad_detection"],
+    loaded: null, form: null, params: {}, creds: {}, errors: [],
+    async init() { await this.load(); },
+    async load() {
+      const { data } = await api("/settings");
+      this.creds = data.credentials;
+      delete data.credentials;
+      this.loaded = data;
+      this.form = clone(data);
+      this.params = Object.fromEntries(this.stages.map((st) => [
+        st,
+        Object.entries(data.models[st].params ?? {}).map(([k, v]) => ({ k, v: typeof v === "string" ? v : JSON.stringify(v) })),
+      ]));
+      this.errors = [];
+    },
+    edited() {
+      const e = clone(this.form);
+      for (const st of this.stages) {
+        const m = e.models[st];
+        m.params = Object.fromEntries(this.params[st].filter((r) => r.k.trim()).map((r) => [r.k.trim(), parseParamValue(r.v)]));
+        if (m.context_window === "" || m.context_window === undefined) m.context_window = null;
+      }
+      return e;
+    },
+    async save() {
+      const patch = mergePatch(this.loaded, this.edited());
+      if (!Object.keys(patch).length) {
+        Alpine.store("toasts").push("No changes to save", "ok");
+        return;
+      }
+      try {
+        await api("/settings", { method: "PATCH", json: patch, quiet: true });
+      } catch (err) {
+        this.errors = Array.isArray(err.data) ? err.data.map((x) => `${x.loc.join(".")}: ${x.msg}`) : [err.message];
+        return;
+      }
+      Alpine.store("toasts").push("Saved — applies at the next run", "ok");
+      await this.load();
+    },
+    credFor(provider) { return this.creds[`${provider}_api_key`] ?? "not set"; },
+  }));
+
+  // ── Full view: feeds ────────────────────────────────────────────────────
+  Alpine.data("feedsView", () => ({
+    title: "", url: "",
+    get items() { return Alpine.store("feeds").items; },
+    async reload() { await Alpine.store("feeds").load(); },
+    async patch(f, body) {
+      try { await api(`/feeds/${f.slug}`, { method: "PATCH", json: body }); } finally { await this.reload(); }
+    },
+    async add() {
+      try { await api("/feeds", { method: "POST", json: { title: this.title.trim(), url: this.url.trim() } }); } catch { return; }
+      this.title = "";
+      this.url = "";
+      await this.reload();
+    },
+    async remove(f) {
+      if (!confirm(`Remove feed "${f.title}" from the config? Its episodes and files stay on disk.`)) return;
+      try { await api(`/feeds/${f.slug}`, { method: "DELETE" }); } finally { await this.reload(); }
+    },
+    async run(f) {
+      await api(`/feeds/${f.slug}/run`, { method: "POST" });
+      Alpine.store("status").refresh();
     },
   }));
 });
