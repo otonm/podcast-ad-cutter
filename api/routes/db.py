@@ -8,9 +8,10 @@ from typing import TYPE_CHECKING
 
 import yaml
 from aiohttp import web
+from pydantic import ValidationError
 from slugify import slugify
 
-from config.config_loader import AppConfig
+from config.config_loader import AppConfig, FeedConfig
 from database.connection import ReadOnlyDatabase
 
 if TYPE_CHECKING:
@@ -59,6 +60,16 @@ def _resolve_slug(slug: str, feeds: list) -> str | None:
     return None
 
 
+def _load_feeds(config_path: Path) -> list[FeedConfig]:
+    """Read the feed list from config.yaml; empty when the file is missing or invalid."""
+    try:
+        with config_path.open() as f:
+            raw = yaml.safe_load(f)
+        return AppConfig.model_validate(raw).feeds
+    except (OSError, ValidationError):
+        return []
+
+
 def _is_complete(row_pubdate: str | None, title: str | None, podcast: str | None, output_dir: Path) -> bool:
     """Return True if the episode's output file exists on disk."""
     if row_pubdate is None or title is None or podcast is None:
@@ -83,13 +94,6 @@ def create_db_router(db_path: Path, output_dir: Path, config_path: Path) -> web.
         RouteTableDef with DB viewer handlers registered.
 
     """
-    try:
-        with config_path.open() as f:
-            raw = yaml.safe_load(f)
-        _feeds = AppConfig.model_validate(raw).feeds
-    except (FileNotFoundError, OSError):
-        _feeds = []
-
     routes = web.RouteTableDef()
 
     @routes.get("/api/v1/db/episodes")
@@ -111,7 +115,7 @@ def create_db_router(db_path: Path, output_dir: Path, config_path: Path) -> web.
         feed_slug = request.rel_url.query.get("feed")
         podcast_title: str | None = None
         if feed_slug is not None:
-            podcast_title = _resolve_slug(feed_slug, _feeds)
+            podcast_title = _resolve_slug(feed_slug, _load_feeds(config_path))
             if podcast_title is None:
                 return web.json_response([])
 
@@ -205,7 +209,7 @@ def create_db_router(db_path: Path, output_dir: Path, config_path: Path) -> web.
         feed_slug = request.rel_url.query.get("feed")
         podcast_title: str | None = None
         if feed_slug is not None:
-            podcast_title = _resolve_slug(feed_slug, _feeds)
+            podcast_title = _resolve_slug(feed_slug, _load_feeds(config_path))
             if podcast_title is None:
                 return web.json_response({"total": 0.0, "by_model": [], "by_episode": []})
 

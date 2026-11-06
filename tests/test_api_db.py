@@ -354,6 +354,52 @@ class TestGetEpisodes:
             data = await resp.json()
             assert data == []
 
+    async def test_episodes_feed_filter_sees_feed_added_after_startup(self, tmp_path: Path) -> None:
+        """A feed added to config.yaml after startup is filterable without a restart."""
+        app, config_path = _make_app(tmp_path)
+        config_path.write_text(_TWO_FEEDS_YAML.replace(
+            "feeds:\n", 'feeds:\n  - title: "New Show"\n    url: "https://new.example/feed.rss"\n', 1,
+        ))
+        async with Database(tmp_path / "data.db") as db:
+            await db.conn.execute(
+                "INSERT INTO episodes (podcast, guid, title, url) VALUES (?, ?, ?, ?)",
+                ("New Show", "ep-new", "Ep New", "https://example.com/new"),
+            )
+            await db.conn.commit()
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/episodes?feed=new-show")
+            assert [r["podcast"] for r in await resp.json()] == ["New Show"]
+
+    async def test_episodes_feed_filter_returns_empty_when_config_deleted(self, tmp_path: Path) -> None:
+        """Deleting config.yaml while running yields an empty filter result, not a 500."""
+        async with Database(tmp_path / "data.db") as db:
+            await db.conn.execute(
+                "INSERT INTO episodes (podcast, guid, title, url) VALUES (?, ?, ?, ?)",
+                ("Show A", "ep-a", "Ep A", "https://example.com/a"),
+            )
+            await db.conn.commit()
+        app, config_path = _make_app(tmp_path)
+        config_path.unlink()
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/episodes?feed=show-a")
+            assert resp.status == 200
+            assert await resp.json() == []
+
+    async def test_episodes_feed_filter_returns_empty_when_config_invalid(self, tmp_path: Path) -> None:
+        """A config.yaml broken by an edit after startup yields an empty filter result, not a 500."""
+        async with Database(tmp_path / "data.db") as db:
+            await db.conn.execute(
+                "INSERT INTO episodes (podcast, guid, title, url) VALUES (?, ?, ?, ?)",
+                ("Show A", "ep-a", "Ep A", "https://example.com/a"),
+            )
+            await db.conn.commit()
+        app, config_path = _make_app(tmp_path)
+        config_path.write_text("feeds: []\n")
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/episodes?feed=show-a")
+            assert resp.status == 200
+            assert await resp.json() == []
+
 
 # ---------------------------------------------------------------------------
 # GET /api/v1/db/transcriptions/{guid}

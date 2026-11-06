@@ -128,7 +128,7 @@ Returns the current run state. Always 200; never errors.
 
 #### `POST /api/v1/run`
 
-Starts a full pipeline run across all enabled feeds.
+Starts a full pipeline run across all enabled feeds. `config.yaml` is re-read at every run start, so settings and feed changes apply without a restart.
 
 **Request body:** none required
 
@@ -145,6 +145,7 @@ Starts a full pipeline run across all enabled feeds.
 | Status | Condition | Body |
 |---|---|---|
 | 409 | State is not `idle` | `{"error": "a run is already active"}` |
+| 422 | `config.yaml` fails to load (invalid YAML, failed validation, or missing API key) | `{"error": "<reason>"}` |
 
 ---
 
@@ -201,6 +202,7 @@ Starts a pipeline run for a single feed identified by slug.
 |---|---|---|
 | 404 | Slug not found in config | `{"error": "feed not found"}` |
 | 409 | State is not `idle` | `{"error": "a run is already active"}` |
+| 422 | `config.yaml` fails to load (invalid YAML, failed validation, or missing API key) | `{"error": "<reason>"}` |
 
 ---
 
@@ -408,6 +410,8 @@ Removes a feed from the config. Does **not** delete its episodes from the databa
 ### 2.4 Settings
 
 Settings read and write the `config.yaml` sections **except** `feeds` (feeds have their own endpoints). Writes are atomic.
+
+Changes apply at the next run start; a running pipeline keeps the config it started with.
 
 #### `GET /api/v1/settings`
 
