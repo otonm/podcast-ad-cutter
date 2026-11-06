@@ -16,6 +16,7 @@ from config.config_loader import AppConfig, FeedConfig
 from database.connection import ReadOnlyDatabase
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,25 @@ def _is_complete(row_pubdate: str | None, title: str | None, podcast: str | None
     return any((output_dir / slugify(podcast)).glob(pattern))
 
 
+def _row_to_episode_dict(row: Sequence, output_dir: Path) -> dict:  # type: ignore[type-arg]
+    """Map an `_SQL_EPISODES` row to the API episode shape, resolving `complete` from disk."""
+    row_dict = dict(zip(_EPISODE_COLUMNS, row, strict=False))
+    pipeline_state_db: str = row_dict.pop("pipeline_state_db")
+
+    if pipeline_state_db != "skipped":
+        pipeline_state = (
+            "complete"
+            if _is_complete(row_dict["pubdate"], row_dict["title"], row_dict["podcast"], output_dir)
+            else pipeline_state_db
+        )
+    else:
+        pipeline_state = "skipped"
+
+    row_dict["feed_slug"] = slugify(row_dict["podcast"])
+    row_dict["pipeline_state"] = pipeline_state
+    return row_dict
+
+
 def create_db_router(db_path: Path, output_dir: Path, config_path: Path) -> web.RouteTableDef:  # noqa: C901, PLR0915
     """Build and return a RouteTableDef with 4 read-only GET handlers registered.
 
@@ -127,25 +147,22 @@ def create_db_router(db_path: Path, output_dir: Path, config_path: Path) -> web.
             cursor = await db.conn.execute(sql, params)
             rows = await cursor.fetchall()
 
-        result = []
-        for row in rows:
-            row_dict = dict(zip(_EPISODE_COLUMNS, row, strict=False))
-            pipeline_state_db: str = row_dict.pop("pipeline_state_db")
-
-            if pipeline_state_db != "skipped":
-                pipeline_state = (
-                    "complete"
-                    if _is_complete(row_dict["pubdate"], row_dict["title"], row_dict["podcast"], output_dir)
-                    else pipeline_state_db
-                )
-            else:
-                pipeline_state = "skipped"
-
-            row_dict["feed_slug"] = slugify(row_dict["podcast"])
-            row_dict["pipeline_state"] = pipeline_state
-            result.append(row_dict)
+        result = [_row_to_episode_dict(row, output_dir) for row in rows]
 
         return web.json_response(result)
+
+    @routes.get("/api/v1/db/episodes/{guid}")
+    async def get_episode(request: web.Request) -> web.Response:
+        guid = request.match_info["guid"]
+        async with ReadOnlyDatabase(db_path) as db:
+            cursor = await db.conn.execute(_SQL_EPISODES.format(where="WHERE e.guid = ?"), (guid, 1, 0))
+            row = await cursor.fetchone()
+        if row is None:
+            raise web.HTTPNotFound(
+                text='{"error": "not found"}',
+                content_type="application/json",
+            )
+        return web.json_response(_row_to_episode_dict(row, output_dir))
 
     @routes.get("/api/v1/db/transcriptions/{guid}")
     async def get_transcription(request: web.Request) -> web.Response:

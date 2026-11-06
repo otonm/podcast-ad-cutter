@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock
+from urllib.parse import quote
 
 from aiohttp.test_utils import TestClient, TestServer
 from slugify import slugify
@@ -404,6 +405,49 @@ class TestGetEpisodes:
 # ---------------------------------------------------------------------------
 # GET /api/v1/db/transcriptions/{guid}
 # ---------------------------------------------------------------------------
+
+
+async def _seed(tmp_path: Path, guid: str, *, skipped: int = 0) -> None:
+    async with Database(tmp_path / "data.db") as db:
+        await db.conn.execute(
+            "INSERT INTO episodes (podcast, guid, title, url, pubdate, skipped) VALUES (?, ?, ?, ?, ?, ?)",
+            ("Show A", guid, "Single Ep", "https://example.com/s", "2026-03-21T12:00:00+00:00", skipped),
+        )
+        await db.conn.commit()
+
+
+class TestGetSingleEpisode:
+    async def test_single_episode_returns_same_shape_as_list_item(self, tmp_path: Path) -> None:
+        await _seed(tmp_path, "g1")
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            single = await (await client.get("/api/v1/db/episodes/g1")).json()
+            listed = await (await client.get("/api/v1/db/episodes")).json()
+            assert single == listed[0]
+            assert single["pipeline_state"] == "pending"
+
+    async def test_single_episode_skipped_state(self, tmp_path: Path) -> None:
+        await _seed(tmp_path, "g1", skipped=1)
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            assert (await (await client.get("/api/v1/db/episodes/g1")).json())["pipeline_state"] == "skipped"
+
+    async def test_single_episode_404(self, tmp_path: Path) -> None:
+        await _seed(tmp_path, "g1")
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/db/episodes/nope")
+            assert resp.status == 404
+            assert await resp.json() == {"error": "not found"}
+
+    async def test_single_episode_guid_with_slashes(self, tmp_path: Path) -> None:
+        guid = "http://x.example/ep/1"
+        await _seed(tmp_path, guid)
+        app, _ = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get(f"/api/v1/db/episodes/{quote(guid, safe='')}")
+            assert resp.status == 200
+            assert (await resp.json())["guid"] == guid
 
 
 class TestGetTopics:
