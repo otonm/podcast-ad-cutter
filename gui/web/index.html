@@ -6,13 +6,89 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ad Cutter</title>
+<link rel="stylesheet" href="style.css">
+<!-- Module first: it registers stores on alpine:init before Alpine (deferred, same order) starts. -->
+<script type="module" src="app.js"></script>
+<script defer src="vendor/alpine.min.js"></script>
 </head>
 <body>
-<p id="health">Checking API…</p>
-<script>
-fetch("/api/v1/health").then(r => r.json()).then(d => {
-  document.getElementById("health").textContent = `API ${d.status} · version ${d.version}`;
-});
-</script>
+<div class="app" x-data x-cloak>
+  <div class="panes">
+
+    <!-- ── Sidebar ─────────────────────────────────────────────────────── -->
+    <nav class="side" aria-label="Main">
+      <div class="brand">Ad Cutter</div>
+      <a href="#/" :class="{ active: $store.route.view === 'overview' }">
+        <span>All episodes</span><span x-text="$store.feeds.total"></span>
+      </a>
+      <template x-for="f in $store.feeds.items" :key="f.slug">
+        <a :href="`#/feed/${f.slug}`" :class="{ active: $store.route.view === 'feed' && $store.route.param === f.slug }">
+          <span x-text="f.title"></span><span x-text="f.episode_count"></span>
+        </a>
+      </template>
+      <hr>
+      <a href="#/skipped" :class="{ active: $store.route.view === 'skipped' }"><span>Skipped</span></a>
+      <a href="#/feeds" :class="{ active: $store.route.view === 'feeds' }"><span>Feeds</span></a>
+      <a href="#/settings" :class="{ active: $store.route.view === 'settings' }"><span>Settings</span></a>
+      <a href="#/logs" :class="{ active: $store.route.view === 'logs' }"><span>Logs</span></a>
+    </nav>
+
+    <!-- LIST PANE (task 3) -->
+
+    <main class="main" :class="{ full: $store.route.full }">
+
+      <!-- ── Run overview ───────────────────────────────────────────────── -->
+      <template x-if="['overview', 'feed', 'skipped'].includes($store.route.view)">
+        <section x-data="overview" style="display: flex; flex-direction: column; gap: 18px">
+          <h1>Run overview</h1>
+          <div class="tiles">
+            <div class="tile"><div class="small muted">State</div><div class="v" style="color: var(--accent)" x-text="$store.status.state"></div></div>
+            <div class="tile"><div class="small muted">Progress</div><div class="v" x-text="`${$store.status.done} / ${$store.status.total}`"></div></div>
+            <div class="tile"><div class="small muted">Failed this run</div><div class="v" style="color: var(--fail)" x-text="$store.status.failedCount"></div></div>
+            <div class="tile"><div class="small muted">LLM cost (all time)</div><div class="v" x-text="money(costs.total)"></div></div>
+          </div>
+          <div class="row">
+            <button class="primary" x-show="$store.status.idle" @click="run()">Run all feeds</button>
+            <button x-show="!$store.status.idle" @click="stop(false)">Stop after episode</button>
+            <button class="danger" x-show="!$store.status.idle" @click="stop(true)">Force stop</button>
+          </div>
+          <div class="events">
+            <h2>Event stream</h2>
+            <template x-for="(ev, i) in $store.status.events" :key="i">
+              <div><span class="muted" x-text="ev.t"></span><span x-text="ev.text"></span></div>
+            </template>
+            <p class="small muted" x-show="!$store.status.events.length">No events since this page opened.</p>
+          </div>
+          <div class="kv">
+            <h2>Cost by model</h2>
+            <template x-for="m in costs.by_model" :key="m.provider + m.model">
+              <div><span x-text="`${m.provider}/${m.model}`"></span><span x-text="money(m.cost)"></span></div>
+            </template>
+          </div>
+        </section>
+      </template>
+
+      <!-- EPISODE DETAIL (task 3) -->
+      <!-- SETTINGS + FEEDS (task 4) -->
+      <!-- LOGS (task 5) -->
+    </main>
+  </div>
+
+  <!-- ── Status bar ────────────────────────────────────────────────────── -->
+  <footer class="statusbar" aria-live="polite">
+    <span><span class="dot" :style="`background: ${$store.status.idle ? 'var(--pending)' : 'var(--accent)'}`"></span><span x-text="$store.status.state"></span><span x-show="$store.status.active_feed_slug" x-text="` · ${$store.status.active_feed_slug}`"></span></span>
+    <span x-show="$store.status.current_episode_guid"
+          x-text="`${$store.titles.of($store.status.current_episode_guid)} · ${$store.status.stage ?? ''}${$store.status.percent !== null ? ' ' + $store.status.percent + '%' : ''}`"></span>
+    <div class="bar" x-show="$store.status.total"><div :style="`width: ${$store.status.total ? Math.round(100 * $store.status.done / $store.status.total) : 0}%`"></div></div>
+    <span x-text="$store.status.sse === 'connected' ? 'SSE connected' : 'SSE disconnected'"
+          :style="$store.status.sse === 'connected' ? '' : 'color: var(--fail); font-weight: 600'"></span>
+  </footer>
+
+  <div class="toasts" aria-live="assertive">
+    <template x-for="t in $store.toasts.items" :key="t.id">
+      <div class="toast" :class="t.kind" x-text="t.msg"></div>
+    </template>
+  </div>
+</div>
 </body>
 </html>
