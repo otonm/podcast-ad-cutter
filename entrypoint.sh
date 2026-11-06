@@ -12,7 +12,14 @@ if [ ! -f /app/run.sh ]; then
 fi
 
 if [ -n "${APP_SERVE:-}" ]; then
-    echo "entrypoint: server mode"
+    echo "entrypoint: server mode, schedule=${CRON_SCHEDULE}"
+    # Scheduled runs go through the API so they share the server's run state (409 while running).
+    API="http://127.0.0.1:${APP_PORT:-8080}/api/v1"
+    printf '%s curl -fsS -X POST %s/run\n' "${CRON_SCHEDULE}" "${API}" > /tmp/crontab
+    gosu app /usr/local/bin/supercronic -passthrough-logs /tmp/crontab &
+    # Startup run, mirroring cron mode; waits until the API answers.
+    ( until curl -fsS "${API}/health" >/dev/null 2>&1; do sleep 1; done
+      curl -fsS -X POST "${API}/run" || true ) &
     exec gosu app /bin/sh /app/run.sh
 fi
 

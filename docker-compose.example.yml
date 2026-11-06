@@ -18,8 +18,8 @@
 #
 # MODES:
 #   Cron mode (default): runs the pipeline once at start, then on a schedule. Leave APP_SERVE empty.
-#   Server mode: runs the HTTP API server continuously. Set APP_SERVE=true and
-#     uncomment the ports section. CRON_SCHEDULE is ignored in server mode.
+#   Server mode: runs the HTTP API server continuously and still runs the pipeline once
+#     at start and on CRON_SCHEDULE (via POST /api/v1/run). Set APP_SERVE=true.
 
 services:
   podcast-ad-cutter:
@@ -29,7 +29,7 @@ services:
 
     environment:
       # Cron schedule (standard crontab syntax: minute hour dom month dow).
-      # Default: run at the top of every hour. Ignored when APP_SERVE=true.
+      # Default: run at the top of every hour. Applies in both modes.
       CRON_SCHEDULE: "0 * * * *"
 
       # API keys — set the one(s) used by your config.yaml models.*.provider values
@@ -40,7 +40,7 @@ services:
       # Server mode — set to "true" to run the HTTP API server instead of cron.
       # Uncomment the ports section below when enabling this.
       APP_SERVE: ""
-      APP_HOST: ""             # API bind host (default: 0.0.0.0)
+      APP_HOST: ""             # API bind host (default: 0.0.0.0); must include loopback for scheduled runs
       APP_PORT: ""             # API bind port (default: 8080)
 
       # Optional CLI overrides (leave empty to use config.yaml defaults)

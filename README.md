@@ -146,18 +146,18 @@ docker compose pull && docker compose up -d
 The container supports two modes:
 
 - **Cron mode** (default) — runs the pipeline once at container start, then on a schedule. Set `CRON_SCHEDULE` to control the interval.
-- **Server mode** — runs the HTTP API server continuously. Set `APP_SERVE=true` and uncomment the `ports` section in `docker-compose.yml`.
+- **Server mode** — runs the HTTP API server continuously. Set `APP_SERVE=true`. It still runs the pipeline once at start and then on `CRON_SCHEDULE`, by calling `POST /api/v1/run` (a tick during an active run gets 409 and is skipped).
 
 **Environment variables in the container:**
 
 | Variable | Description |
 |---|---|
-| `CRON_SCHEDULE` | Cron expression for pipeline runs (default: `0 * * * *`). Ignored in server mode. |
+| `CRON_SCHEDULE` | Cron expression for pipeline runs (default: `0 * * * *`). Applies in both modes. |
 | `GROQ_API_KEY` | Groq API key |
 | `OPENAI_API_KEY` | OpenAI API key |
 | `OPENROUTER_API_KEY` | OpenRouter API key |
 | `APP_SERVE` | Set to `true` to run the HTTP API server instead of cron |
-| `APP_HOST` | API server bind host (default: `0.0.0.0`) |
+| `APP_HOST` | API server bind host (default: `0.0.0.0`); must include loopback for scheduled runs in server mode |
 | `APP_PORT` | API server bind port (default: `8080`) |
 | `APP_FEED` | Process only this feed title |
 | `APP_MIN_CONFIDENCE` | Override min confidence threshold |
