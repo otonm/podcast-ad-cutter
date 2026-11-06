@@ -202,6 +202,24 @@ def create_control_router(  # noqa: C901, PLR0915
             )
         return web.json_response({"status": "skipped", "guid": guid})
 
+    @routes.delete("/api/v1/episodes/{guid}/skip")
+    async def unskip_episode_handler(request: web.Request) -> web.Response:
+        if run_state.state != "idle":
+            raise web.HTTPConflict(
+                text='{"error": "cannot modify episodes while a run is active"}',
+                content_type="application/json",
+            )
+        guid = request.match_info["guid"]
+        async with Database(db_path) as db:
+            store = EpisodeStore(db.conn)
+            ok = await store.unskip_episode(guid)
+        if not ok:
+            raise web.HTTPNotFound(
+                text=json.dumps({"error": f"episode not found: {guid}"}),
+                content_type="application/json",
+            )
+        return web.json_response({"status": "unskipped", "guid": guid})
+
     @routes.post("/api/v1/episodes/{guid}/reprocess")
     async def reprocess_handler(request: web.Request) -> web.Response:
         if run_state.state != "idle":

@@ -370,7 +370,12 @@ class TestResolveSlug:
         assert _resolve_slug("not-found", feeds) is None
 
 
-def _make_db_patch(*, skip_episode_return: bool = True, reset_episode_return: bool = True):
+def _make_db_patch(
+    *,
+    skip_episode_return: bool = True,
+    reset_episode_return: bool = True,
+    unskip_episode_return: bool = True,
+):
     """Return a context manager that patches Database and EpisodeStore for handler tests."""
     mock_db_conn = MagicMock()
     mock_db_obj = MagicMock()
@@ -383,6 +388,7 @@ def _make_db_patch(*, skip_episode_return: bool = True, reset_episode_return: bo
     mock_store_instance = MagicMock()
     mock_store_instance.skip_episode = AsyncMock(return_value=skip_episode_return)
     mock_store_instance.reset_episode = AsyncMock(return_value=reset_episode_return)
+    mock_store_instance.unskip_episode = AsyncMock(return_value=unskip_episode_return)
 
     import contextlib
 
@@ -443,6 +449,49 @@ class TestSkipEpisode:
                 assert resp.status == 409
                 data = await resp.json()
                 assert "error" in data
+                mock_db_cls.assert_not_called()
+
+
+class TestUnskipEpisode:
+    async def test_unskip_returns_200_on_success(self, tmp_path) -> None:
+        cfg = _make_config()
+        cfg.app.paths.data_dir = MagicMock()
+        app = create_app(
+            EventBus(), time.monotonic(), RunState(), cfg,
+            tmp_path / "config.yaml", tmp_path / "logs",
+        )
+        async with TestClient(TestServer(app)) as client:
+            with _make_db_patch(unskip_episode_return=True):
+                resp = await client.delete("/api/v1/episodes/g123/skip")
+                assert resp.status == 200
+                assert await resp.json() == {"status": "unskipped", "guid": "g123"}
+
+    async def test_unskip_returns_404_when_not_found(self, tmp_path) -> None:
+        cfg = _make_config()
+        cfg.app.paths.data_dir = MagicMock()
+        app = create_app(
+            EventBus(), time.monotonic(), RunState(), cfg,
+            tmp_path / "config.yaml", tmp_path / "logs",
+        )
+        async with TestClient(TestServer(app)) as client:
+            with _make_db_patch(unskip_episode_return=False):
+                resp = await client.delete("/api/v1/episodes/g123/skip")
+                assert resp.status == 404
+                assert "error" in await resp.json()
+
+    async def test_unskip_returns_409_when_active(self, tmp_path) -> None:
+        run_state = RunState()
+        run_state.state = "running"
+        cfg = _make_config()
+        cfg.app.paths.data_dir = MagicMock()
+        app = create_app(
+            EventBus(), time.monotonic(), run_state, cfg,
+            tmp_path / "config.yaml", tmp_path / "logs",
+        )
+        async with TestClient(TestServer(app)) as client:
+            with _make_db_patch() as (mock_db_cls, _):
+                resp = await client.delete("/api/v1/episodes/g123/skip")
+                assert resp.status == 409
                 mock_db_cls.assert_not_called()
 
 
