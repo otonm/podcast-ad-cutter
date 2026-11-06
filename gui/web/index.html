@@ -289,7 +289,30 @@
           </form>
         </section>
       </template>
-      <!-- LOGS (task 5) -->
+      <!-- ── Logs ───────────────────────────────────────────────────────── -->
+      <template x-if="$store.route.view === 'logs'">
+        <section x-data="logsView" style="display: flex; flex-direction: column; gap: 16px">
+          <h1>Logs</h1>
+          <p class="banner" x-show="empty">No log files yet. Enable “Write log files” in Settings to get app logs.</p>
+          <div class="logs" x-show="!empty">
+            <div class="files">
+              <h2>App</h2>
+              <template x-for="f in app" :key="f.filename">
+                <button :class="{ active: current === f.filename }" @click="open(f)" x-text="f.filename"></button>
+              </template>
+              <template x-for="[feed, list] in Object.entries(episodes)" :key="feed">
+                <div style="display: flex; flex-direction: column; gap: 4px">
+                  <h2 style="margin-top: 8px" x-text="feed"></h2>
+                  <template x-for="f in list" :key="f.filename">
+                    <button :class="{ active: current === f.filename }" @click="open(f)" x-text="f.filename.split('/').at(-1)"></button>
+                  </template>
+                </div>
+              </template>
+            </div>
+            <pre x-ref="pre" @scroll="onScroll($el)" x-text="current ? lines.join('\n') : 'Pick a file to tail it live.'"></pre>
+          </div>
+        </section>
+      </template>
     </main>
   </div>
 

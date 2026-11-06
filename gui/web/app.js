@@ -5,6 +5,7 @@ const EVENT_TYPES = [
   "episode.encode_progress", "episode.completed", "episode.failed",
 ];
 const MAX_EVENTS = 50;
+const MAX_LOG_LINES = 2000;
 
 /** fetch wrapper: prefixes /api/v1, sends opts.json as a JSON body, toasts and throws on non-2xx. */
 export async function api(path, opts = {}) {
@@ -348,6 +349,36 @@ document.addEventListener("alpine:init", () => {
       await api(`/feeds/${f.slug}/run`, { method: "POST" });
       Alpine.store("status").refresh();
     },
+  }));
+  // ── Full view: logs ─────────────────────────────────────────────────────
+  Alpine.data("logsView", () => ({
+    app: [], episodes: {}, current: null, lines: [], follow: true, es: null,
+    async init() {
+      const { data } = await api("/logs");
+      this.app = data.app_logs;
+      this.episodes = data.episode_logs;
+    },
+    get empty() { return !this.app.length && !Object.keys(this.episodes).length; },
+    open(f) {
+      this.close();
+      this.current = f.filename;
+      this.lines = [];
+      this.follow = true;
+      const path = f.filename.split("/").map(enc).join("/");
+      this.es = new EventSource(`/api/v1/logs/${path}/tail?bytes=16384`);
+      this.es.onmessage = (e) => this.append(e.data);
+    },
+    append(text) {
+      this.lines.push(...text.split("\n"));
+      if (this.lines.length > MAX_LOG_LINES) this.lines.splice(0, this.lines.length - MAX_LOG_LINES);
+      this.$nextTick(() => {
+        const pre = this.$refs.pre;
+        if (this.follow && pre) pre.scrollTop = pre.scrollHeight;
+      });
+    },
+    onScroll(pre) { this.follow = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8; },
+    close() { this.es?.close(); this.es = null; },
+    destroy() { this.close(); },
   }));
 });
 
