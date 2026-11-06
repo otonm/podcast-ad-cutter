@@ -21,6 +21,12 @@ PROVIDER_KEY_MAP: dict[str, str] = {
 }
 
 
+# LiteLLM call arguments that the pipeline owns; user params may never override them
+RESERVED_LLM_PARAMS: frozenset[str] = frozenset(
+    {"model", "messages", "api_key", "response_format", "file", "drop_params"}
+)
+
+
 class FeedConfig(BaseModel):
     """Configuration for a single podcast feed."""
 
@@ -38,6 +44,16 @@ class LLMConfig(BaseModel):
     provider: Literal["groq", "openai", "openrouter"]
     model: str
     context_window: int | None = Field(default=None, gt=0)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("params")
+    @classmethod
+    def _reject_reserved_params(cls, v: dict[str, Any]) -> dict[str, Any]:
+        reserved = sorted(RESERVED_LLM_PARAMS & v.keys())
+        if reserved:
+            msg = f"params may not override reserved keys: {reserved}"
+            raise ValueError(msg)
+        return v
 
 
 class ModelsConfig(BaseModel):

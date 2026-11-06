@@ -6,8 +6,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from pydantic import ValidationError
 
-from config.config_loader import Config, load_config
+from config.config_loader import Config, LLMConfig, load_config
 from utils.exceptions import ConfigError
 
 # ---------------------------------------------------------------------------
@@ -247,3 +248,22 @@ def test_extra_key_raises_validation_error(tmp_path: Path) -> None:
     raw["nonsense"] = 1
     with pytest.raises(ValidationError):
         AppConfig.model_validate(raw)
+
+
+# ---------------------------------------------------------------------------
+# LLMConfig.params
+# ---------------------------------------------------------------------------
+
+
+def test_llm_config_params_default_empty() -> None:
+    assert LLMConfig(provider="groq", model="m").params == {}
+
+
+def test_llm_config_accepts_arbitrary_params() -> None:
+    cfg = LLMConfig(provider="groq", model="m", params={"temperature": 0.1, "top_p": 0.9})
+    assert cfg.params == {"temperature": 0.1, "top_p": 0.9}
+
+
+def test_llm_config_rejects_reserved_params() -> None:
+    with pytest.raises(ValidationError, match=r"reserved.*\['api_key', 'model'\]"):
+        LLMConfig(provider="groq", model="m", params={"model": "x", "api_key": "k"})

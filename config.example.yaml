@@ -20,6 +20,11 @@ models:
     provider: "groq"
     model: "llama-3.3-70b-versatile"
     # context_window: 8192  # optional: always pre-truncate to this token limit (e.g. for local models)
+    # params:            # optional LiteLLM kwargs, override built-in defaults (any stage)
+    #   temperature: 0.2
+    #   max_tokens: 4000
+    # Unsupported params are dropped automatically for context_extraction and ad_detection;
+    # for transcription an unsupported param fails the episode.
 
 # Path configurations for various outputs and the cache
 paths:
