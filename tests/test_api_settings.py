@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 from aiohttp.test_utils import TestClient, TestServer
 
 from api.event_bus import EventBus
+from api.routes.settings import _deep_merge
 from api.run_state import RunState
 from api.server import create_app
 
@@ -256,3 +257,42 @@ class TestPatchSettings:
         mock_replace.assert_called_once()
         _, dst_arg = mock_replace.call_args[0]
         assert dst_arg == config_path
+
+
+class TestMergePatchSemantics:
+    def test_deep_merge_null_removes_key(self) -> None:
+        assert _deep_merge({"a": 1, "b": 2}, {"b": None}) == {"a": 1}
+
+    def test_deep_merge_null_for_missing_key_is_noop(self) -> None:
+        assert _deep_merge({"a": 1}, {"z": None}) == {"a": 1}
+
+    async def test_patch_removes_single_param(self, tmp_path) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(VALID_YAML)
+        app = create_app(
+            EventBus(), time.monotonic(), RunState(), _make_config(),
+            config_path, config_path.parent / "logs",
+        )
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.patch("/api/v1/settings", json={
+                "models": {"ad_detection": {"params": {"temperature": 0.2, "top_p": 0.9}}},
+            })
+            assert resp.status == 200
+            resp = await client.patch("/api/v1/settings", json={
+                "models": {"ad_detection": {"params": {"top_p": None}}},
+            })
+            assert resp.status == 200
+            assert (await resp.json())["models"]["ad_detection"]["params"] == {"temperature": 0.2}
+
+    async def test_patch_reserved_param_returns_422(self, tmp_path) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(VALID_YAML)
+        app = create_app(
+            EventBus(), time.monotonic(), RunState(), _make_config(),
+            config_path, config_path.parent / "logs",
+        )
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.patch("/api/v1/settings", json={
+                "models": {"ad_detection": {"params": {"model": "x"}}},
+            })
+            assert resp.status == 422

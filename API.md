@@ -422,9 +422,9 @@ Returns the full application configuration plus credential status (never the act
 {
   "feeds": [...],
   "models": {
-    "transcription": {"provider": "groq", "model": "whisper-large-v3", "context_window": null},
-    "context_extraction": {"provider": "groq", "model": "llama-3.3-70b-versatile", "context_window": null},
-    "ad_detection": {"provider": "groq", "model": "llama-3.3-70b-versatile", "context_window": null}
+    "transcription": {"provider": "groq", "model": "whisper-large-v3", "context_window": null, "params": {}},
+    "context_extraction": {"provider": "groq", "model": "llama-3.3-70b-versatile", "context_window": null, "params": {}},
+    "ad_detection": {"provider": "groq", "model": "llama-3.3-70b-versatile", "context_window": null, "params": {}}
   },
   "paths": {
     "output_dir": "./output",
@@ -491,7 +491,12 @@ Updates application settings via deep merge. The `feeds` key is silently strippe
 }
 ```
 
-Deep merge rules: dicts are merged recursively; all other types (including lists) are replaced wholesale.
+Deep merge rules (JSON Merge Patch, RFC 7396): dicts are merged recursively; `null` removes the key; all other types (including lists) are replaced wholesale.
+
+Per-model LiteLLM params live under `models.<stage>.params` and override the built-in defaults (e.g. `temperature`). The keys `model`, `messages`, `api_key`, `response_format`, `file` and `drop_params` are reserved (422). Example: set one param and remove another:
+```json
+{"models": {"ad_detection": {"params": {"temperature": 0.2, "top_p": null}}}}
+```
 
 **Response 200** — the full updated config (same shape as GET, without `credentials`).
 

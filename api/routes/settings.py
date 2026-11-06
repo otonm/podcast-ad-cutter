@@ -23,11 +23,15 @@ logger = logging.getLogger(__name__)
 def _deep_merge(base: dict, patch: dict) -> dict:
     """Recursively merge patch into base, returning a new dict.
 
-    Dicts are merged recursively; all other types (including lists) are replaced.
+    JSON Merge Patch semantics: dicts are merged recursively, a ``None`` value
+    removes the key, all other types (including lists) are replaced.
     Neither input dict is mutated.
     """
     result = dict(base)
     for key, patch_val in patch.items():
+        if patch_val is None:
+            result.pop(key, None)
+            continue
         base_val = result.get(key)
         if isinstance(base_val, dict) and isinstance(patch_val, dict):
             result[key] = _deep_merge(base_val, patch_val)
