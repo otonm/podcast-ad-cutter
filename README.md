@@ -195,6 +195,30 @@ Once the pipeline has run, the `.rss` file in each feed's output folder is a val
 
 ---
 
+## Web GUI and Deployment with Tailscale
+
+The `gui` service in `docker-compose.example.yml` is a small Caddy container. It serves a browser UI for monitoring runs, disabling/deleting episodes, viewing transcripts and detected ads, editing settings and feeds, and tailing logs. It proxies `/api/*` to the backend, which must run in server mode (`APP_SERVE=true`). There is no authentication: keep the GUI port private.
+
+With Tailscale installed on the host, publish the feeds publicly and keep the GUI on your tailnet:
+
+```bash
+# Public (Funnel, port 443): RSS feeds and episode audio straight from the output folder
+sudo tailscale funnel --bg "$(pwd)/output"
+
+# Tailnet only (Serve, port 8443): the GUI container published on 127.0.0.1:8090
+sudo tailscale serve --bg --https=8443 http://127.0.0.1:8090
+
+tailscale funnel status && tailscale serve status
+```
+
+- Set `base_url: https://<host>.<tailnet>.ts.net` in `config/config.yaml`. Feeds are then at `https://<host>.<tailnet>.ts.net/<feed-slug>.rss`; episode URLs inside the feeds are rewritten to the new `base_url` on the next run.
+- The GUI is at `https://<host>.<tailnet>.ts.net:8443/`. From a device **outside** your tailnet, check that this URL does not load, and that `https://<host>.<tailnet>.ts.net/api/v1/health` returns 404 (Funnel serves files only).
+- Funnel only listens on 443, 8443 or 10000, and one port cannot be both Serve and Funnel. If your Tailscale version refuses Funnel and Serve on one node, give the GUI its own hostname instead.
+- Funneling a folder shows a public directory listing of `output/` (feed and episode names). The files are public through the RSS anyway.
+- Changing `base_url` changes the feed URL: podcast apps subscribed to the old URL must resubscribe.
+
+---
+
 ## Logging
 
 - Console logging is always on. Level is set by `log.level` in config or `--debug`.
