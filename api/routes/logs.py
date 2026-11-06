@@ -112,16 +112,22 @@ def _poll(fh: object, last_pos: int, path: Path) -> tuple:
     return data, fh.tell()
 
 
+def _sse_frame(data: bytes) -> bytes:
+    """Frame text as one SSE event; every line needs its own ``data:`` prefix or EventSource drops it."""
+    text = data.decode("utf-8", errors="replace")
+    return ("".join(f"data: {line}\n" for line in text.split("\n")) + "\n").encode()
+
+
 async def _run_tail_stream(resp: web.StreamResponse, log_path: Path, bytes_back: int, interval: float) -> None:
     fh, pos, backfill = await asyncio.to_thread(_open_and_backfill, log_path, bytes_back)
     try:
         if backfill:
-            await resp.write(f"data: {backfill.decode('utf-8', errors='replace')}\n\n".encode())
+            await resp.write(_sse_frame(backfill))
         while True:
             await asyncio.sleep(interval)
             new_data, pos = await asyncio.to_thread(_poll, fh, pos, log_path)
             if new_data:
-                await resp.write(f"data: {new_data.decode('utf-8', errors='replace')}\n\n".encode())
+                await resp.write(_sse_frame(new_data))
     except ClientConnectionResetError:
         pass
     finally:

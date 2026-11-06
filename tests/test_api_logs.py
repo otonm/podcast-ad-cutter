@@ -389,6 +389,23 @@ class TestLogTail:
             assert resp.status == 200
             await resp.content.read(1024)
 
+    async def test_tail_frames_every_line_with_data_prefix(self, tmp_path: Path) -> None:
+        """Multi-line log text is framed per line, so EventSource keeps every line."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "app.log").write_bytes(b"12:00:01 INFO a: one\n12:00:02 INFO b: two\n")
+
+        app = _make_app(tmp_path)
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/v1/logs/app.log/tail?bytes=100&interval=0.5")
+            frame = (await resp.content.read(1024)).decode()
+            assert frame.endswith("\n\n")
+            lines = frame[:-2].split("\n")
+            assert all(line.startswith("data: ") for line in lines)
+            assert [line.removeprefix("data: ") for line in lines] == [
+                "12:00:01 INFO a: one", "12:00:02 INFO b: two", "",
+            ]
+
     async def test_tail_streams_appended_content(self, tmp_path: Path) -> None:
         """Content appended to the file appears as a subsequent SSE data event."""
         import asyncio as _asyncio

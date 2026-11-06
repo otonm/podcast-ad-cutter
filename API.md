@@ -931,9 +931,10 @@ Streams a log file as a live SSE tail (like `tail -f`).
 
 **Response:** `text/event-stream`
 
-Wire format: each poll that produces new data sends one SSE frame:
+Wire format: each poll that produces new data sends one SSE event, with every log line on its own `data:` line (EventSource joins them back with `\n`):
 ```
-data: <new log text>\n
+data: <line 1>\n
+data: <line 2>\n
 \n
 ```
 
