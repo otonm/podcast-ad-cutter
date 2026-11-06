@@ -9,6 +9,8 @@ Podcast Ad Cutter is a Python 3.12 async application. It has two operating modes
 
 Both modes share the same `Pipeline` class and `Config` objects. The server mode simply wraps the pipeline in an asyncio task and exposes control via HTTP.
 
+A separate **GUI container** (`gui/`) serves a static browser app and reverse-proxies `/api/*` to the server-mode backend.
+
 ---
 
 ## Tech Stack
@@ -25,6 +27,8 @@ Both modes share the same `Pipeline` class and `Config` objects. The server mode
 | Environment variables | `python-dotenv` |
 | Scheduling (Docker) | `supercronic` (cron runner in the container) |
 | Privilege drop (Docker) | `gosu` |
+| GUI web server / proxy | Caddy (`gui/` image) |
+| GUI frontend | Alpine.js 3, vendored, no build step |
 
 ---
 
@@ -71,7 +75,7 @@ api/
     control.py              # GET /api/v1/status, POST /api/v1/run, /run/stop, /feeds/{slug}/run, episodes
     feeds.py                # GET/POST/PATCH/DELETE /api/v1/feeds
     settings.py             # GET/PATCH /api/v1/settings
-    db.py                   # GET /api/v1/db/episodes|transcriptions|ads|costs
+    db.py                   # GET /api/v1/db/episodes[/{guid}]|transcriptions|topics|ads|costs
     events.py               # GET /api/v1/events (SSE)
     logs.py                 # GET /api/v1/logs, /logs/{path}, /logs/{path}/tail
 utils/
@@ -79,6 +83,14 @@ utils/
   llm.py                    # litellm cost computation and response helpers
   episode_log.py            # Per-episode log handler management
   exceptions.py             # ConfigError, TranscriptionError, AdDetectionError
+gui/
+  Dockerfile, Caddyfile     # Caddy image: /api/* → backend, everything else → web/
+  web/
+    index.html              # three-pane shell: feeds sidebar | episode list | detail, status bar
+    app.js                  # Alpine stores (status, route, feeds, toasts) and view components
+    lib.js                  # pure helpers (formatting, merge patch, ad overlap, routing, SSE reconnect)
+    vendor/                 # pinned alpine.min.js and Inter fonts (versions in index.html)
+  tests/lib.test.js         # node --test for lib.js
 ```
 
 ---
@@ -103,9 +115,11 @@ Config
 └── credentials: Credentials  # from environment variables via pydantic-settings
 ```
 
-`load_config()` reads and validates `config.yaml`, then checks that every provider referenced in `models.*` has a corresponding non-empty environment variable. It raises `ConfigError` (caught by `main.py`) if anything is missing or invalid.
+`load_config()` reads and validates `config.yaml`, then checks that every provider referenced in `models.*` has a corresponding non-empty environment variable. It raises `ConfigError` (caught by `main.py`) if anything is missing or invalid. In server mode it is called again at every run start, so settings and feed changes need no restart (logging settings are the exception: they are applied once at process start).
 
-The API routes that mutate config (feeds, settings) read and write `config.yaml` directly on every request. Writes are atomic: the new config is serialized to a temp file in the same directory, then swapped in with `os.replace()`. `AppConfig` is re-validated through Pydantic before any write is committed.
+Each `LLMConfig` has an optional `params` dict of LiteLLM kwargs. Components merge it over their built-in defaults (e.g. `temperature`); `RESERVED_LLM_PARAMS` (`model`, `messages`, `api_key`, …) cannot be set. `acompletion_with_param_fallback` drops params a model rejects; transcription has no such fallback.
+
+The API routes that mutate config (feeds, settings) read and write `config.yaml` directly on every request. Writes are atomic: the new config is serialized to a temp file in the same directory, then swapped in with `os.replace()` (so in Docker the config must be a mounted directory, not a single-file mount). `AppConfig` is re-validated through Pydantic before any write is committed. `PATCH /settings` merges with JSON Merge Patch semantics: `null` removes a key.
 
 ---
 
@@ -122,10 +136,12 @@ The API routes that mutate config (feeds, settings) read and write `config.yaml`
 ### Phase 2 — Per-Feed Pre-processing
 
 For each feed:
-1. Save all discovered episodes to the `episodes` table (upsert by GUID).
-2. Fetch the episode list respecting `episodes_to_keep`.
-3. Publish the clean RSS feed file to `output_dir/<feed-slug>/<feed-slug>.rss`.
+1. Save all discovered episodes to the `episodes` table (insert-or-ignore by GUID, so deleted/skipped rows are never re-added).
+2. Fetch the newest `episodes_to_keep` **non-skipped** episodes.
+3. Publish the clean RSS feed file to `output_dir/<feed-slug>.rss`.
 4. Emit `run.started` event.
+
+`<feed-slug>` is the slug of the RSS **channel title**; audio goes to `output_dir/<feed-slug>/<DD.MM.YYYY>-<title-slug>.<ext>`. Episode rows store the **config** title in `episodes.podcast`, so code that locates an episode's file searches every feed folder (`FeedPublisher.find_episode_files`).
 
 ### Phase 3 — Per-Episode State Machine
 
@@ -155,7 +171,9 @@ Each episode is processed by a `while True` loop that checks what is missing and
 └──────────────────────────────────────────────────────────┘
 ```
 
-After each episode completes (success or failure), `episode.completed` or `episode.failed` is emitted on the event bus and per-feed counters in `RunState` are updated.
+After each episode completes (success or failure), `episode.completed` or `episode.failed` is emitted on the event bus and per-feed counters in `RunState` are updated. After the loop, `_trim_output_dir` keeps only the newest `episodes_to_keep` files per feed folder.
+
+Because an existing output file short-circuits the state machine, the API removes it whenever an episode must not be served or must be rebuilt: skip, reprocess and delete all delete the output file.
 
 ### Stage Details
 
@@ -237,7 +255,7 @@ Each route module exposes a factory function (`create_*_router(...)`) that captu
 ### Run State
 
 `api/run_state.py:RunState` is the shared mutable state for the active pipeline run. It lives on the aiohttp app dict and is read/written by both the control route handlers and the pipeline task. It tracks:
-- `state` — `"idle"` | `"running"` | `"stopping"`
+- `state` — `"idle"` | `"running"` | `"stopping"`. A start request claims `"running"` before awaiting the config load and resets to `"idle"` if the load fails, so concurrent starts get 409.
 - `started_at` — UTC timestamp of the current run
 - `active_feed_slug` — slug of the feed being processed (or `None` for full runs)
 - `current_episode_guid` — GUID of the episode being processed
@@ -263,12 +281,15 @@ The container image (based on `ghcr.io/astral-sh/uv:python3.12-bookworm-slim`) i
 2. `supercronic` runs `run.sh` on the cron schedule as the `app` user
 3. `run.sh` assembles CLI arguments from environment variables and execs `python main.py`
 
-**Startup flow — server mode (`APP_SERVE=true`):**
-1. `entrypoint.sh` detects `APP_SERVE`, skips supercronic, and directly execs `gosu app /bin/sh /app/run.sh`
-2. `run.sh` passes `--serve` (plus optional `--host`/`--port` from `APP_HOST`/`APP_PORT`) to `python main.py`
-3. The process runs indefinitely, serving the HTTP API on port 8080 (or `APP_PORT`)
+**Startup flow — server mode (`APP_SERVE=true`, the compose example default):**
+1. `entrypoint.sh` detects `APP_SERVE` and starts `supercronic` in the background with a crontab that runs `curl -X POST http://127.0.0.1:$APP_PORT/api/v1/run` on `$CRON_SCHEDULE`
+2. A background subshell waits for `/api/v1/health`, then triggers one startup run (mirroring cron mode)
+3. It then execs `gosu app /bin/sh /app/run.sh`; `run.sh` passes `--serve` (plus optional `--host`/`--port`) to `python main.py`, so the server is PID 1 and a crash restarts the container
+4. Scheduled ticks during an active run get 409 and are skipped
 
-The `EXPOSE 8080` directive in the Dockerfile documents the server port. In server mode, the `docker-compose.yml` `ports` section must be uncommented to make it reachable from the host.
+The backend publishes no ports; the `gui` container reaches it on the compose network.
+
+**GUI container (`gui/`):** `caddy:<pinned>-alpine` with `gui/Caddyfile`. Listens on plain HTTP `:80` (TLS is terminated by `tailscale serve` on the host). `handle /api/*` reverse-proxies to `$API_UPSTREAM` (default `podcast-ad-cutter:8080`) without stripping the prefix; Caddy flushes `text/event-stream` immediately. `encode gzip` applies only to the static files so event streams are never buffered. Compose publishes it on `127.0.0.1:8090` only.
 
 ---
 
@@ -281,5 +302,8 @@ API tests use `aiohttp.test_utils.TestClient` + `TestServer` with the real `crea
 ```bash
 uv run pytest              # run all tests
 uv run pytest --cov=.      # run with coverage (must be 100%)
-uv run ruff                # lint
+uv run ruff check .        # lint
+cd gui && node --test tests/   # GUI pure helpers (no npm dependencies)
 ```
+
+The GUI templates and Alpine components have no automated tests; verify them in a browser.

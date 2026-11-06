@@ -15,14 +15,16 @@ Feed titles are converted to URL-safe slugs using the `python-slugify` library (
 
 Slugs are computed on the fly from the config file; they are **not stored in the database**. If you rename a feed title, its slug changes and old slug URLs return 404.
 
+API slugs come from the **config** title. Output folders and `.rss` file names come from the feed's **RSS channel title**, which can differ.
+
 ### 1.2 Pipeline States
 
 The pipeline is a state machine. The `state` field in `/api/v1/status` takes one of three values:
 
 | Value | Meaning |
 |---|---|
-| `idle` | No run active. Mutations (skip, reprocess) are permitted. |
-| `running` | A pipeline run is in progress. Mutations are blocked (409). |
+| `idle` | No run active. Episode mutations (skip, unskip, reprocess, delete) are permitted. |
+| `running` | A pipeline run is in progress (or starting). Episode mutations and new runs are blocked (409). |
 | `stopping` | A graceful stop was requested; waiting for the current stage to finish. |
 
 State transitions:
@@ -36,7 +38,7 @@ State transitions:
 Each episode carries a `pipeline_state` field (computed, not stored directly). The resolution order is:
 
 1. `skipped` — `episodes.skipped = 1` in DB (takes highest priority, always wins; skipped episodes are not published in the RSS)
-2. `complete` — output audio file exists on disk at `output_dir/<feed-slug>/<DD.MM.YYYY>-<title-slug>.<ext>`
+2. `complete` — output audio file `<DD.MM.YYYY>-<title-slug>.<ext>` exists in any feed folder under `output_dir`
 3. `processed` — row in `ad_detection_runs` for this GUID
 4. `transcribed` — row in `transcriptions` for this GUID
 5. `downloaded` — row in `episode_audio_metadata` for this GUID
@@ -46,17 +48,17 @@ Note: `complete` can upgrade from `downloaded`, `transcribed`, or `processed` st
 
 ### 1.4 Reprocess Stages
 
-When resetting an episode, the optional `stage` parameter controls which DB records are cleared:
+When resetting an episode, the optional `stage` parameter controls which DB records are cleared. Each stage also clears every later stage:
 
-| Stage | Clears from |
+| Stage | Clears |
 |---|---|
-| `download` | episode_audio_metadata |
-| `transcribe` | transcriptions, transcription_segments |
-| `topic` | topics |
-| `ad-detect` | ad_detection_runs, ad_segments |
-| `edit` | (output file on disk; marks episode for re-editing) |
+| `download` | episode_audio_metadata, transcriptions, transcription_segments, topic_extractions, ad_segments, ad_detection_runs (and resets `url` to the source URL) |
+| `transcribe` | transcriptions, transcription_segments, topic_extractions, ad_segments, ad_detection_runs |
+| `topic` | topic_extractions, ad_segments, ad_detection_runs |
+| `ad-detect` | ad_segments, ad_detection_runs |
+| `edit` | no DB records |
 
-If `stage` is omitted, all stages are cleared (full reset).
+If `stage` is omitted, it behaves like `download` (full reset). In every case the episode's output file is removed, so the next run rebuilds it.
 
 ---
 
@@ -956,13 +958,13 @@ All error responses use `Content-Type: application/json` and a body of:
 {"error": "<human-readable message>"}
 ```
 
-Exception: Pydantic 422 responses use Pydantic's native JSON error format (an object with a `detail` array), not the `{"error": "..."}` envelope.
+Exception: 422 responses from config validation (`PATCH /settings`, `POST`/`PATCH /feeds`) return Pydantic's error list as a bare JSON array (`[{"type", "loc", "msg", "input", ...}]`), not the `{"error": "..."}` envelope. 422 from run starts (config fails to load) uses the envelope.
 
 ---
 
 ## 4. Authentication
 
-No authentication is implemented. The API is intended for local/private network use only.
+No authentication is implemented, in the API or the GUI container in front of it. The API is intended for local/private network use only: anyone who can reach it can change settings and start paid LLM runs.
 
 ---
 
@@ -971,7 +973,9 @@ No authentication is implemented. The API is intended for local/private network 
 - **Config writes are atomic.** All PATCH/POST/DELETE endpoints that modify `config.yaml` write to a temp file on the same filesystem then call `os.replace()`. A crash mid-write cannot corrupt the config file.
 - **Database reads use a dedicated read-only connection.** The `/api/v1/db/*` endpoints open a fresh `ReadOnlyDatabase` connection (WAL mode) for each request, separate from the pipeline's write connection.
 - **Feed config is re-read from disk on every request.** GET `/api/v1/feeds` and GET `/api/v1/settings` read `config.yaml` fresh on each call, so changes made via PATCH are immediately visible.
-- **Slug resolution uses in-memory config.** The `/api/v1/db/episodes` and `/api/v1/db/costs` slug-to-title resolution uses the config snapshot loaded at server startup. A feed added after startup will not be resolvable by slug in those endpoints until the server restarts.
+- **Slug resolution re-reads the config.** Every endpoint that takes a feed slug reads `config.yaml` per request, so feeds added via the API are usable immediately.
+- **Runs use the config as of their start.** `POST /run` and `POST /feeds/{slug}/run` reload `config.yaml`; a running pipeline keeps the config it started with.
+- **One run at a time.** The run slot is claimed before the config is loaded, so concurrent start requests get 409.
 
 ---
 
@@ -980,6 +984,8 @@ No authentication is implemented. The API is intended for local/private network 
 Both `/api/v1/events` and `/api/v1/logs/{path}/tail` are SSE streams. On client disconnect:
 - `/api/v1/events`: the subscriber queue is unregistered in a `finally` block. Safe to reconnect immediately.
 - `/api/v1/logs/{path}/tail`: the file handle is closed in a `finally` block. A `ClientConnectionResetError` is caught and suppressed silently.
+
+There is no heartbeat on `/api/v1/events`; a proxy with an idle timeout may close it between runs. Clients should reconnect, including after a non-200 reply (the GUI does).
 
 ---
 

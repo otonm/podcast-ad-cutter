@@ -2,7 +2,7 @@
 
 Automatically removes advertisements from podcast episodes and re-publishes clean RSS feeds you can add to any podcast app.
 
-It downloads your configured feeds, transcribes each episode with a speech-to-text model, extracts the topic of an episode to help with ad identification, identifies ad segments, cuts them out with ffmpeg, and serves the resulting clean audio via a self-hosted RSS feed. A built-in HTTP API allows for building of UIs or other applications.
+It downloads your configured feeds, transcribes each episode with a speech-to-text model, extracts the topic of an episode to help with ad identification, identifies ad segments, cuts them out with ffmpeg, and serves the resulting clean audio via a self-hosted RSS feed. A built-in HTTP API and an optional web GUI let you monitor runs, inspect transcripts and detected ads, manage episodes and feeds, and change settings.
 
 ---
 
@@ -30,6 +30,8 @@ uv run python main.py
 uv run python main.py --serve
 ```
 
+The web GUI ships as a separate container; see [Docker](#docker).
+
 ---
 
 ## Configuration
@@ -40,7 +42,7 @@ All settings live in `config.yaml`. Copy `config.example.yaml` as a starting poi
 
 ```yaml
 feeds:
-  - title: "My Podcast"          # display name — also used as the output folder name
+  - title: "My Podcast"          # display name — its slug identifies the feed in the API/GUI
     url: "https://example.com/feed.rss"
     enabled: true
     episodes_to_keep: 10         # how many episodes to retain in the output feed
@@ -62,9 +64,11 @@ models:
     provider: "groq"
     model: "llama-3.3-70b-versatile"
     context_window: 8192          # optional — truncate prompt to this token limit
+    params:                       # optional LiteLLM kwargs, override built-in defaults
+      temperature: 0.2
 ```
 
-Supported providers: `groq`, `openai`, `openrouter`.
+Supported providers: `groq`, `openai`, `openrouter`. `params` works for every stage; `model`, `messages`, `api_key`, `response_format`, `file` and `drop_params` are reserved. Unsupported params are dropped automatically for `context_extraction` and `ad_detection`; for `transcription` they fail the episode.
 
 ### Ad Detection
 
@@ -111,9 +115,9 @@ Only the key for the provider(s) you actually use needs to be set.
 ```
 --config PATH           Config file path (default: config.yaml)
 --feed NAME             Process only the named feed (exact title match)
---output PATH           Override output directory
---min-confidence FLOAT  Override ad_detection.min_confidence
---force-ai-detection    Force LLM ad detection even when a cached result exists
+--output PATH           Override output directory (currently not applied)
+--min-confidence FLOAT  Override ad_detection.min_confidence (currently not applied)
+--force-ai-detection    Force LLM ad detection even when a cached result exists (currently not applied)
 --debug                 Enable debug-level console logging
 --log-to-file           Write logs to a timestamped file in logs/
 --serve                 Start the HTTP API server instead of running the pipeline
@@ -131,7 +135,7 @@ Start with `--serve` to expose a REST API and SSE event stream:
 uv run python main.py --serve --port 8080
 ```
 
-The API lets you start/stop pipeline runs, manage feeds, inspect episode state, and stream live logs — all without restarting the process. See [API.md](API.md) for the full reference.
+The API lets you start/stop pipeline runs, manage feeds and settings, disable or delete episodes, inspect transcripts and ad results, and stream live events and logs — all without restarting the process; each run re-reads `config.yaml`. See [API.md](API.md) for the full reference.
 
 ---
 
@@ -145,8 +149,8 @@ docker compose pull && docker compose up -d
 
 The container supports two modes:
 
-- **Cron mode** (default) — runs the pipeline once at container start, then on a schedule. Set `CRON_SCHEDULE` to control the interval.
-- **Server mode** — runs the HTTP API server continuously. Set `APP_SERVE=true`. It still runs the pipeline once at start and then on `CRON_SCHEDULE`, by calling `POST /api/v1/run` (a tick during an active run gets 409 and is skipped).
+- **Server mode** (`APP_SERVE=true`, the compose example default, required by the GUI) — runs the HTTP API server continuously. It still runs the pipeline once at start and then on `CRON_SCHEDULE`, by calling `POST /api/v1/run` (a tick during an active run gets 409 and is skipped).
+- **Cron mode** (`APP_SERVE` empty) — runs the pipeline once at container start, then on `CRON_SCHEDULE`. No API, no GUI.
 
 **Environment variables in the container:**
 
@@ -156,11 +160,11 @@ The container supports two modes:
 | `GROQ_API_KEY` | Groq API key |
 | `OPENAI_API_KEY` | OpenAI API key |
 | `OPENROUTER_API_KEY` | OpenRouter API key |
-| `APP_SERVE` | Set to `true` to run the HTTP API server instead of cron |
+| `APP_SERVE` | `true` runs the HTTP API server (with scheduled runs); empty runs cron mode |
 | `APP_HOST` | API server bind host (default: `0.0.0.0`); must include loopback for scheduled runs in server mode |
 | `APP_PORT` | API server bind port (default: `8080`) |
 | `APP_FEED` | Process only this feed title |
-| `APP_MIN_CONFIDENCE` | Override min confidence threshold |
+| `APP_MIN_CONFIDENCE` | Override min confidence threshold (currently not applied) |
 | `APP_LOG_TO_FILE` | Set to `true` to write log files |
 | `APP_DEBUG` | Set to `true` for debug logging |
 
@@ -178,14 +182,14 @@ The container supports two modes:
 
 ## Output
 
-Processed files are written to `output_dir/<feed-slug>/`:
+Processed files are written to `output_dir`:
 
 - **`<feed-slug>.rss`** — clean RSS feed, ready to subscribe to in any podcast app
-- **`<DD.MM.YYYY>-<episode-slug>.mp3`** — ad-free episode audio
+- **`<feed-slug>/<DD.MM.YYYY>-<episode-slug>.<ext>`** — ad-free episode audio
 
-Point your podcast app at the `.rss` file's URL (e.g. `http://your-server:8080/output/my-podcast/my-podcast.rss` if you're also serving the output directory).
+`<feed-slug>` is the slug of the feed's RSS channel title. Serve `output_dir` over HTTP(S) and set `base_url` to its address: the feed is then at `<base_url>/<feed-slug>.rss`, and episode enclosure URLs are built from `base_url` — it must be reachable by your podcast client.
 
-The `base_url` config value is used to construct episode enclosure URLs in the feed — it must be reachable by your podcast client.
+Disabled (skipped) episodes are left out of the feed and their audio file is removed; only the newest `episodes_to_keep` files per feed are kept.
 
 ---
 
